@@ -50,7 +50,7 @@ public:
  * task<int> cofunction() {
  *      co_return 42;
  * }
- * @encode
+ * @endcode
  * 
  * Task is actually a kind of a smart pointer which holds the
  * coroutine frame even if the coroutine is already finished. You 
@@ -81,7 +81,7 @@ template<typename Imp> class task_awaiter;
  *      int i = co_await cbpromise;
  *      co_return i; 
  * }
- * @encode
+ * @endcode
  */
 template<typename T> class callback_promise;
 
