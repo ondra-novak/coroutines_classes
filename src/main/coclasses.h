@@ -1,3 +1,7 @@
+#pragma once
+#ifndef _COCLS_COCLASSES_H_
+#define _COCLS_COCLASSES_H_
+
 /*
 MIT License
 
@@ -241,7 +245,7 @@ public:
         return true;
     }
     
-    auto get_value() {
+    auto &get_value() {
         return static_cast<const Impl &>(*this).get_value();
     }
     
@@ -544,3 +548,6 @@ protected:
 };
 
 }
+
+
+#endif
