@@ -67,12 +67,12 @@ template<typename T = void> class task;
 template<typename T> class task_promise;
 
 ///Awaiter class
-/** Awaiters are helperer objects created for co_await. They
+/** Awaiters are helper objects created for co_await. They
  * handles resumption of a suspended coroutine
  */
 template<typename Imp> class task_awaiter;
 
-///Class which helps to make promise which is fullfilled through a callback
+///Class which helps to make promise which is fulfilled through a callback
 /**
  * @code
  * task<int> cofunction() {
@@ -144,7 +144,7 @@ public:
      * @return waitable future. The future is fulfilled when task is done.
      * Note when you attempt to wait on this future, remember that function
      * is blocking. If the task cannot be finished because of this blocking
-     * call then deadlock is result such a execution.
+     * call then deadlock is result of a such execution.
      */
     std::future<T> get_future() {
         std::future<T> out;
@@ -193,11 +193,6 @@ public:
     }
     auto &await_resume() {
         return _owner.get_value();
-/*        if (_owner._is_exception) {
-            std::rethrow_exception(_owner._exception);
-        } else {
-            return _owner.g;
-        }*/
     }
     void resume() {
         _h.resume();
