@@ -4,7 +4,7 @@ Small template library with classes to support C++20 coroutines.
 
 ### namespace
 
-The Coclasses library is put insidie cocls namespace.
+The coclasses library is put inside `cocls` namespace.
 
 You can put into your code
 
@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
 * can be awaited `co_await`, result of operation is return value of the coroutine
 * if it is shared, multiple coroutines can await to single coroutine.
 * outside of coroutine, you can check state of the coroutine using functions is_done()
-* you can `get()` result if the coroutine, if the coroutine is not yet finished, it performs a blocking operation until the result is ready
+* you can `get()` result of the coroutine, if the coroutine is not yet finished, it performs a blocking operation until the result is ready
 * you can register callback function which is called when the coroutine is finished
 
 #### Object lazy<T> - features
