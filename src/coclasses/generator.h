@@ -15,7 +15,10 @@ namespace cocls {
 template<typename T>
 class generator_promise;
 
-
+///Coroutine generator
+/**
+ * @tparam T type of generated value
+ */
 template<typename T>
 class generator {
 public:
@@ -62,17 +65,48 @@ public:
         generator *_g;
         bool _end;
     };
-
+    
+    
+    ///Retrieve iterator
     iterator begin() {
         return iterator(this, !_prom->next());
     }
+    ///Retrieve end iterator
     iterator end() {
         return iterator(this, true);
     }
     
+    ///Test whether no more values
+    /**
+     * @retval true no more values
+     * @retval false more values
+     * 
+     * @note do not combine with iterators. 
+     */
+    bool operator! () {
+        return !_prom->is_done_prefetch();
+    }
+    ///Test whether there are mo values
+    /**
+     * @retval false no more values
+     * @retval true more values
+     * 
+     * @note do not combine with iterators. 
+     */
+    operator bool () {
+        return _prom->is_done_prefetch();
+    }
+    
+    ///Retrieve next value
+    T &operator()() {
+        return _prom->get_prefetch();
+    }
+    
+    
+    
 protected:
     
-    std::unique_ptr<promise_type, Deleter> _prom;
+    std::unique_ptr<promise_type, Deleter> _prom;    
     
 };
 
@@ -95,7 +129,7 @@ public:
        return {};
     }
     
-    bool is_done() const {
+    bool is_done()  {
         return std::coroutine_handle<generator_promise>::from_promise(*this).done();
     }
     void destroy() {
@@ -115,6 +149,23 @@ public:
         else throw value_not_ready_exception();        
     }
     
+    bool is_done_prefetch() {
+        if (!_prefetch) {
+            _prefetch = true;
+            return next();
+        }
+        else return is_done();
+    }
+    
+    T &get_prefetch() {
+        if (!_prefetch) {
+            if (!next()) throw no_more_values_exception();            
+        }
+        T &out = get();
+        _prefetch = false;
+        return out;
+        
+    }
     
     // Disallow co_await in generator coroutines.
     void await_transform() = delete;           
@@ -126,6 +177,7 @@ public:
 protected:
     std::optional<T> _value;
     std::exception_ptr _exception;
+    bool _prefetch = false;
 };
 
 

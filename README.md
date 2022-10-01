@@ -103,3 +103,9 @@ int result = co_await fut;
 * Only one `promise` can receive value. Receiving value is not MT Safe
 * The awaiting coroutine is resumed only after all promises are destroyed. So it is not resumed immediately, this removes potential sideeffect in part of the code which is resolving the promise, and postopones resumption to the part when everything is probably destroyed.
 
+
+## Use in code
+
+* you can include header files directly
+* you can include library.cmake into your cmake project, and headers <coclasses/*> should become available
+

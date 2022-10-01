@@ -1,7 +1,7 @@
-#include "../coclasses/task.h"
-#include "../coclasses/future.h"
-#include "../coclasses/lazy.h"
-#include "../coclasses/generator.h"
+#include <coclasses/task.h>
+#include <coclasses/future.h>
+#include <coclasses/lazy.h>
+#include <coclasses/generator.h>
 
 #include <iostream>
 #include <assert.h>
@@ -77,12 +77,20 @@ int main(int argc, char **argv) {
         }
     }
     std::cout<< std::endl;
+
     auto fib2 = co_fib2(15);
     std::cout<< "gen2: ";
     for (int &i: fib2) {
         std::cout << i << " ";
     }
     std::cout<< std::endl;
-    
+
+    auto fib3 = co_fib2(15);
+    std::cout<< "gen3: ";
+    while (!!fib3) {
+        std::cout << fib3() << " ";
+    }
+    std::cout<< std::endl;
+
     
 }

@@ -7,6 +7,7 @@
 
 namespace cocls {
 
+///Thrown from co_await when there is no promises which could resolve the future
 class await_canceled_exception: public std::exception {
 public:
     const char *what() const noexcept {
@@ -14,11 +15,20 @@ public:
     }
 };
 
+///Thrown when asking value of the task which is not finished yet
 class value_not_ready_exception: public std::exception {
 public:
     const char *what() const noexcept {
         return "Can't retrieve value, it is not ready yet";
     }
+};
+
+class no_more_values_exception: public std::exception {
+public:
+    const char *what() const noexcept {
+        return "Generator has no more values";
+    }
+    
 };
 
 }
