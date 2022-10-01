@@ -18,7 +18,7 @@ use namespace cocls;
 * **lazy**
 * **generator**
 * **future**
-* **callback**
+
 
 
 ### Task
@@ -102,9 +102,4 @@ int result = co_await fut;
 * You need to destroy all promises before the future object. Otherwise UO
 * Only one `promise` can receive value. Receiving value is not MT Safe
 * The awaiting coroutine is resumed only after all promises are destroyed. So it is not resumed immediately, this removes potential sideeffect in part of the code which is resolving the promise, and postopones resumption to the part when everything is probably destroyed.
-
-#### Object callback
-
-* callback object is similar to future, but instead `promise` a callable object is created and can act as ordinary function, which receives a value which can cause  resumption of a coroutine.
-
 
