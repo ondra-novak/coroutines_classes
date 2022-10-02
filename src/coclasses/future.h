@@ -22,6 +22,8 @@ class future;
 
 template<typename T>
 class promise;
+template<typename T>
+class promise_base;
 
 
 template<typename T, typename Impl>
@@ -231,6 +233,7 @@ protected:
      }
 
      friend class promise<T>;
+     friend class promise_base<T>;
 
     
 };
@@ -279,6 +282,7 @@ protected:
 
      friend class future_base<void, future<void> >;
      friend class promise<void>;
+     friend class promise_base<void>;
 
      void set_exception(std::exception_ptr &&e) {
          if (!_ready) {
@@ -298,7 +302,51 @@ protected:
 };
 
 
+template<typename T>
+class promise_base {
+public:
+    promise_base():_owner(nullptr) {}
+    promise_base(future<T> &fut):_owner(&fut) {_owner->add_ref();}
+    promise_base(const promise_base &other):_owner(other._owner) {if (_owner) _owner->add_ref();}
+    promise_base(promise_base &&other):_owner(other._owner) {other._owner = nullptr;}
+    ~promise_base() {if (_owner) _owner->release_ref();}
+    promise_base &operator=(const promise_base &other) {
+        if (this != &other) {
+            if (_owner) _owner->release_ref();
+            _owner = other._owner;
+            if (_owner) _owner->add_ref();
+                    
+        }
+        return *this;
+    }
+    promise_base &operator=(promise_base &&other) {
+        if (this != &other) {
+            if (_owner) _owner->release_ref();
+            _owner = other._owner;
+            other._owner = nullptr;
+        }
+        return *this;
+    }
+    
+    ///Release promise object, decreases count of references, can resume associated coroutine
+    void release() {
+        if (_owner) _owner->release_ref();
+        _owner = nullptr;
+    }
 
+    ///Returns true, if the promise is valid
+    operator bool() const {
+        return _owner != nullptr;
+    }
+
+    ///Returns true, if the promise is not valid
+    bool operator !() const {
+        return _owner == nullptr;
+    }
+
+protected:
+    future<T> *_owner;
+};
 
 ///Promise object
 /**
@@ -312,31 +360,28 @@ protected:
  * @tparam T
  */
 template<typename T>
-class promise {
+class promise: public promise_base<T> {
 public:
-    promise(future<T> &owner):_owner(owner) {_owner.add_ref();}
-    promise(const promise &other):_owner(other._owner) {_owner.add_ref();}
-    promise &operator=(const promise &other) = delete;
-    ~promise() {_owner.release_ref();}
+    using promise_base<T>::promise_base;
     
     ///set value
     void set_value(T &&x) const {
-        _owner.set_value(std::move(x));
+        this->_owner->set_value(std::move(x));
     }
     
     ///set value
     void set_value(const T &x) const {
-        _owner.set_value(x);
+        this->_owner->set_value(x);
     }
     
     ///set exception
     void set_exception(std::exception_ptr &&e) const {
-        _owner.set_exception(std::move(e));
+        this->_owner->set_exception(std::move(e));
     }
     
     ///capture current exception
     void unhandled_exception() const {
-        _owner.set_exception(std::current_exception());
+        this->_owner->set_exception(std::current_exception());
     }
     
     ///promise can be used as callback function
@@ -347,9 +392,6 @@ public:
     void operator()(const T &x) {
         set_value(x);
     }
-    
-protected:
-    future<T> &_owner;
 };
 
 ///Promise object
@@ -363,32 +405,28 @@ protected:
  */
 
 template<>
-class promise<void> {
+class promise<void>: public promise_base<void> {
 public:
-    promise(future<void> &owner):_owner(owner) {_owner.add_ref();}
-    promise(const promise &other):_owner(other._owner) {_owner.add_ref();}
-    promise &operator=(const promise &other) = delete;
-    ~promise() {_owner.release_ref();}
+    
+    using promise_base<void >::promise_base;
 
     ///makes future ready
     void set_value() {
-        _owner.set_value();
+        _owner->set_value();
     }
     ///sets exception
     void set_exception(std::exception_ptr &&e) {
-        _owner.set_exception(std::move(e));
+        _owner->set_exception(std::move(e));
     }
     ///capture unhandled exception
     void unhandled_exception() {
-        _owner.set_exception(std::current_exception());
+        _owner->set_exception(std::current_exception());
     }
     ///
     void operator()() {
         set_value();
     }
 
-protected:
-    future<void> &_owner;
 };
 
 
