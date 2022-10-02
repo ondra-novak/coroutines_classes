@@ -1,10 +1,4 @@
-/*
- * future.h
- *
- *  Created on: 1. 10. 2022
- *      Author: ondra
- */
-
+#pragma once
 #ifndef SRC_COCLASSES_FUTURE_H_
 #define SRC_COCLASSES_FUTURE_H_
 

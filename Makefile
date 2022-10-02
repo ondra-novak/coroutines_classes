@@ -20,5 +20,5 @@ install: .build/Makefile
 log:
 	mkdir -p log
 	
-version.h: .git/HEAD Makefile 	 
+version.h: .git/index Makefile 	 
 	GIT=`which git`;VER=`$$GIT describe --tags`;echo "#define GIT_PROJECT_VERSION \"$$VER\"" > ./version.h
