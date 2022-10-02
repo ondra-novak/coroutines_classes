@@ -1,3 +1,4 @@
+#include "../../version.h"
 #include <coclasses/task.h>
 #include <coclasses/future.h>
 #include <coclasses/lazy.h>
@@ -71,6 +72,7 @@ cocls::generator<int> co_fib2(int count) {
 template class cocls::future<void>;
 
 int main(int argc, char **argv) {
+    std::cout << "Version: " << GIT_PROJECT_VERSION << std::endl;
     std::cout << "(main) starting co_test2" << std::endl;    
     auto z = co_test2();
     std::cout << "(main) waiting for future" << std::endl;
