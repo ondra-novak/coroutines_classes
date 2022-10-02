@@ -109,3 +109,20 @@ int result = co_await fut;
 * you can include header files directly
 * you can include library.cmake into your cmake project, and headers <coclasses/*> should become available
 
+## Using promises in normal code
+
+Promises can be used without need to introduce coroutines. You can easly create promise which executes callback once the promise is resolved
+
+
+```
+{
+    cocls::promise<int> p = cocls::make_promise([=](future<int> &f) {
+        int val = f.get();
+        //work with value   
+    });
+    
+    p.set_value(42);
+    //...some other code
+    
+    //callback is called at the end of the block
+}

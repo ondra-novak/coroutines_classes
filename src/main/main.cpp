@@ -14,11 +14,18 @@ cocls::lazy<int> co_lazy() {
 cocls::task<int> co_test() {
     std::cout << "(co_test) started" << std::endl;    
     cocls::future<int> f;
-    std::thread thr([p = f.get_promise()]{
+    f >> [](cocls::future<int> &x) {
+        std::cout << "(co_test) future's callback called: " << x.get() << std::endl;
+    };
+    auto cbp = cocls::make_promise<int>([](cocls::future<int> &x){
+       std::cout << "(make_promise) called:" << x.get() << std::endl; 
+    });
+    std::thread thr([p = f.get_promise(), p2 = cbp]{
         std::cout << "(co_test) thread started" << std::endl;    
         std::this_thread::sleep_for(std::chrono::seconds(2));
         std::cout << "(co_test) promise being set" << std::endl;  
         p.set_value(42);
+        p2.set_value(78);
         std::this_thread::sleep_for(std::chrono::seconds(1));
         std::cout << "(co_test) thread finished" << std::endl;
     });
@@ -30,8 +37,9 @@ cocls::task<int> co_test() {
 }
 
 cocls::task<int> co_test2() {
-    std::cout << "(co_test2) await" << std::endl;
+    std::cout << "(co_test2) co_lazy() started" << std::endl;
     cocls::lazy<int> lz = co_lazy();
+    std::cout << "(co_test2) await" << std::endl;
     int i = co_await(co_test());
     int j = co_await lz;
     std::cout << "(co_test2) await finished i = " << i<< ", j = " << j << std::endl;   
@@ -60,13 +68,13 @@ cocls::generator<int> co_fib2(int count) {
     }
 }
 
-
+template class cocls::future<void>;
 
 int main(int argc, char **argv) {
     std::cout << "(main) starting co_test2" << std::endl;    
     auto z = co_test2();
     std::cout << "(main) waiting for future" << std::endl;
-    std::cout << z.get() << std::endl;
+    std::cout << z.wait() << std::endl;
     
     auto fib = co_fib();
     std::cout<< "gen1: ";    

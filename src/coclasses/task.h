@@ -124,7 +124,7 @@ public:
      * @return return value of the task
      * @exception value_not_ready_exception when value is not ready yet
      */ 
-    T &try_get() const {
+    T &get() const {
         return this->_promise->get_value();
     }
     
@@ -133,8 +133,8 @@ public:
      * @return result of the task. Note that operation can be blocking. If the
      * task cannot be finished because this thread is blocked then deadlock can happen 
      */
-    T get() const {
-        if (this->is_ready()) return this->try_get();
+    T wait() const {
+        if (this->is_ready()) return this->get();
         else return this->as_future().get();
     }   
 
