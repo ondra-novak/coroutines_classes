@@ -8,10 +8,14 @@
 #ifndef SRC_COCLASSES_FUTURE_H_
 #define SRC_COCLASSES_FUTURE_H_
 
-#include "task.h"
+
 
 #include <assert.h>
 #include <memory>
+#include <mutex>
+#include <condition_variable>
+
+
 
 namespace cocls {
 
@@ -30,33 +34,13 @@ template<typename T, typename Impl>
 class future_base {
 public:
     
-    future_base():_pcount(0),_ready(false), _cb_awaiter(nullptr), _awaiter(nullptr) {}
+    future_base():_pcount(0),_ready(false), _awaiter(nullptr) {}
     ~future_base() {
         assert(_pcount == 0);
-        cb_resume();
     }
     
     future_base(const future_base &) = delete;
     future_base &operator=(const future_base &) = delete;
-    
-    ///attach a callback which is called when future is resolved
-    /** this allows to use future outside of coroutine 
-     * You can attach multiple callbacks 
-     * 
-     * @param fn
-     */
-    template<typename FN>
-    auto operator>>(FN &&fn) -> decltype(std::declval<FN>()(std::declval<Impl &>()), void()){
-        if (_ready) {
-            fn(static_cast<Impl &>(*this));
-            return;
-        }
-        auto x = create_awaitable(std::forward<FN>(fn));
-        while (!_cb_awaiter.compare_exchange_weak(x->_next, x, std::memory_order_relaxed));
-        if (_ready) {
-            cb_resume();
-        }
-    }
     
     bool is_ready() {
         return _ready.load(std::memory_order_acquire);
@@ -64,60 +48,64 @@ public:
 
     
 
-protected:
     
-    class awaiter {
-    public:        
-        awaiter(Impl &owner):_owner(owner) {}
-        awaiter(const awaiter &) = default;
-        awaiter &operator=(const awaiter &) = delete;
-        
+    class abstract_awaiter {
+    public:
+        abstract_awaiter(Impl &owner):_owner(owner) {}
+        virtual ~abstract_awaiter() = default;
+        abstract_awaiter(const abstract_awaiter &) = default;
+        abstract_awaiter &operator=(const abstract_awaiter &) = delete;
+        virtual void resume() noexcept = 0;
         bool await_ready() const noexcept {
-            return _owner._ready && _owner._pcount.load(std::memory_order_relaxed) == 0;            
-        }
-        void await_suspend(std::coroutine_handle<> h) {
-            _owner.add_ref();
-            _h = h;
-            _owner._awaiter = this;
-            _owner.release_ref();
+            return _owner._ready && _owner._pcount.load(std::memory_order_relaxed) == 0;
         }
 
-        void resume() {
+    protected:
+        Impl &_owner;
+    };
+
+    class co_awaiter: public abstract_awaiter {
+    public:        
+        co_awaiter(Impl &owner):abstract_awaiter(owner) {}
+        
+        void await_suspend(std::coroutine_handle<> h) {
+            this->_owner.add_ref();
+            this->_h = h;
+            this->_owner._awaiter = this;
+            this->_owner.release_ref();
+        }
+
+        virtual void resume() noexcept override {
             _h.resume(); 
         }
     protected:
         std::coroutine_handle<> _h;
-        Impl &_owner;
     };
 
-
-    class cb_awaitable {
-    public:        
-        virtual void resume(Impl &impl) noexcept = 0;        
-        virtual ~cb_awaitable() =default;
-        cb_awaitable *_next = nullptr;
+    class blocking_awaiter: public abstract_awaiter {
+    public:
+        blocking_awaiter(Impl &owner):abstract_awaiter(owner) {}
+        void wait() {
+            this->_owner.add_ref();
+            this->_owner._awaiter = this;
+            this->_owner.release_ref();
+            std::unique_lock _(mx);
+            cvar.wait(_, [&]{return this->await_ready();});
+        }
+        virtual void resume() noexcept override {
+            std::unique_lock _(mx);
+            cvar.notify_all();
+        }
+    protected:
+        std::mutex mx;
+        std::condition_variable cvar;
     };
-    
-    template<typename FN>
-    static cb_awaitable *create_awaitable(FN &&fn) {
-        class AW: public cb_awaitable {
-        public:
-            AW(FN &&fn):fn(std::forward<FN>(fn)) {}
-            virtual void resume(Impl &impl) noexcept override  {
-                fn(impl);
-                delete this;
-            }            
-        protected:
-            FN fn;
-        };
-        return new AW(std::forward<FN>(fn));
-    }
+
 
 protected:    
     std::atomic<unsigned int> _pcount;
     std::atomic<bool> _ready;
-    std::atomic<cb_awaitable *> _cb_awaiter;
-    awaiter *_awaiter = nullptr;
+    abstract_awaiter *_awaiter = nullptr;
     
 
     void add_ref() {
@@ -126,26 +114,15 @@ protected:
    
     void release_ref() {
         if (_pcount.fetch_sub(1, std::memory_order_release)-1 == 0) {            
-            awaiter *aw = _awaiter;
-            cb_resume();
-            if (aw) {
+            if (_awaiter) {
                 if (!this->_ready.load(std::memory_order_acquire)) {
                     static_cast<Impl *>(this)->set_exception(std::make_exception_ptr(await_canceled_exception()));
                 }
-                aw->resume();
+                _awaiter->resume();
             }
         }
     }
-    
-    void cb_resume() {
-        auto x = _cb_awaiter.exchange(nullptr);
-        while (x) {
-            auto y = x;
-            x = x->_next;
-            y->resume(static_cast<Impl &>(*this));
-        }
-    }
-    
+
 };
 
 ///Creates future variable for coroutine
@@ -171,19 +148,22 @@ public:
     future(const future &) = delete;
     future &operator=(const future &) = delete;
     
-    class awaiter: public super_t::awaiter {
+    class co_awaiter: public super_t::co_awaiter {
     public:
-        awaiter(future &owner):super_t::awaiter(owner) {}
+        co_awaiter(future &owner):super_t::co_awaiter(owner) {}
         T &await_resume() {
             if (this->_owner._is_exception) std::rethrow_exception(this->_owner._exception);
             else return this->_owner._value;
         }
     };
     
+
     ///future can be awaited
-    awaiter operator co_await() {
-        return awaiter(*this);
+    co_awaiter operator co_await() {
+        return co_awaiter(*this);
     }
+
+
    
     
     ///Retrieves promise object
@@ -196,14 +176,21 @@ public:
      */
     promise<T> get_promise();
 
-
     ///Get value - only if the future is already resolved
     T &get() {
         if (!this->is_ready()) throw value_not_ready_exception();
         if (this->_is_exception) std::rethrow_exception(this->_exception);
         return this->_value;
     }
-    
+
+    ///Get value - wait for result blocking
+    T &wait() {
+        if (this->is_ready()) return get();
+        typename super_t::blocking_awaiter awaiter(*this);
+        awaiter.wait();
+        return get();
+    }
+
 protected:
      friend class future_base<T, future<T> >;
     
@@ -252,25 +239,33 @@ public:
     future(const future &) = delete;
     future &operator=(const future &) = delete;
 
-    class awaiter:public super_t::awaiter {
+    class co_awaiter:public super_t::co_awaiter {
     public:
-        awaiter(future &owner):super_t::awaiter(owner) {}
+        co_awaiter(future &owner):super_t::co_awaiter(owner) {}
 
         void await_resume() {
             if (this->_owner._exception) std::rethrow_exception(this->_owner._exception);            
         }
     };
     
-    awaiter operator co_await() {
-        return awaiter(*this);
+    co_awaiter operator co_await() {
+        return co_awaiter(*this);
     }
 
     ///Check state of future, throws exception if there is such exceptional state
-    void check() {
+    void get() {
         if (!this->is_ready()) throw value_not_ready_exception();
         if (this->_exception) std::rethrow_exception(this->_exception);
-        
     }
+
+    ///Get value - wait for result blocking
+    void wait() {
+        if (this->is_ready()) return get();
+        blocking_awaiter awaiter(*this);
+        awaiter.wait();
+        return get();
+    }
+
     
     promise<void> get_promise();
 
@@ -460,17 +455,27 @@ inline promise<void> future<void>::get_promise()  {
 template<typename T, typename Fn>
 promise<T> make_promise(Fn &&fn) {
     
-    class futimpl: public future<T>, public future<T>::cb_awaitable {
+    class futimpl: public future<T> {
     public:
-        futimpl(Fn &&fn):_cb(std::forward<Fn>(fn)) {
-            this->_cb_awaiter = this;
+
+        class awaiter: public future<T>::blocking_awaiter {
+        public:
+            awaiter(future<T> &owner):future<T>::blocking_awaiter(owner) {}
+            virtual void resume() noexcept override {
+                static_cast<futimpl &>(this->_owner).resume();
+            }
+        };
+
+        futimpl(Fn &&fn):_awt(*this), _cb(std::forward<Fn>(fn)) {
+            this->_awaiter = &_awt;
         }
         virtual ~futimpl() = default;
-        virtual void resume(future<T> &x) noexcept override {
-            _cb(x);
+        void resume() noexcept  {
+            _cb(*this);
             delete this;
         }
     protected:
+        awaiter _awt;
         Fn _cb;
     };
     

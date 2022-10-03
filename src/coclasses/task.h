@@ -124,19 +124,15 @@ public:
      * @return return value of the task
      * @exception value_not_ready_exception when value is not ready yet
      */ 
-    T &get() const {
-        return this->_promise->get_value();
-    }
+    T &get() const;
     
     ///Retrieve result of the task - waits if task is not ready yet
     /**     
      * @return result of the task. Note that operation can be blocking. If the
      * task cannot be finished because this thread is blocked then deadlock can happen 
      */
-    T wait() const {
-        if (this->is_ready()) return this->get();
-        else return this->as_future().get();
-    }   
+    T join() const;
+
 
     std::future<T> as_future() const;
     
@@ -147,70 +143,100 @@ class task<void>: public task_base<void> {
 public:
     task() = default;
     task(task_promise<void> *p):task_base<void>(p) {}
-    ///Retrieve result of the task - waits if task is not ready yet
-    /**     
-     * @return result of the task. Note that operation can be blocking. If the
-     * task cannot be finished because this thread is blocked then deadlock can happen 
-     */
-    void wait() const {
-        if (!is_ready()) {
-            return as_future().wait();
-        }
-    }   
     
+    ///try to retrieve value of the task
+    /** Because the task doesn't return value, function just check for exception
+     */
+    void get() const;
+
+    ///try to retrieve value of the task
+    /** Because the task doesn't return value, function joins the coroutine and
+     * checks for exception
+     */
+    void join() const;
+
     std::future<void> as_future() const;
 };
 
 
+template<typename Owner> class abstract_task_awaiter {
+public:
+    abstract_task_awaiter(Owner &owner):_owner(owner) {}
+    abstract_task_awaiter(const abstract_task_awaiter &other) = delete;
+    abstract_task_awaiter&operator=(const abstract_task_awaiter &other) = delete;
+    virtual ~abstract_task_awaiter() = default;
+
+    virtual void resume() noexcept = 0 ;
+
+    abstract_task_awaiter *get_next() {
+        return this->next;
+    }
+
+    void push_to(std::atomic<abstract_task_awaiter<Owner> *> &list) {
+        while (!list.compare_exchange_weak(next, this));
+    }
+
+protected:
+    abstract_task_awaiter *next = nullptr;
+    Owner &_owner;
+};
 
 
-template<typename Owner> class task_awaiter {
+template<typename Owner> class task_awaiter: public abstract_task_awaiter<Owner> {
 public:
     using Value = typename Owner::ValueT;
     using ValRef = Reference<Value>;
+    using super_t = abstract_task_awaiter<Owner>;
     
-    task_awaiter(Owner &owner): _owner(owner) {}
-    
-    task_awaiter(const task_awaiter &other) = delete;
-    task_awaiter &operator=(const task_awaiter &other) = delete;
-    
+    task_awaiter(Owner &owner): super_t(owner) {}
+
     bool await_ready() const noexcept {
-        return _owner.is_ready();
+        return this->_owner.is_ready();
     }
     bool await_suspend(std::coroutine_handle<> h) {
         _h = h;
-        return _owner.register_awaiter(this);
+        return this->_owner.register_awaiter(this);
     }
     ValRef await_resume() {
-        return _owner.get_value();
+        return this->_owner.get_value();
     }
-    void resume() {
+    virtual void resume() noexcept override  {
         _h.resume();
     }
 
-    void push_to(std::atomic<task_awaiter<Owner> *> &list) {
-        while (!list.compare_exchange_weak(next, this));
-    }
     
-    task_awaiter *get_next() {
-        return next;
-    }
 protected:
-    task_awaiter *next = nullptr;
-    Owner &_owner;
     std::coroutine_handle<> _h;
-    
+};
 
+template<typename Owner> class task_blocking_awaiter: public abstract_task_awaiter<Owner> {
+public:
+    using super_t = abstract_task_awaiter<Owner>;
+    
+    task_blocking_awaiter(Owner &owner): super_t(owner) {}
+
+    void wait() {
+        if (this->_owner.is_ready()) return;
+        this->_owner.register_awaiter(this);
+        std::unique_lock _(mx);
+        cond.wait(_, [&]{return this->_owner.is_ready();});
+    }
+    virtual void resume() noexcept override  {
+        std::unique_lock _(mx);
+        cond.notify_all();
+    }
+
+protected:
+    std::mutex mx;
+    std::condition_variable cond;
 };
 
 template<typename Impl> class task_promise_base {
 public:
-
-    
     task_promise_base():_ready(false),_awaiters(nullptr) {}
 
-    void resolve(task_awaiter<Impl> *dont_resume) {
-        task_awaiter<Impl> *list = _awaiters.exchange(nullptr);
+    void resolve(abstract_task_awaiter<Impl> *dont_resume) {
+        abstract_task_awaiter<Impl> *list = _awaiters.exchange(nullptr);
         while (list) {
             auto *p = list;
             list = list->get_next();
@@ -222,7 +248,7 @@ public:
         return _ready;
     }
 
-    bool register_awaiter(task_awaiter<Impl> *ptr) {
+    bool register_awaiter(abstract_task_awaiter<Impl> *ptr) {
         if (_ready) return false;
         ptr->push_to(_awaiters);
         if (_ready) {
@@ -239,7 +265,7 @@ public:
     
 protected:
     std::atomic<bool> _ready;
-    std::atomic<task_awaiter<Impl> *> _awaiters;
+    std::atomic<abstract_task_awaiter<Impl> *> _awaiters;
 };
 
 template<typename Impl> class task_coroutine_base {
@@ -416,6 +442,18 @@ protected:
 };
 
 template<typename T>
+inline T& task<T>::get() const {
+    return this->_promise->get_value();
+}
+
+template<typename T>
+inline T task<T>::join() const {
+    task_blocking_awaiter<task_promise<T> > bk(*this->_promise);
+    bk.wait();
+    return get();
+}
+
+template<typename T>
 std::future<T> task<T>::as_future() const {
     std::future<T> f;
     ([&]()->task<>{
@@ -427,7 +465,18 @@ std::future<T> task<T>::as_future() const {
     return f;
 }
 
+inline void task<void>::get() const
+{
+    return this->_promise->get_value();
+}
 
+inline void task<void>::join() const
+{
+    task_blocking_awaiter<task_promise<void> > bk(*this->_promise);
+    bk.wait();
+    return get();
+
+}
 
 std::future<void> task<void>::as_future() const {
        std::future<void> f;

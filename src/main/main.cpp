@@ -14,9 +14,6 @@ cocls::lazy<int> co_lazy() {
 cocls::task<int> co_test() {
     std::cout << "(co_test) started" << std::endl;    
     cocls::future<int> f;
-    f >> [](cocls::future<int> &x) {
-        std::cout << "(co_test) future's callback called: " << x.get() << std::endl;
-    };
     auto cbp = cocls::make_promise<int>([](cocls::future<int> &x){
        std::cout << "(make_promise) called:" << x.get() << std::endl; 
     });
@@ -74,7 +71,7 @@ int main(int argc, char **argv) {
     std::cout << "(main) starting co_test2" << std::endl;    
     auto z = co_test2();
     std::cout << "(main) waiting for future" << std::endl;
-    std::cout << z.wait() << std::endl;
+    std::cout << z.join() << std::endl;
     
     auto fib = co_fib();
     std::cout<< "gen1: ";    
