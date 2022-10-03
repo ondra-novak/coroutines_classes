@@ -8,6 +8,7 @@
 #ifndef SRC_COCLASSES_COMMON_H_
 #define SRC_COCLASSES_COMMON_H_
 
+#include <coroutine>
 
 #ifdef __CDT_PARSER__
 //This part is seen by Eclipse CDT Parser only
@@ -28,6 +29,11 @@ template<> struct Reference_t<void> {using Result = void;};
 template<typename X>
 using Reference = typename Reference_t<X>::Result;
 
+struct control_suspend: std::suspend_always {
+    control_suspend(bool suspend):suspend(suspend) {}
+    bool await_ready() const noexcept { return !suspend; }
+    bool suspend;
+};
 
 }
 

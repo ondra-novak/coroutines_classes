@@ -56,6 +56,7 @@ public:
         abstract_awaiter(const abstract_awaiter &) = default;
         abstract_awaiter &operator=(const abstract_awaiter &) = delete;
         virtual void resume() noexcept = 0;
+        virtual std::coroutine_handle<> get_handle() {return {};};
         bool await_ready() const noexcept {
             return _owner._ready && _owner._pcount.load(std::memory_order_relaxed) == 0;
         }
@@ -74,6 +75,10 @@ public:
             this->_owner._awaiter = this;
             this->_owner.release_ref();
         }
+
+        virtual std::coroutine_handle<> get_handle() {
+            return _h;
+        };
 
         virtual void resume() noexcept override {
             _h.resume(); 
@@ -121,6 +126,22 @@ protected:
                 _awaiter->resume();
             }
         }
+    }
+    bool release_ref(std::coroutine_handle<> &hout) {
+        if (_pcount.fetch_sub(1, std::memory_order_release)-1 == 0) {
+            if (_awaiter) {
+                if (!this->_ready.load(std::memory_order_acquire)) {
+                    static_cast<Impl *>(this)->set_exception(std::make_exception_ptr(await_canceled_exception()));
+                }
+                hout = _awaiter->get_handle();
+                if (hout == nullptr) {
+                    _awaiter->resume();
+                } else {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
 };
@@ -327,6 +348,22 @@ public:
     void release() {
         if (_owner) _owner->release_ref();
         _owner = nullptr;
+    }
+
+    ///Release promise object, but don't resume coroutine, instead return coroutine handle
+    /**
+     * @param hout variable which receives the handle
+     * @retval true success, handle retrieved
+     * @retval false no coroutine waiting yet, no coroutine at all, released promise
+     */
+    bool release(std::coroutine_handle<> &hout) {
+        if (_owner) {
+            bool x = _owner->release_ref(hout);
+            _owner = nullptr;
+            return x;
+        } else {
+            return false;
+        }
     }
 
     ///Returns true, if the promise is valid

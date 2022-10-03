@@ -65,6 +65,33 @@ cocls::generator<int> co_fib2(int count) {
     }
 }
 
+cocls::generator<int> co_async_fib(int count) {
+    int a = 0;
+    int b = 1;
+    for(int i = 0;i < count; i++) {
+        cocls::future<int> cf;
+        std::thread thr([&a,&b,cp = cf.get_promise()]{
+            int c = a+b;
+            cp.set_value(c);
+            a = b;
+            b = c;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        });
+        thr.detach();
+        int c = co_await cf;
+        co_yield c;
+    }
+}
+
+cocls::task<void> co_fib_reader()  {
+    std::cout<< "async gen1: ";
+    auto g = co_async_fib(15);
+    while (!!g) {
+        std::cout << co_await g << " " ;
+    }
+    std::cout<< std::endl;
+}
+
 template class cocls::future<void>;
 
 int main(int argc, char **argv) {
@@ -72,6 +99,8 @@ int main(int argc, char **argv) {
     auto z = co_test2();
     std::cout << "(main) waiting for future" << std::endl;
     std::cout << z.join() << std::endl;
+
+
     
     auto fib = co_fib();
     std::cout<< "gen1: ";    
@@ -96,6 +125,16 @@ int main(int argc, char **argv) {
         std::cout << fib3() << " ";
     }
     std::cout<< std::endl;
+
+    co_fib_reader().join();
+
+    auto fib4 = co_async_fib(15);
+    std::cout<< "async gen2: ";
+    while (!!fib4) {
+        std::cout << fib4() << " ";
+    }
+    std::cout<< std::endl;
+
 
     
 }
