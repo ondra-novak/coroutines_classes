@@ -17,6 +17,21 @@ class generator_promise;
 ///Coroutine generator
 /**
  * @tparam T type of generated value
+ * 
+ * Generator can be movable but not copied. Dropping instance causes that generator is terminated
+ * 
+ * Generator is started in "lazy" mode, first access starts generator until first co_yield. 
+ * 
+ * @note generator is executed when next(). Accessing value doesn't execute generator. You must call next()
+ * for the first time to access next value. The same operation can handle operator ! and operator bool. There
+ * is only one difference, they will not advance position until data are processed
+ *
+ * Generator function can use co_await. If such generator is called from non-coroutine, accessing items 
+ * are done by blocking call. If such generator is called from coroutine, coroutine symmetric transfer is used.
+ * 
+ * 
+ * 
+ * 
  */
 template<typename T>
 class generator {
@@ -33,6 +48,7 @@ public:
         
     generator(promise_type *prom):_prom(prom) {}
     
+    ///Iterator
     struct iterator {
     public:
         iterator():_g(0),_end(true) {}
@@ -66,6 +82,20 @@ public:
     };
     
     
+    ///Advance to next item. 
+    /**
+     * Must be called as first operation (operator ! and operator bool and co_await can be used instead as well)
+     * Function always advances to next item
+     * 
+     * @retval true next item is ready
+     * @retval false no more items
+     * 
+     * @note function invalidates any returned reference
+     */
+    bool next() {
+        return _prom->next();
+    }
+    
     ///Retrieve iterator
     iterator begin() {
         return iterator(this, !_prom->next());
@@ -75,34 +105,85 @@ public:
         return iterator(this, true);
     }
     
-    ///Test whether no more values
+    ///Determines, whether there are more items available
     /**
+     * Function advances to next item when previous item has been retrieved
      * @retval true no more values
      * @retval false more values
      * 
      * @note do not combine with iterators. 
      */
     bool operator! () {
-        return !_prom->is_done_prefetch();
+        return !_prom->next_if_processed();
     }
-    ///Test whether there are mo values
+    ///Determines, whether there are more items available
     /**
-     * @retval false no more values
-     * @retval true more values
+     * Function advances to next item when previous item has been retrieved
+     * @retval true no more values
+     * @retval false more values
      * 
      * @note do not combine with iterators. 
      */
     operator bool () {
-        return _prom->is_done_prefetch();
+        return _prom->next_if_processed();
     }
     
-    ///Retrieve next value
+    
+    ///Retrieve current item
+    /**     
+     * @return reference to current item
+     * @note calling this function marks item retrieved. This doesn't advance position until operator !, 
+     * operator bool or co_await is used.
+     */
+    T &get() {
+        return _prom->get();
+    }
+    ///Retrieve current item
+    /**     
+     * @return reference to current item
+     * @note calling this function marks item retrieved. This doesn't advance position until operator !, 
+     * operator bool or co_await is used.
+     */
     T &operator()() {
-        return _prom->get_prefetch();
+        return _prom->get();
     }
 
-    auto operator co_await() {
-        return _prom->get_future_prefetch().operator co_await();
+    class next_awaiter {
+    public:
+        next_awaiter(promise_type &owner):_owner(owner) {}
+        next_awaiter(const next_awaiter &other) = default;
+        next_awaiter &operator=(const next_awaiter &other) = delete;
+                ;
+        bool await_ready() const {return _owner.next_ready();}
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+            _owner.next_suspend(h);
+            return std::coroutine_handle<promise_type>::from_promise(_owner);
+        }
+        bool await_resume() const {
+            return _owner.next_resume();
+        }
+        
+    protected:
+        promise_type &_owner;
+        
+    };
+    
+    ///Allows to wait on generator in coroutine using co_await
+    /**
+     * You need to await to calculate next item. Result is bool
+     * @retval true next item has been calculated
+     * @retval false no more items
+     * 
+     * @code
+     * generator<int> g = call_gen();
+     * while(co_await g) {
+     *          std::cout << "value: " << g() << std::endl;
+     * }
+     * @endcode
+     * 
+     */
+    next_awaiter operator co_await() {
+        return next_awaiter(*_prom);
     }
     
     
@@ -115,112 +196,133 @@ protected:
 template<typename T>
 class generator_promise {
 public:
+    
+    enum class State {
+        not_started,
+        running,
+        promise_set,
+        data_ready,
+        data_processed,
+        done
+    };
+    
     generator<T> get_return_object() {
         return generator<T>(this);
     }
     static std::suspend_always initial_suspend() noexcept {return {};}
-    static std::suspend_always final_suspend() noexcept {return {};}
 
     struct yield_suspender {
-        yield_suspender(bool suspend, std::coroutine_handle<> h)
-            :_s(suspend),_h(h) {}
-        bool await_ready() const {return !_s;}
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const {
-            if (_h) {
-                return _h;
-            }
-            else {
-                return std::noop_coroutine();
-            }
+        yield_suspender(std::coroutine_handle<> h): _h(h) {}
+        bool await_ready() const noexcept {return false;}
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const noexcept {
+            return _h?_h:std::noop_coroutine();
         }
-        void await_resume() const {};
+        void await_resume() const noexcept {};
 
-        bool _s;
         std::coroutine_handle<> _h;
     };
 
+    yield_suspender final_suspend() noexcept {
+        State chk = _state.exchange(State::done, std::memory_order_acquire);
+        if (chk == State::promise_set) {
+            _wait_promise.set_value(State::done);
+            _wait_promise.release();
+        }
+       
+        auto h = _awaiter;
+        _awaiter = nullptr;
+        return yield_suspender(h);
+    }
+
 
     yield_suspender yield_cont() noexcept {
-        std::coroutine_handle<> h;
-        bool ok = _promise->release(h);
-        if (ok) return yield_suspender(true, h);
-        else return yield_suspender(true, nullptr);
+        State chk = _state.exchange(State::data_ready, std::memory_order_acquire);
+        if (chk == State::promise_set) {
+            _wait_promise.set_value(State::data_ready);
+            _wait_promise.release();
+        }
+        auto h = _awaiter;
+        _awaiter = nullptr;
+        return yield_suspender(h);
     }
 
     yield_suspender yield_value(T &&value) noexcept {
-        _promise->set_value(std::move(value));
+        _value = std::move(value);
         return yield_cont();
     }
     yield_suspender yield_value(const T &value) noexcept {
-        _promise->set_value(value);
+        _value = value;
         return yield_cont();
     }
     
-    bool is_done()  {
+    
+    bool next_ready() {
+        return _state == State::done || _state == State::data_ready;
+    }
+    
+    void next_suspend(std::coroutine_handle<> h) {
+        _awaiter = h;
+        _value.reset();
+        _state = State::running;
+    }
+    
+    bool next_resume() {
+        return _state != State::done;
+    }       
+    
+    bool next() {        
+        auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
+        if (_state.load(std::memory_order_relaxed) == State::done) return false;
+        next_suspend(std::noop_coroutine());
+        h.resume();
+        if (_state.load(std::memory_order_relaxed) == State::running) {
+            future<State> f;
+            State chk = State::running;
+            _wait_promise = f.get_promise();
+            if (_state.compare_exchange_strong(chk, State::promise_set, std::memory_order_release)) {
+                _state = f.wait();                
+            } else {
+                _wait_promise.release();
+            }            
+        }
+        return next_resume();
+    }
+    
+    
+    bool is_done() {
         return std::coroutine_handle<generator_promise>::from_promise(*this).done();
     }
     void destroy() {
         std::coroutine_handle<generator_promise>::from_promise(*this).destroy();
     }
-    
-    bool next() {
-        auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
-        if (h.done()) return false;
-        _value.reset();
-        _value.emplace();
-        _promise = _value->get_promise();
-        h.resume();
-        return (!h.done());
-    }
-    
-    T &get() {
-        if (_value.has_value()) return _value->wait();
-        else throw value_not_ready_exception();        
-    }
-    
-    future<T> &get_future() {
-        if (_value.has_value()) return *_value;
-        else throw value_not_ready_exception();
-    }
-
-    bool is_done_prefetch() {
-        if (!_prefetch) {
-            _prefetch = true;
-            return next();
-        }
-        else return is_done();
-    }
-    
-    T &get_prefetch() {
-        if (!_prefetch) {
-            if (!next()) throw no_more_values_exception();            
-        }
-        T &out = get();
-        _prefetch = false;
-        return out;
         
+    T &get() {
+        State v = State::data_ready;
+       if (_state.compare_exchange_strong(v, State::data_processed, std::memory_order_acquire)) {
+           if (_exception != nullptr) std::rethrow_exception(_exception);
+           else return *_value;
+       } else {
+           throw value_not_ready_exception();
+       }
     }
-
-    future<T> &get_future_prefetch() {
-        if (!_prefetch) {
-            if (!next()) throw no_more_values_exception();
-        }
-        future<T> &out = get_future();
-        _prefetch = false;
-        return out;
-
+    
+    bool next_if_processed() {
+        if (_state == State::data_ready) return true;
+        return next();
     }
-
-
+    
+   
 
     void unhandled_exception() {
-        _value->get_promise().unhandled_exception();
+        _exception = std::current_exception();        
     }
     
 protected:
-    std::optional<future<T> > _value;
-    std::optional<promise<T> > _promise;
-    bool _prefetch = false;
+    std::atomic<State>  _state = State::not_started;
+    std::exception_ptr _exception;
+    std::optional<T> _value;
+    std::coroutine_handle<> _awaiter;
+    promise<State> _wait_promise;
 };
 
 

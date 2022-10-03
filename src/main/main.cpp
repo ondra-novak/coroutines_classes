@@ -85,12 +85,29 @@ cocls::generator<int> co_async_fib(int count) {
 }
 
 cocls::task<void> co_fib_reader()  {
-    std::cout<< "async gen1: ";
+    std::cout<< "async gen - co_await: ";
     auto g = co_async_fib(15);
-    while (!!g) {
-        std::cout << co_await g << " " ;
+    while (co_await g) {
+        std::cout << g() << " " ;
     }
     std::cout<< std::endl;
+}
+cocls::task<void> co_fib2_reader()  {
+    std::cout<< "sync gen - co_await;";
+    auto g = co_fib2(15);
+    while (co_await g) {
+        std::cout << g() << " " ;
+    }
+    std::cout<< std::endl;
+}
+cocls::task<void> co_fib3_reader()  {
+    std::cout<< "sync gen - resume in coroutine: ";
+    auto g = co_fib2(15);
+    while (g) {
+        std::cout << g() << " " ;
+    }
+    std::cout<< std::endl;
+    co_return;
 }
 
 template class cocls::future<void>;
@@ -107,7 +124,7 @@ int main(int argc, char **argv) {
 
     
     auto fib = co_fib();
-    std::cout<< "gen1: ";    
+    std::cout<< "infinite gen: ";    
     for (int i = 0; i < 15; i++) {
         auto iter = fib.begin();
         if (iter != fib.end()) {
@@ -117,14 +134,14 @@ int main(int argc, char **argv) {
     std::cout<< std::endl;
 
     auto fib2 = co_fib2(15);
-    std::cout<< "gen2: ";
+    std::cout<< "finite gen - range for: ";
     for (int &i: fib2) {
         std::cout << i << " ";
     }
     std::cout<< std::endl;
 
     auto fib3 = co_fib2(15);
-    std::cout<< "gen3: ";
+    std::cout<< "finite gen - next/read: ";
     while (!!fib3) {
         std::cout << fib3() << " ";
     }
@@ -132,13 +149,17 @@ int main(int argc, char **argv) {
 
     co_fib_reader().join();
 
+
     auto fib4 = co_async_fib(15);
-    std::cout<< "async gen2: ";
+    std::cout<< "async gen2 - next/read (sync): ";
     while (!!fib4) {
         std::cout << fib4() << " ";
     }
     std::cout<< std::endl;
 
+    co_fib2_reader().join();
+    
+    co_fib3_reader().join();
 
     
 }
