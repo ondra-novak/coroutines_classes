@@ -7,8 +7,7 @@
 #include "exceptions.h"
 
 #include <optional>
-#include <coroutine>
-#include <memory>
+#include <future>
 
 namespace cocls {
 
@@ -101,7 +100,10 @@ public:
     T &operator()() {
         return _prom->get_prefetch();
     }
-    
+
+    auto operator co_await() {
+        return _prom->get_future_prefetch().operator co_await();
+    }
     
     
 protected:
@@ -118,15 +120,40 @@ public:
     }
     static std::suspend_always initial_suspend() noexcept {return {};}
     static std::suspend_always final_suspend() noexcept {return {};}
-    std::suspend_always yield_value(T &&value) noexcept {
-        _value = std::move(value);
-        _exception = nullptr;
-       return {};
+
+    struct yield_suspender {
+        yield_suspender(bool suspend, std::coroutine_handle<> h)
+            :_s(suspend),_h(h) {}
+        bool await_ready() const {return !_s;}
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const {
+            if (_h) {
+                return _h;
+            }
+            else {
+                return std::noop_coroutine();
+            }
+        }
+        void await_resume() const {};
+
+        bool _s;
+        std::coroutine_handle<> _h;
+    };
+
+
+    yield_suspender yield_cont() noexcept {
+        std::coroutine_handle<> h;
+        bool ok = _promise->release(h);
+        if (ok) return yield_suspender(true, h);
+        else return yield_suspender(true, nullptr);
     }
-    std::suspend_always yield_value(const T &value) noexcept {
-        _value = value;
-        _exception = nullptr;
-       return {};
+
+    yield_suspender yield_value(T &&value) noexcept {
+        _promise->set_value(std::move(value));
+        return yield_cont();
+    }
+    yield_suspender yield_value(const T &value) noexcept {
+        _promise->set_value(value);
+        return yield_cont();
     }
     
     bool is_done()  {
@@ -139,16 +166,23 @@ public:
     bool next() {
         auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
         if (h.done()) return false;
+        _value.reset();
+        _value.emplace();
+        _promise = _value->get_promise();
         h.resume();
         return (!h.done());
     }
     
     T &get() {
-        if (_exception) std::rethrow_exception(_exception);
-        else if (_value.has_value()) return *_value;
+        if (_value.has_value()) return _value->wait();
         else throw value_not_ready_exception();        
     }
     
+    future<T> &get_future() {
+        if (_value.has_value()) return *_value;
+        else throw value_not_ready_exception();
+    }
+
     bool is_done_prefetch() {
         if (!_prefetch) {
             _prefetch = true;
@@ -166,17 +200,26 @@ public:
         return out;
         
     }
-    
-    // Disallow co_await in generator coroutines.
-    void await_transform() = delete;           
+
+    future<T> &get_future_prefetch() {
+        if (!_prefetch) {
+            if (!next()) throw no_more_values_exception();
+        }
+        future<T> &out = get_future();
+        _prefetch = false;
+        return out;
+
+    }
+
+
+
     void unhandled_exception() {
-       _value.reset();
-       _exception = std::current_exception();
+        _value->get_promise().unhandled_exception();
     }
     
 protected:
-    std::optional<T> _value;
-    std::exception_ptr _exception;
+    std::optional<future<T> > _value;
+    std::optional<promise<T> > _promise;
     bool _prefetch = false;
 };
 

@@ -14,10 +14,14 @@ class lazy: public task<T> {
 public:
     using promise_type = lazy_promise<T>;
 
-    lazy();
+    lazy() {};
     lazy(promise_type *p):task<T>(p) {}
 
     task_awaiter<task_promise<T> > operator co_await();
+
+    void start();
+
+    auto join();
 
 };
 
@@ -38,19 +42,30 @@ protected:
     friend class lazy<T>;
 };;
 
+
 template<typename T>
 task_awaiter<task_promise<T> > lazy<T>::operator co_await() {
+    start();
+    return task_awaiter<task_promise<T> >(*(this->_promise));
+}
+
+template<typename T>
+inline auto lazy<T>::join()  {
+    start();
+    return task<T>::join();
+
+}
+
+
+
+template<typename T>
+inline void cocls::lazy<T>::start() {
     auto prom = static_cast<lazy_promise<T> *>(this->_promise);
     if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
         auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
         h.resume();
     }
-    return task_awaiter<task_promise<T> >(*(this->_promise));
 }
 
-
 }
-
-
-
 #endif /* SRC_COCLASSES_LAZY_H_ */
