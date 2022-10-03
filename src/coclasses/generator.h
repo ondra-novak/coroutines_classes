@@ -198,11 +198,17 @@ class generator_promise {
 public:
     
     enum class State {
+        //generator was not started
         not_started,
+        //generator is running, new value is not ready yet
         running,
-        promise_set,
+        //generator is running, but promise object is prepared to accept new state
+        running_promise_set,
+        //data are ready, can be read
         data_ready,
+        //data are ready, was read
         data_processed,
+        //generator finished, no more data
         done
     };
     
@@ -222,9 +228,14 @@ public:
         std::coroutine_handle<> _h;
     };
 
+    /*
+     * checks if promise set, if does, resolves it, with status done,
+     * otherwise, set status done
+     * finally resumes consumer if there is any
+     */
     yield_suspender final_suspend() noexcept {
         State chk = _state.exchange(State::done, std::memory_order_acquire);
-        if (chk == State::promise_set) {
+        if (chk == State::running_promise_set) {
             _wait_promise.set_value(State::done);
             _wait_promise.release();
         }
@@ -235,9 +246,14 @@ public:
     }
 
 
+    /*
+     * checks if promise is set - if does, resolves it, which status data_ready
+     * otherwise sets data_ready
+     * finally resumes consumer if there is any
+     */
     yield_suspender yield_cont() noexcept {
         State chk = _state.exchange(State::data_ready, std::memory_order_acquire);
-        if (chk == State::promise_set) {
+        if (chk == State::running_promise_set) {
             _wait_promise.set_value(State::data_ready);
             _wait_promise.release();
         }
@@ -246,30 +262,70 @@ public:
         return yield_suspender(h);
     }
 
+    //on co_yield
     yield_suspender yield_value(T &&value) noexcept {
         _value = std::move(value);
         return yield_cont();
     }
+    //on co_yield
     yield_suspender yield_value(const T &value) noexcept {
         _value = value;
         return yield_cont();
     }
     
     
+    //called by co_await from generator
+    /*
+     * checks whether state is done, or data are ready. In this state, no suspend is needed
+     */
     bool next_ready() {
         return _state == State::done || _state == State::data_ready;
     }
     
+    //called by co_await from generator on suspend
+    /*
+     * records consumer,
+     * resets values
+     * sets state running - this allows to detect state after return from resume
+     * 
+     */
     void next_suspend(std::coroutine_handle<> h) {
         _awaiter = h;
         _value.reset();
         _state = State::running;
     }
     
+    //called by co_await from generator on await_resume
+    /*
+     * just returns true, if state differs from done (State::data_ready or State::done is only valid there)
+     
+     */
     bool next_resume() {
+        assert(_state == State::data_ready || _state == State::done);
         return _state != State::done;
     }       
     
+    //called from generator by function next()
+    /*
+     * This called by normal function - not coroutine, so no co_await is available.
+     * Generator will run on current stack. It can use co_await, however, if the execution
+     * is transfered to different thread, h.resume() returns while state is set to State::running
+     * 
+     * Note in this case, we are in MT environment, co_yield can be called from different thread.
+     * So State::running is not definitive.
+     * 
+     * To handle this situation, we set future<State> and promise<State>. Then we try to
+     * change State from State::running to State::promise_set (with release, to transfer new
+     * state of promise to the other thread). If this fails, the State changed, so we no longer
+     * need promise and it is released. If we successfuly set State to State::promise_set, the
+     * other thread is forced to resolve the promise. Just wait for the future and retrieve 
+     * new state from it
+     * 
+     * Summary: Accessing async generator from non-coroutine causes blocking call even if the
+     * execution is transfered to different thread. Current thread remains blocked until the
+     * value is calculated
+     * 
+     */
     bool next() {        
         auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
         if (_state.load(std::memory_order_relaxed) == State::done) return false;
@@ -279,7 +335,7 @@ public:
             future<State> f;
             State chk = State::running;
             _wait_promise = f.get_promise();
-            if (_state.compare_exchange_strong(chk, State::promise_set, std::memory_order_release)) {
+            if (_state.compare_exchange_strong(chk, State::running_promise_set, std::memory_order_release)) {
                 _state = f.wait();                
             } else {
                 _wait_promise.release();
@@ -289,39 +345,50 @@ public:
     }
     
     
-    bool is_done() {
-        return std::coroutine_handle<generator_promise>::from_promise(*this).done();
-    }
+    //Called by Deleter
     void destroy() {
         std::coroutine_handle<generator_promise>::from_promise(*this).destroy();
     }
         
+    //Called from generator to obtain value
+    /* If State::data_ready || State::data_processed, state is set to State::data_processed. It
+     * also use acquire to synchronize result to this thread. Other state are resolved as exception.
+     * Exception state can be active with state State::done
+     */
     T &get() {
         State v = State::data_ready;
-       if (_state.compare_exchange_strong(v, State::data_processed, std::memory_order_acquire)) {
+       if (_state.compare_exchange_strong(v, State::data_processed, std::memory_order_acquire) || v == State::data_processed) {
            if (_exception != nullptr) std::rethrow_exception(_exception);
            else return *_value;
+       } else if (v == State::done){
+           if (_exception != nullptr) std::rethrow_exception(_exception);
+           throw no_more_values_exception();
        } else {
            throw value_not_ready_exception();
        }
     }
     
+    //calls next() but not if data_ready
     bool next_if_processed() {
         if (_state == State::data_ready) return true;
         return next();
     }
     
-   
-
+    //called when unhandled exception
     void unhandled_exception() {
         _exception = std::current_exception();        
     }
     
 protected:
+    //contain state
     std::atomic<State>  _state = State::not_started;
+    //contains recorded exception
     std::exception_ptr _exception;
+    //contains current value
     std::optional<T> _value;
+    //contains consumer's handle - this coroutine must be resumed on co_yield
     std::coroutine_handle<> _awaiter;
+    //contains promise when State::promise_set is active
     promise<State> _wait_promise;
 };
 
