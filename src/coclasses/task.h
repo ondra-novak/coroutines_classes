@@ -132,7 +132,7 @@ public:
      * @return result of the task. Note that operation can be blocking. If the
      * task cannot be finished because this thread is blocked then deadlock can happen 
      */
-    T join() const;
+    T &join() const;
 
 
     std::future<T> as_future() const;
@@ -186,7 +186,7 @@ protected:
 template<typename Owner> class task_awaiter: public abstract_task_awaiter<Owner> {
 public:
     using Value = typename Owner::ValueT;
-    using ValRef = Reference<Value>;
+    using ValRef = std::add_lvalue_reference_t<Value>;
     using super_t = abstract_task_awaiter<Owner>;
     
     task_awaiter(Owner &owner): super_t(owner) {}
@@ -448,7 +448,7 @@ inline T& task<T>::get() const {
 }
 
 template<typename T>
-inline T task<T>::join() const {
+inline T& task<T>::join() const {
     task_blocking_awaiter<task_promise<T> > bk(*this->_promise);
     bk.wait();
     return get();

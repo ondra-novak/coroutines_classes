@@ -18,7 +18,8 @@ use namespace cocls;
 * **lazy**
 * **generator**
 * **future**
-
+* **mutex**
+* **resume_lock/coboard**
 
 
 ### Task
@@ -49,12 +50,14 @@ int main(int argc, char **argv) {
 * you can `get()` result of the coroutine, if the coroutine is not yet finished, it performs a blocking operation until the result is ready
 * you can register callback function which is called when the coroutine is finished
 
-#### Object lazy<T> - features
+### Lazy
 
 * represents a lazily evaluated coroutine. It is executed once it is `co_await` for the first time. 
 * the rest of features are similar to `task<T>`
 
-#### Object generator<T> - features
+
+
+### Generator
 
 * represents a generator coroutine which can use co_yield to generate values. 
 * can contain finite or infinite cycle. Once generator is no longer needed, it can be destroyed anytime
@@ -82,7 +85,7 @@ int main(int argc, char **argv) {
 
 ```
 
-#### Object future
+### Future
 
 * represents awaitable object, which can hold future value. Along with the `future` object there is a satelite object `promise` which can be passed deep into code, and the promise is fulfilled, the `future` object is signaled and the result is available
 
@@ -102,6 +105,72 @@ int result = co_await fut;
 * You need to destroy all promises before the future object. Otherwise UO
 * Only one `promise` can receive value. Receiving value is not MT Safe
 * The awaiting coroutine is resumed only after all promises are destroyed. So it is not resumed immediately, this removes potential sideeffect in part of the code which is resolving the promise, and postopones resumption to the part when everything is probably destroyed.
+
+
+### Mutex
+
+* simple mutex which supports coroutines. 
+
+```
+cocls::mutex mx
+...
+//coroutine
+{
+    auto ownership = co_await mx;
+    //you own mutex
+    ownershop.reset()
+    //you no longer own mutex
+}
+
+//standard function
+{
+    auto ownership = mx.lock();
+    // you own mutex
+    ownership.reset();
+    //you no longer own mutex
+```
+Mutex works across threads and coroutine. Ownership of the mutex can be transfered between
+threads. Ownership is automatically released at the end of function, if it is not transfered
+(ownership is movable)
+
+### Resume lock / coboard
+
+Suspenssion and resumption of coroutines can build up the stack asi each operation creates a new frame. This issue is handled by resume_lock, which converts these operations to the symmetric transfer. This means resumption of coroutine don't need to be carried immediately, especially
+in other coroutine. This operation can be schedules to next suspension point - so if you need
+to ensure, that resumption is done immediately, you need to perform co_await on something
+
+#### function pause()
+
+Function `pause()` can be used to temporary suspend current coroutine in favor to other suspended coroutines that has been scheduled during `resume_lock`. 
+
+```
+co_await cocls::pause()
+```
+
+This function can be used to manually schedule coroutines.  Following code executes coroutines in parallel using manual scheduling
+
+```
+task<int> corun(int i) {
+      for (int j = 0; j < 5; j++) {
+          std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
+          co_await cocls::pause();
+      } 
+      std::cout << "Finished coroutine " << i << std::endl;
+}
+
+void interleaved() {
+    cocls::coboard([]{
+       for (int i = 0; i < 5; i++) {
+            corun(i);
+       }     
+    });
+}
+```
+
+#### function coboard()
+
+Represents coroutine board, base level where resume lock is in effect. All coroutines suspended and resumed in current thread will use symetric transfer. Inside coboard you can start many coroutines as you want. Function exits when all created coroutines are finished or transfered
+to different thread.
 
 
 ## Use in code

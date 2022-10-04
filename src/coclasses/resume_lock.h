@@ -76,8 +76,7 @@ public:
      * clean up the resume queue. By starting coboard transfers this issue to the coboard itself
      * where it is harmless
      * 
-     * @tparam Fn
-     * @param fn
+     * @param fn function to call on top of coroutine board
      */
     template<typename Fn>
     static void coboard(Fn &&fn) {
@@ -145,7 +144,12 @@ protected:
     }
     
     template<typename Fn> 
-    void lock(Fn &&fn) {
+    void lock(Fn &&fn) noexcept {
+        if (_active) {
+            //when coboard is active, just run function
+            fn();
+            return;
+        }
         _active = true;
         fn();
         _finish = true;
@@ -180,11 +184,11 @@ protected:
  * @copydoc resume_lock::coboard
  */
 template<typename Fn>
-static inline void coboard(Fn &&fn) {
+inline void coboard(Fn &&fn) {
     resume_lock::coboard(std::forward<Fn>(fn));
 }
 
-///Run coroutine board
+///Suspend current coroutine and reschedules it to the final phase of resume_lock / coboard
 /**
  * @copydoc resume_lock::pause
  */

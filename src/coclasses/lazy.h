@@ -22,7 +22,7 @@ public:
     ///start coroutine now. 
     void start();
 
-    auto join();
+    std::add_lvalue_reference<T> join();
 
 };
 
@@ -51,7 +51,7 @@ task_awaiter<task_promise<T> > lazy<T>::operator co_await() {
 }
 
 template<typename T>
-inline auto lazy<T>::join()  {
+inline std::add_lvalue_reference<T> lazy<T>::join()  {
     start();
     return task<T>::join();
 

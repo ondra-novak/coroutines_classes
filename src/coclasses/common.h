@@ -14,17 +14,6 @@
 #define co_yield throw
 #endif
 
-namespace cocls {
-    
-template<typename X> struct Reference_t {using Result = X &; };
-template<> struct Reference_t<void> {using Result = void;};
-
-template<typename X>
-using Reference = typename Reference_t<X>::Result;
-
-
-}
-
 
 
 

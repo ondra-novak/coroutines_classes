@@ -12,10 +12,10 @@
 #include "resume_lock.h"
 
 #include <cassert>
-#include <condition_variable>
 #include <coroutine>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 
 namespace cocls {
 
@@ -72,7 +72,7 @@ protected:
         
         void wait() {
             std::unique_lock _(_mx);
-            _cond.wait(_,[this]{return _signal;});
+            _cond.wait(_, [this]{return _signal;});
         }
         virtual void resume() noexcept {
             std::unique_lock _(_mx);
