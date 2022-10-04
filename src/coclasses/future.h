@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "resume_lock.h"
+#include "exceptions.h"
 
 #include <assert.h>
 #include <memory>
@@ -72,7 +73,7 @@ public:
             return resume_lock::await_suspend(h);
         }
 
-        virtual std::coroutine_handle<> get_handle() {
+        virtual std::coroutine_handle<> get_handle() override {
             return _h;
         };
 
