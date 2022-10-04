@@ -85,6 +85,27 @@ int main(int argc, char **argv) {
 
 ```
 
+### Asynchronous generator and using generators in coroutines
+
+* generator can be asynchronous, i.e. it can use co_await
+* using asynchronous generator in normal function is implemented as blocking operation. 
+* to use asynchronous generator in a coroutine, you need to use co_await on it. The reading
+cycle is slighly different
+
+```
+generator<int> g = run_async_gen();
+
+while (co_await g) {
+    int v = g();
+    process(v);
+}
+```
+
+The unusual difference is that coroutine need to co_await on the generator object, and result
+of such operation is `bool` which becomes `true` if the value is ready, and `false` if no
+more values are available (eof). Then you can use `operator()` to read the value
+
+
 ### Future
 
 * represents awaitable object, which can hold future value. Along with the `future` object there is a satelite object `promise` which can be passed deep into code, and the promise is fulfilled, the `future` object is signaled and the result is available
