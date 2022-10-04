@@ -64,7 +64,7 @@ inline void cocls::lazy<T>::start() {
     auto prom = static_cast<lazy_promise<T> *>(this->_promise);
     if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
         auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
-        h.resume();
+        resume_lock::resume(h);
     }
 }
 

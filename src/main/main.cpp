@@ -3,9 +3,13 @@
 #include <coclasses/future.h>
 #include <coclasses/lazy.h>
 #include <coclasses/generator.h>
+#include <coclasses/mutex.h>
 
+#include <array>
 #include <iostream>
-#include <assert.h>
+#include <cassert>
+#include <random>
+
 
 cocls::lazy<int> co_lazy() {
     std::cout << "(co_lazy) executed" << std::endl;
@@ -107,10 +111,64 @@ cocls::task<void> co_fib3_reader()  {
         std::cout << g() << " " ;
     }
     std::cout<< std::endl;
-    co_return;
+    co_return; //need co_return to have this as coroutine
 }
 
-template class cocls::future<void>;
+
+int test_mutex() {
+
+    int shared_var = 0;
+    std::default_random_engine rnd(0);
+    cocls::mutex mx;
+    std::array<std::thread, 4> thrs;
+    for (auto &t: thrs) {        
+        int p = std::distance(thrs.data(), &t);
+        t = std::thread([&,p]{           
+            std::cout << "Thread start:" << p << std::endl;
+            cocls::resume_lock::coboard([&]{
+                for (int i = 0; i < 5; i++) {
+                    //NOTE - lambda's closure disappear on first suspend
+                    auto t =([](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
+                        std::cout << "Coroutine start:" << idx << std::endl;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        for (int i = 0; i < 5; i++) {                            
+                            auto own = co_await mx;
+                            std::cout << "Coroutine running id: " << idx << std::endl;
+                            std::uniform_int_distribution<int> tm(0,100);
+                            auto x = ++shr;
+                            std::this_thread::sleep_for(std::chrono::milliseconds(tm(rnd)));
+                            assert(x == shr); //variable should not change here
+                            std::cout << "Shared var increased: " << shr << std::endl;
+                            
+                        }                    
+                    })(shared_var, mx, rnd, p*10+i);
+                }
+            });
+            std::cout << "Thread exit" << std::endl;
+        });       
+    }
+    for (auto &t: thrs) {
+        t.join();
+    }
+    return shared_var;
+    
+    
+}
+
+void test_pauise() {
+    cocls::coboard([]{
+       for (int i = 0; i < 5; i++) {
+           ([](int i)->cocls::task<void>{
+              for (int j = 0; j < 5; j++) {
+                  std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
+                  co_await cocls::pause();
+              } 
+              std::cout << "Finished coroutine " << i << std::endl;
+           })(i);
+       }     
+    });
+}
+
 
 int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
@@ -161,5 +219,9 @@ int main(int argc, char **argv) {
     
     co_fib3_reader().join();
 
+    std::cout << "Mutex test" << std::endl;
+    test_mutex();
+    std::cout << "Pause test" << std::endl;
+    test_pauise();
     
 }

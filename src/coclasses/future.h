@@ -2,7 +2,8 @@
 #ifndef SRC_COCLASSES_FUTURE_H_
 #define SRC_COCLASSES_FUTURE_H_
 
-
+#include "common.h"
+#include "resume_lock.h"
 
 #include <assert.h>
 #include <memory>
@@ -63,11 +64,12 @@ public:
     public:        
         co_awaiter(Impl &owner):abstract_awaiter(owner) {}
         
-        void await_suspend(std::coroutine_handle<> h) {
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             this->_owner.add_ref();
             this->_h = h;
             this->_owner._awaiter = this;
             this->_owner.release_ref();
+            return resume_lock::await_suspend(h);
         }
 
         virtual std::coroutine_handle<> get_handle() {
@@ -75,7 +77,7 @@ public:
         };
 
         virtual void resume() noexcept override {
-            _h.resume(); 
+            resume_lock::resume(_h);            
         }
     protected:
         std::coroutine_handle<> _h;
@@ -87,16 +89,26 @@ public:
         void wait() {
             this->_owner.add_ref();
             this->_owner._awaiter = this;
-            this->_owner.release_ref();
+            this->_owner.release_ref();            
             std::unique_lock _(mx);
-            cvar.wait(_, [&]{return this->await_ready();});
+            //scan await ready for now only
+            
+            //this is important as later we need to check our notification, not await_ready
+            //because if await_ready awas false, we start wait, but we also promise
+            //to keep this awaiter alive until notification arrives
+            //so even if the await_ready becomes true, we still need to wait for a call of the resume()
+            //to not release awaiter before the signal arrives.
+            _signaled = this->await_ready();
+            cvar.wait(_, [&]{return _signaled;});
         }
         virtual void resume() noexcept override {
             std::unique_lock _(mx);
+            _signaled = true;
             cvar.notify_all();
         }
     protected:
         std::mutex mx;
+        bool _signaled = false;
         std::condition_variable cvar;
     };
 

@@ -4,6 +4,7 @@
 
 #include "common.h" 
 #include "exceptions.h"
+#include "resume_lock.h"
 
 #include <atomic>
 #include <coroutine>
@@ -193,15 +194,15 @@ public:
     bool await_ready() const noexcept {
         return this->_owner.is_ready();
     }
-    bool await_suspend(std::coroutine_handle<> h) {
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
         _h = h;
-        return this->_owner.register_awaiter(this);
+        return resume_lock::await_suspend(h, this->_owner.register_awaiter(this));
     }
     ValRef await_resume() {
         return this->_owner.get_value();
     }
     virtual void resume() noexcept override  {
-        _h.resume();
+        resume_lock::resume(_h);
     }
 
     
