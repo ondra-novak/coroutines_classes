@@ -6,6 +6,7 @@
 #include "common.h" 
 #include "exceptions.h"
 
+#include "aggregator.h"
 #include <optional>
 #include <future>
 
@@ -13,6 +14,9 @@ namespace cocls {
 
 template<typename T>
 class generator_promise;
+
+template<typename T> 
+class generator_multi_awaiter;
 
 ///Coroutine generator
 /**
@@ -182,12 +186,23 @@ public:
      * @endcode
      * 
      */
-    next_awaiter operator co_await() {
+    next_awaiter operator co_await() const {
         return next_awaiter(*_prom);
     }
     
+    bool ready() const {
+        return _prom->next_ready();
+    }
+    
+    template<typename FN>
+    void next(FN &&fn) {
+        _prom->next_cb(std::forward<FN>(fn));
+    }
     
 protected:
+
+    
+    friend class generator_multi_awaiter<T>;
     
     std::unique_ptr<promise_type, Deleter> _prom;    
     
@@ -344,7 +359,32 @@ public:
         return next_resume();
     }
     
-    
+
+    template<typename Fn>
+    void next_cb(Fn &&fn) {        
+        auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
+        if (_state.load(std::memory_order_relaxed) == State::done) {
+            fn(false);
+            return;
+        }
+        next_suspend(std::noop_coroutine());
+        h.resume();
+        if (_state.load(std::memory_order_relaxed) == State::running) {
+            future<State> f;
+            State chk = State::running;
+            _wait_promise = cocls::make_promise<State>([this, fn = std::forward<Fn>(fn)](cocls::future<State> &f) mutable {
+                _state = f.get();
+                fn(next_resume());
+            });
+            if (!_state.compare_exchange_strong(chk, State::running_promise_set, std::memory_order_release)) {
+                _wait_promise.set_value(chk);
+                _wait_promise.release();
+            }            
+            return;
+        }
+        fn(next_resume()); 
+    }
+
     //Called by Deleter
     void destroy() {
         std::coroutine_handle<generator_promise>::from_promise(*this).destroy();
@@ -379,6 +419,12 @@ public:
         _exception = std::current_exception();        
     }
     
+    bool can_continue() const {
+        return _state == State::data_processed || _state == State::not_started ;
+    }
+
+
+    
 protected:
     //contain state
     std::atomic<State>  _state = State::not_started;
@@ -392,6 +438,59 @@ protected:
     promise<State> _wait_promise;
 };
 
+
+///Aggregator of multiple generators
+/**
+ * @param list__ list of generators to aggregate. The vector is passed 
+ * as rvalue reference to avoid copying (because generators are movable)_
+ * @return generator
+ */
+
+template<typename T>
+generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
+    std::vector<generator<T> > list(std::move(list__));
+    aggregator<generator<T> *, bool> aggr;
+    for (auto &x: list) {
+        x.next(aggr.make_callback(&x));
+    }
+    while (!aggr.empty()) {
+        auto kv = co_await aggr;
+        if (kv.second) {
+            co_yield kv.first->get();
+            kv.first->next(aggr.make_callback(kv.first));
+        }
+    }
+    
+}
+
+#if 0
+
+template<typename T>
+task<void> generator_aggregator_helper(aggregator<generator<T> *, bool> &aggr, generator<T> *h) {
+    bool b = co_await *h;
+    aggr.push({h,b});    
+}
+
+template<typename T>
+generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
+    std::vector<generator<T> > list(std::move(list__));
+    aggregator<generator<T> *, bool> aggr;
+    int count = 2;
+    for (auto &x: list) {
+        generator_aggregator_helper(aggr, &x);
+    }
+    while (count) {
+        auto kv = co_await aggr;
+        if (kv.second) {            
+            co_yield kv.first->get();
+            generator_aggregator_helper(aggr, kv.first);
+        } else {
+            count--;
+        }
+    }
+    
+}
+#endif
 
 }
 

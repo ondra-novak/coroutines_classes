@@ -70,17 +70,17 @@ cocls::generator<int> co_fib2(int count) {
     }
 }
 
-cocls::generator<int> co_async_fib(int count) {
+cocls::generator<int> co_async_fib(int count, int delay = 100) {
     int a = 0;
     int b = 1;
     for(int i = 0;i < count; i++) {
         cocls::future<int> cf;
-        std::thread thr([&a,&b,cp = cf.get_promise()]{
+        std::thread thr([&a,&b,&delay, cp = cf.get_promise()]{
             int c = a+b;
             cp.set_value(c);
             a = b;
             b = c;
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
         });
         thr.detach();
         int c = co_await cf;
@@ -112,6 +112,17 @@ cocls::task<void> co_fib3_reader()  {
     }
     std::cout<< std::endl;
     co_return; //need co_return to have this as coroutine
+}
+cocls::task<void> co_multfib_reader()  {
+    std::cout<< "async gen multi - co_await: ";
+    std::vector<cocls::generator<int> > glist;
+    glist.push_back(co_async_fib(15));
+    glist.push_back(co_async_fib(15,50));
+    auto g = cocls::generator_aggregator(std::move(glist));
+    while (co_await g) {
+        std::cout <<  g() << " " ;
+    }
+    std::cout<< std::endl;
 }
 
 
@@ -218,6 +229,8 @@ int main(int argc, char **argv) {
     co_fib2_reader().join();
     
     co_fib3_reader().join();
+    
+    co_multfib_reader().join();
 
     std::cout << "Mutex test" << std::endl;
     test_mutex();

@@ -20,6 +20,7 @@ use namespace cocls;
 * **future**
 * **mutex**
 * **resume_lock/coboard**
+* **aggregator**
 
 
 ### Task
@@ -193,6 +194,12 @@ void interleaved() {
 Represents coroutine board, base level where resume lock is in effect. All coroutines suspended and resumed in current thread will use symetric transfer. Inside coboard you can start many coroutines as you want. Function exits when all created coroutines are finished or transfered
 to different thread.
 
+
+### Aggregator
+
+Aggregator is object, which aggregates events and it is co_awaitable. Events
+can be posted directly or through a callback. Aggregator object is MT Safe. Only
+consumer must be one coroutine
 
 ## Use in code
 
