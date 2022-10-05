@@ -19,8 +19,10 @@ use namespace cocls;
 * **generator**
 * **future**
 * **mutex**
+* **queue**
+* **condition_variable**
 * **resume_lock/coboard**
-* **aggregator**
+
 
 
 ### Task
@@ -154,6 +156,23 @@ cocls::mutex mx
 Mutex works across threads and coroutine. Ownership of the mutex can be transfered between
 threads. Ownership is automatically released at the end of function, if it is not transfered
 (ownership is movable)
+
+### Queue
+
+* repesents multi-reader, multi-writer queue. It is MT Safe object. You need this
+function to aggregate values from multiple sources into single or multiple
+coroutines
+
+* operations: `push()`, `co_await pop()`
+
+### Condition variable
+
+* similar to std::condition_variable
+* instead of calling wait(). you call `co_await`
+* you can specify arguments for `co_await`. You can specify custom mutex/Lockable and custom predicate. The mute/Lockable can protect access to shared data of the predicate. In this case, mutex is controled during suspension and resumption. The mutex/Lockable must be in locked state. The predicate must be fulfilled to resume given coroutine. The mutex is remains locked after resumption. 
+
+* There is a small difference in case, that there is a mutex/Lockable in use. You need specify this mutex/Lockable as argument of `notify_one` or `notify_all`, because the function need to unlock this mutex in case that coroutine is resumed. The resumption is done on current thread and the mutex/Lockable must be unlocked to avoid deadlock - because resumed coroutine starts with locking-back that mutex/Lockable.
+
 
 ### Resume lock / coboard
 

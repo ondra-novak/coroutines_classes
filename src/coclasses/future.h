@@ -489,6 +489,10 @@ inline promise<void> future<void>::get_promise()  {
  * @tparam T type of promise
  * @param fn callback function. Once the promise is resolved, callback function receives
  * whole future<T> object as argument (as reference). It can retrieve the value from it
+ * @param buffer pointer to storage, if the future object is smaller enough to fit into
+ * the buffer. 
+ * @param size of the buffer
+ * 
  * @return promise<T> object 
  * 
  * @note callback is executed only after all instances of the promise are destroyed. This helps
@@ -497,7 +501,7 @@ inline promise<void> future<void>::get_promise()  {
  * is being destroyed as soon as possible
  */
 template<typename T, typename Fn>
-promise<T> make_promise(Fn &&fn) {
+promise<T> make_promise(Fn &&fn, void *buffer = nullptr, std::size_t sz = 0) {
     
     class futimpl: public future<T> {
     public:
@@ -523,10 +527,26 @@ promise<T> make_promise(Fn &&fn) {
         Fn _cb;
     };
     
-    auto f = new futimpl(std::forward<Fn>(fn));
-    promise<T> p = f->get_promise();
-    return p;
+    class futimpl_inl: public futimpl {
+    public:
+        using futimpl::futimpl;
+        
+        void *operator new(std::size_t, void *p) {return p;}
+        void operator delete(void *, void *) {}
+        void operator delete(void *, std::size_t) {}
+    };
+    
+    if (sz < sizeof(futimpl_inl)) {
+        auto f = new futimpl(std::forward<Fn>(fn));
+        promise<T> p = f->get_promise();
+        return p;
+    } else {
+        auto f = new(buffer) futimpl_inl(std::forward<Fn>(fn));
+        promise<T> p = f->get_promise();
+        return p;        
+    }
 }
+
 
 
 }

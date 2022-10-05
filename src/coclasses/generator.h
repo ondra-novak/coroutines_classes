@@ -6,7 +6,7 @@
 #include "common.h" 
 #include "exceptions.h"
 
-#include "aggregator.h"
+#include "queue.h"
 #include <optional>
 #include <future>
 
@@ -375,7 +375,7 @@ public:
             _wait_promise = cocls::make_promise<State>([this, fn = std::forward<Fn>(fn)](cocls::future<State> &f) mutable {
                 _state = f.get();
                 fn(next_resume());
-            });
+            }, _storage, sizeof(_storage));
             if (!_state.compare_exchange_strong(chk, State::running_promise_set, std::memory_order_release)) {
                 _wait_promise.set_value(chk);
                 _wait_promise.release();
@@ -436,6 +436,8 @@ protected:
     std::coroutine_handle<> _awaiter;
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
+    //stortage for callback future
+    char _storage[24*sizeof(void *)];
 };
 
 
@@ -445,7 +447,7 @@ protected:
  * as rvalue reference to avoid copying (because generators are movable)_
  * @return generator
  */
-
+#if 0
 template<typename T>
 generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
     std::vector<generator<T> > list(std::move(list__));
@@ -462,35 +464,34 @@ generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
     }
     
 }
+#endif
 
-#if 0
 
-template<typename T>
-task<void> generator_aggregator_helper(aggregator<generator<T> *, bool> &aggr, generator<T> *h) {
-    bool b = co_await *h;
-    aggr.push({h,b});    
-}
+
 
 template<typename T>
 generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
     std::vector<generator<T> > list(std::move(list__));
-    aggregator<generator<T> *, bool> aggr;
-    int count = 2;
+    queue<std::pair<generator<T> *, bool> > queue;
+    int running = list.size();;
     for (auto &x: list) {
-        generator_aggregator_helper(aggr, &x);
+        x.next([gen = &x, &queue](bool v){
+            queue.push({gen, v});
+        });
     }
-    while (count) {
-        auto kv = co_await aggr;
+    while (running) {
+        auto kv = co_await queue.pop();;
         if (kv.second) {            
             co_yield kv.first->get();
-            generator_aggregator_helper(aggr, kv.first);
+            kv.first->next([gen = kv.first, &queue](bool v){
+                queue.push({gen, v});
+            });            
         } else {
-            count--;
+            running--;
         }
     }
     
 }
-#endif
 
 }
 

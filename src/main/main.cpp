@@ -4,11 +4,14 @@
 #include <coclasses/lazy.h>
 #include <coclasses/generator.h>
 #include <coclasses/mutex.h>
+#include <coclasses/queue.h>
+#include <coclasses/condition_variable.h>
 
 #include <array>
 #include <iostream>
 #include <cassert>
 #include <random>
+
 
 
 cocls::lazy<int> co_lazy() {
@@ -166,7 +169,7 @@ int test_mutex() {
     
 }
 
-void test_pauise() {
+void test_pause() {
     cocls::coboard([]{
        for (int i = 0; i < 5; i++) {
            ([](int i)->cocls::task<void>{
@@ -180,6 +183,29 @@ void test_pauise() {
     });
 }
 
+cocls::task<> test_cond_var() {
+    std::mutex mx;
+    std::unique_lock _(mx);
+    cocls::condition_variable cond;
+    bool flag = false;
+    std::thread thr([&]{
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::cout << "(test_con_var) trigger flag = false" << std::endl;
+        cond.notify_one();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        {
+            std::unique_lock _(mx);
+            std::cout << "(test_con_var) trigger flag = true" << std::endl;
+            flag = true;
+            cond.notify_one(_);
+        }
+    });
+    thr.detach();
+    std::cout << "(test_con_var) Coroutine waiting" << std::endl;
+    co_await cond(_, [&]{return flag;});
+    std::cout << "(test_con_var) Coroutine released" << std::endl;
+}
+
 
 int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
@@ -190,6 +216,7 @@ int main(int argc, char **argv) {
     std::cout << "(main) waiting for future" << std::endl;
     std::cout << z.join() << std::endl;
 
+    test_cond_var().join();
 
     
     auto fib = co_fib();
@@ -235,6 +262,7 @@ int main(int argc, char **argv) {
     std::cout << "Mutex test" << std::endl;
     test_mutex();
     std::cout << "Pause test" << std::endl;
-    test_pauise();
+    test_pause();
     
 }
+
