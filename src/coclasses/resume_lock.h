@@ -48,6 +48,11 @@ public:
     static std::coroutine_handle<> await_suspend(std::coroutine_handle<> h, bool suspend = true) {
         return get_instance().await_suspend_impl(h, suspend);
     }
+
+    static std::coroutine_handle<> await_suspend() {
+        return get_instance().await_suspend_impl();
+    }
+
     
     ///Resume coroutine
     /**
@@ -120,7 +125,6 @@ public:
      * @return object which can be co_awated
      */
     static pause_suspender pause() {return {};}
-        
     
 protected:
     static resume_lock &get_instance() {
@@ -128,16 +132,20 @@ protected:
         return l;
     }
 
+    std::coroutine_handle<> await_suspend_impl() {
+        if (_active && !_waiting.empty()) {
+            auto h = _waiting.front();
+            _waiting.pop();
+            return h;
+        } else {
+            return std::noop_coroutine();
+        }            
+    }
+
     
     std::coroutine_handle<> await_suspend_impl(std::coroutine_handle<> h, bool suspend = true) {
         if (suspend) {
-            if (_active && !_waiting.empty()) {
-                auto h = _waiting.front();
-                _waiting.pop();
-                return h;
-            } else {
-                return std::noop_coroutine();
-            }            
+            return await_suspend_impl();
         } else {
             return h;
         }

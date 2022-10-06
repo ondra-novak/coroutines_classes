@@ -6,7 +6,7 @@
 #include <coclasses/mutex.h>
 #include <coclasses/queue.h>
 #include <coclasses/condition_variable.h>
-
+#include <coclasses/thread_pool.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -207,6 +207,33 @@ cocls::task<> test_cond_var() {
 }
 
 
+cocls::task<> threadpool_co(cocls::thread_pool &p) {
+    std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
+    co_await p;
+    std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
+    co_await cocls::thread_pool::current();
+    std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
+    co_await p.fork([]{
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::cout<<"(threadpool_co) forked code: " << std::this_thread::get_id() << std::endl;
+    });
+    std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
+    co_await cocls::thread_pool::current::fork([]{
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::cout<<"(threadpool_co) forked code 2: " << std::this_thread::get_id() << std::endl;
+    });
+    std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
+}
+
+void threadpool_test() {
+    std::cout << "(threadpool_test) started" << std::endl;
+    cocls::thread_pool pool(4);
+    //sleep for while to allow all threads fully started
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    threadpool_co(pool).join();
+    std::cout << "(threadpool_test) finished" << std::endl;
+}
+
 int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
     std::cout << "Version: " << GIT_PROJECT_VERSION << std::endl;
@@ -218,6 +245,7 @@ int main(int argc, char **argv) {
 
     test_cond_var().join();
 
+    threadpool_test();
     
     auto fib = co_fib();
     std::cout<< "infinite gen: ";    

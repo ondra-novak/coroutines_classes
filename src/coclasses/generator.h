@@ -480,7 +480,7 @@ generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
         });
     }
     while (running) {
-        auto kv = co_await queue.pop();;
+        std::pair<generator<T> *, bool>  kv = co_await queue.pop();;
         if (kv.second) {            
             co_yield kv.first->get();
             kv.first->next([gen = kv.first, &queue](bool v){
