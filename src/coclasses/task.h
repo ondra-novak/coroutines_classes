@@ -3,10 +3,9 @@
 #define SRC_COCLASSES_TASK_H_
 
 #include "common.h" 
+#include "coroid.h"
 #include "exceptions.h"
 #include "resume_lock.h"
-#include "coid.h"
-
 #include <atomic>
 #include <coroutine>
 #include <future>

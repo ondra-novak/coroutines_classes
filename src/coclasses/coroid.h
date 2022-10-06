@@ -5,8 +5,8 @@
  *      Author: ondra
  */
 
-#ifndef SRC_COCLASSES_COID_H_
-#define SRC_COCLASSES_COID_H_
+#ifndef SRC_COCLASSES_COROID_H_
+#define SRC_COCLASSES_COROID_H_
 
 #include <coroutine>
 
@@ -47,4 +47,4 @@ private:
 
 
 
-#endif /* SRC_COCLASSES_COID_H_ */
+#endif /* SRC_COCLASSES_COROID_H_ */

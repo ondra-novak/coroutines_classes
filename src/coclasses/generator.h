@@ -7,6 +7,9 @@
 #include "exceptions.h"
 
 #include "queue.h"
+
+#include "coroid.h"
+
 #include <optional>
 #include <future>
 
