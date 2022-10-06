@@ -7,6 +7,8 @@
 #include <coclasses/queue.h>
 #include <coclasses/condition_variable.h>
 #include <coclasses/thread_pool.h>
+#include <coclasses/scheduler.h>
+#include <coclasses/with_queue.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -234,6 +236,46 @@ void threadpool_test() {
     std::cout << "(threadpool_test) finished" << std::endl;
 }
 
+cocls::task<> scheduler_test_task(cocls::scheduler<> &sch) {
+    std::cout << "(scheduler_test_task) started "<< std::endl;
+    auto gen = sch.interval(std::chrono::milliseconds(100));
+    co_await gen;
+    auto n = gen();
+    while (n != 20) {
+        std::cout << "(scheduler_test_task) interval generator tick: " << n << std::endl;
+        co_await gen;
+        n = gen();
+    }
+    std::cout << "(scheduler_test_task) exiting "<< std::endl;
+    
+}
+
+void scheduler_test() {
+    cocls::thread_pool pool(4);
+    cocls::scheduler<> sch;
+    sch.start(pool);
+    scheduler_test_task(sch).join();
+}
+
+cocls::with_queue<cocls::task<void>, int> with_queue_task() {
+        int i = co_await cocls::current_queue<cocls::task<void>, int>();
+        while (i) {
+            std::cout<<"(with_queue_task) Received from queue: " << i << std::endl;
+            i = co_await cocls::current_queue<cocls::task<void>, int>();
+        }
+        std::cout<<"(with_queue_task) Done" << std::endl;        
+}
+
+void with_queue_test() {
+    cocls::with_queue<cocls::task<void>, int> wq = with_queue_task();
+    wq.push(1);
+    wq.push(2);
+    wq.push(3);
+    wq.push(0);
+    wq.join();
+    
+}
+
 int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
     std::cout << "Version: " << GIT_PROJECT_VERSION << std::endl;
@@ -246,6 +288,10 @@ int main(int argc, char **argv) {
     test_cond_var().join();
 
     threadpool_test();
+    
+    scheduler_test();
+    
+    with_queue_test();
     
     auto fib = co_fib();
     std::cout<< "infinite gen: ";    
@@ -294,3 +340,4 @@ int main(int argc, char **argv) {
     
 }
 
+template class cocls::scheduler<>;

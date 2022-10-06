@@ -21,6 +21,9 @@ use namespace cocls;
 * **mutex**
 * **queue**
 * **condition_variable**
+* **thread_pool**
+* **scheduler**
+* **with_queue<>**
 * **resume_lock/coboard**
 
 
@@ -153,7 +156,7 @@ cocls::mutex mx
     ownership.reset();
     //you no longer own mutex
 ```
-Mutex works across threads and coroutine. Ownership of the mutex can be transfered between
+Mutex works across threads and coroutines. Ownership of the mutex can be transfered between
 threads. Ownership is automatically released at the end of function, if it is not transfered
 (ownership is movable)
 
@@ -172,6 +175,81 @@ coroutines
 * you can specify arguments for `co_await`. You can specify custom mutex/Lockable and custom predicate. The mute/Lockable can protect access to shared data of the predicate. In this case, mutex is controled during suspension and resumption. The mutex/Lockable must be in locked state. The predicate must be fulfilled to resume given coroutine. The mutex is remains locked after resumption. 
 
 * There is a small difference in case, that there is a mutex/Lockable in use. You need specify this mutex/Lockable as argument of `notify_one` or `notify_all`, because the function need to unlock this mutex in case that coroutine is resumed. The resumption is done on current thread and the mutex/Lockable must be unlocked to avoid deadlock - because resumed coroutine starts with locking-back that mutex/Lockable.
+
+### Thread pool
+
+* Thread pool for coroutines. Very simple tool, you just need to construct it and specify count of threads. Awaiting to this object causes that execution of coroutine is transfered to some thread belongs to the thread pool. 
+
+```
+//declaration
+thread_pool pool(4);
+
+//in coroutine
+co_await pool;
+```
+
+#### function fork
+
+Function forks execution when one code continues in current thread, the coroutine itself continues in different thread. 
+
+You can for example accept connection and fork execution while current thread continues with connection and coroutine itself starts waiting to accept different connection.
+
+```
+co_await pool.fork([&]{
+   //forked code
+});
+```
+
+
+### Scheduler
+
+Scheduler gives to coroutine feature to sleep for certain period of time without blocking a thread. 
+
+```
+//declaration
+thread_pool pool(4);
+scheduler<> sch(pool);
+
+//in coroutine
+co_await sch.sleep_for(std::chrono::second(1));
+
+```
+
+You can also retrieve a generator, which returns a values in specified interval
+
+```
+auto g = sch.interval(std::chrono::second(1));
+co_await g;  //wait 1 second
+co_await g;  //wait 1 second
+co_await g;  //wait 1 second
+```
+
+### with_queue<>
+
+This is template class, which can wrap a specified coroutine (task or generator) with a queue. You can then pass values to the coroutine using function push();
+
+Inside of coroutine, you can co_await on a special object `current_queue`, where each co_await retrieves one value from the queue and if the queue is empty, the coroutine is suspended
+
+```
+cocls::with_queue<cocls::task<void>, int> with_queue_task() {
+        int i = co_await cocls::current_queue<cocls::task<void>, int>();
+        while (i) {
+            std::cout<<"(with_queue_task) Received from queue: " << i << std::endl;
+            i = co_await cocls::current_queue<cocls::task<void>, int>();
+        }
+        std::cout<<"(with_queue_task) Done" << std::endl;        
+}
+
+void with_queue_test() {
+    cocls::with_queue<cocls::task<void>, int> wq = with_queue_task();
+    wq.push(1);
+    wq.push(2);
+    wq.push(3);
+    wq.push(0);
+    wq.join();
+    
+}
+```
 
 
 ### Resume lock / coboard
@@ -214,11 +292,6 @@ Represents coroutine board, base level where resume lock is in effect. All corou
 to different thread.
 
 
-### Aggregator
-
-Aggregator is object, which aggregates events and it is co_awaitable. Events
-can be posted directly or through a callback. Aggregator object is MT Safe. Only
-consumer must be one coroutine
 
 ## Use in code
 

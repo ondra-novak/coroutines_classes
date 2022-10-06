@@ -154,10 +154,20 @@ public:
         static current_fork_awaiter<Fn> fork(Fn &&fn) {
             return current_fork_awaiter<Fn>(std::forward<Fn>(fn));
         }
+        static bool is_stopped() {
+            thread_pool *c = current_pool();
+            return !c || c->is_stopped();
+        }
+
     };
     
+    bool is_stopped() const {
+        std::lock_guard _(_mx);
+        return _exit;
+    }
+    
 protected:
-    std::mutex _mx;
+    mutable std::mutex _mx;
     std::condition_variable _cond;
     std::queue<std::coroutine_handle<> > _queue;
     std::vector<std::thread> _threads;

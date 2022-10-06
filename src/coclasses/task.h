@@ -5,11 +5,13 @@
 #include "common.h" 
 #include "exceptions.h"
 #include "resume_lock.h"
+#include "coid.h"
 
 #include <atomic>
 #include <coroutine>
 #include <future>
 #include <optional>
+
 
 namespace cocls {
 
@@ -108,9 +110,17 @@ public:
         return _promise->is_ready();
     }
 
+    coroid_t get_id() const {
+        return coroid_t(std::coroutine_handle<promise_type>::from_promise(*_promise));
+    }
+
+    
+    
 protected:
     task_promise<T> *_promise;
     
+    
+    task_promise<T> *get_promise() const {return _promise;}
 };
 
 
@@ -385,6 +395,7 @@ public:
     task<T> get_return_object() {
         return task<T>(this);
     }
+    
     
     
 protected:

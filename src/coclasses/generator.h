@@ -199,12 +199,19 @@ public:
         _prom->next_cb(std::forward<FN>(fn));
     }
     
+    
+    coroid_t get_id() const {
+        return coroid_t(std::coroutine_handle<promise_type>::from_promise(*_prom));
+    }
+
 protected:
 
     
     friend class generator_multi_awaiter<T>;
     
     std::unique_ptr<promise_type, Deleter> _prom;    
+    
+    promise_type *get_promise() const {return _prom.get();}
     
 };
 
