@@ -394,6 +394,8 @@ public:
         }
         fn(next_resume()); 
     }
+    
+    void return_void() {}
 
     //Called by Deleter
     void destroy() {
@@ -480,7 +482,7 @@ generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
 
 
 template<typename T>
-generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
+generator<T> generator_aggregator(std::vector<generator<T> > list__) {
     std::vector<generator<T> > list(std::move(list__));
     queue<std::pair<generator<T> *, bool> > queue;
     int running = list.size();;

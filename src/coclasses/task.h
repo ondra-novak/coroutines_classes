@@ -468,7 +468,7 @@ inline T& task<T>::join() const {
 }
 
 template<typename T>
-std::future<T> task<T>::as_future() const {
+inline std::future<T> task<T>::as_future() const {
     std::future<T> f;
     ([&]()->task<>{
        std::promise<T> p;
@@ -492,7 +492,7 @@ inline void task<void>::join() const
 
 }
 
-std::future<void> task<void>::as_future() const {
+inline std::future<void> task<void>::as_future() const {
        std::future<void> f;
        ([&]()->task<>{
           std::promise<void> p;
