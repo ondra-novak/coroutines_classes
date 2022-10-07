@@ -8,15 +8,23 @@
 
 namespace cocls {
 
+///Abstract interface which can be resumed instead coroutine. See handle_t
 class abstract_resumable_t {
 public:
     virtual ~abstract_resumable_t() = default;
+    ///Function is called on resume event
+    /**
+     * @return handle of coroutine to resume after the function is processed. If 
+     * no coroutine would be resumed, use std::noop_coroutine()
+     */
     virtual std::coroutine_handle<> resume() noexcept = 0;
 };
 
+///Handle to resumable object
 using resumable_handle_t = abstract_resumable_t *;
 
 
+///Resumable object which does nothing
 class noop_resumable_t: public abstract_resumable_t {
 public:
     virtual std::coroutine_handle<> resume() noexcept override {return std::noop_coroutine();}
@@ -26,9 +34,18 @@ public:
     }
 };
 
+
+///Creates resumable object which call a function
+/**
+ * @tparam Fn function type
+ */
 template<typename Fn>
 class cb_resumable_t: public abstract_resumable_t {
 public:
+    ///Construct object
+    /**
+     * @param cb function object
+     */
     cb_resumable_t(Fn &&cb):_cb(std::forward<Fn>(cb)) {}
     virtual std::coroutine_handle<> resume() noexcept override {
         if constexpr (std::is_void<decltype(_cb())>::value) {
@@ -48,6 +65,27 @@ protected:
  * This is strong concept which allows you to await on "callback". This also allows you to use
  * awaiters in non-coroutine code. You can make awaiter proxies, where instead of resuming the
  * coroutine, the callback is called and then you can resume the coroutine manually.
+ * 
+ * There is small difference between std::coroutine_handle and handle_t. The handle_t consists of
+ * two pointers, while std::coroutine_handle consists only one pointer. 
+ * 
+ * You can initialize handle to contain resumable_handle_t or std::coroutine_handle
+ * 
+ * You can use this handle to register coroutines on awaiters. To resume corotutine stored
+ * in handle_t you can use handle_t::resume(). For symmetric transfer, you can use 
+ * handler_t::resume_handle() which returns a handle to a coroutine to be used as result
+ * in await_suspend().
+ * 
+ * To write compatible awaiters, use following declaration for await_susbend
+ * 
+ * @code
+ * std::coroutine_handle await_suspend(handle_t h)
+ * @endcode
+ * 
+ * Because handle_t can be constructed from std::coroutine_handler, this is only change, which
+ * allows more general awaiters. The most of awaiters in the cocls namespace are supporting handle_t
+ * instead std::coroutine_handle for resume purpose.
+ * 
  * 
  */
 class handle_t {
@@ -79,16 +117,16 @@ public:
         }
         return *this;
     }
+    ///Resume object referenced by handle
     void resume() const {
         _type->resume(*this);
     }
     
     ///Resolves handle to coroutine handle
     /**
-     * If the handle is coroutine handle it returns directly it value. If the handle is resumable object
-     * it resumes it and if the object returns coroutine handle, it returns ite as result. which allows
-     * to proxy resumbtion by the handle. 
-     * 
+     * If the handle is coroutine handle it returns directly its value. If the handle is resumable object
+     * it resumes it and if the object returns coroutine handle, it is returned as result.
+     *
      * @return coroutine handle to resume.
      * 
      * @note don't call this more then once per life (similar to resume())
@@ -96,30 +134,9 @@ public:
     std::coroutine_handle<> resume_handle() const {
         return _type->coro_handle(*this);
     }
-/*
-    operator std::coroutine_handle<>() const {
-        return _type->coro_handle(*this);
-    }
-
-    template<typename T>
-    operator std::coroutine_handle<T>() const {
-        std::coroutine_handle<> h = _type->coro_handle(*this);
-        void *addr = h.address();
-        return std::coroutine_handle<T>::from_address(addr);
-    }
-    operator resumable_handle_t() const {
-        if (_type->is_coro) return noop_resumable_t::get_handle();
-        else return _object_ptr;
-    }
-  */  
-    bool is_coro() const {
-        return _type->is_coro;
-    }
     
-    ///Return address - can be use to identify object
-    /**
-     * don't use this addres to obtain coroutine handle
-     */
+    
+    ///return address - need to identification
     const void *address() const {
         return _type->address(*this);
     }

@@ -10,15 +10,32 @@
 #include <mutex>
 namespace cocls {
 
+
 template<typename Expr> 
 auto sync_await(Expr &&x) -> decltype(x.operator co_await().await_resume()) {
     return sync_await(x.operator co_await());
 }
 
+///Synchronous await
+/**
+ * Synchronous await block whole thread until the awaiting promise is resolved
+ * 
+ * @param expr expression. 
+ * @return result of await
+ * 
+ * @code
+ *   //async await
+ *   auto x = co_await expr;
+ *   
+ *   //sync await
+ *   auto x = sync_await(expr);
+ *   
+ * @endcodes
+ */
 template<typename Expr> 
-auto sync_await(Expr &&x) -> decltype(x.await_resume()) {
-    if (x.await_ready()) {
-        return x.await_resume();
+auto sync_await(Expr &&expr) -> decltype(expr.await_resume()) {
+    if (expr.await_ready()) {
+        return expr.await_resume();
     }
     std::mutex mx;
     std::condition_variable cond;
@@ -30,11 +47,11 @@ auto sync_await(Expr &&x) -> decltype(x.await_resume()) {
     };
     cb_resumable_t<decltype(a)> r(std::move(a));    
     
-    resume_lock::resume(x.await_suspend(handle_t(&r)));
+    resume_lock::resume(expr.await_suspend(handle_t(&r)));
 
     std::unique_lock _(mx);
     cond.wait(_,[&]{return signal;});
-    return x.await_resume();
+    return expr.await_resume();
 }
 
 }

@@ -121,11 +121,26 @@ protected:
     }
 };
 
-
+///callback await
+/**
+ * @code
+ *  callback_await(expr).then(
+ *          [](auto &x){... result ....},
+ *          [](){try {
+ *                  throw;
+ *              } catch (...) {
+ *                  
+ *              }
+ *              });
+ *
+ * @endcode  
+ * 
+ */
 template<typename Expr>
 auto callback_await(Expr &&x) -> decltype(x.operator co_await().await_resume(),callback_await_sup(x.operator co_await())) {
     return callback_await_sup(x.operator co_await());
 }
+///callback await
 template<typename Expr>
 auto callback_await(Expr &&x) -> decltype(x.await_resume(),callback_await_sup(x)) {
     return callback_await<Expr>(std::forward<Expr>(x));
