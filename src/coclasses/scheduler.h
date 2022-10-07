@@ -77,9 +77,9 @@ public:
         bool await_ready() const {
             return _tp<now() || _owner._exit;
         }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+        std::coroutine_handle<> await_suspend(handle_t h) {
             std::lock_guard _(_owner._mx);
-            if (_owner._exit) return h;
+            if (_owner._exit) return h.resume_handle();
             _h = h;
             _owner._list.push({_tp,this});
             _owner._signal = true;
@@ -102,7 +102,7 @@ public:
     protected:
         scheduler &_owner;
         timepoint _tp;
-        std::coroutine_handle<> _h;
+        handle_t _h;
         bool _canceled = false;
     };
  

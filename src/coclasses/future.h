@@ -6,6 +6,7 @@
 #include "resume_lock.h"
 #include "exceptions.h"
 
+#include "sync_await.h"
 #include <assert.h>
 #include <memory>
 #include <mutex>
@@ -45,14 +46,19 @@ public:
     
 
     
-    class abstract_awaiter {
+    class awaiter {
     public:
-        abstract_awaiter(Impl &owner):_owner(owner) {}
-        virtual ~abstract_awaiter() = default;
-        abstract_awaiter(const abstract_awaiter &) = default;
-        abstract_awaiter &operator=(const abstract_awaiter &) = delete;
-        virtual void resume() noexcept = 0;
-        virtual std::coroutine_handle<> get_handle() {return {};};
+        awaiter(Impl &owner):_owner(owner) {}
+        virtual ~awaiter() = default;
+        awaiter(const awaiter &) = default;
+        awaiter &operator=(const awaiter &) = delete;
+
+        std::coroutine_handle<> await_suspend(handle_t h) {
+            this->_owner.add_ref();
+            this->_owner._awaiter = h;
+            this->_owner.release_ref();
+            return resume_lock::await_suspend();
+        }
         bool await_ready() const noexcept {
             return _owner._ready && _owner._pcount.load(std::memory_order_relaxed) == 0;
         }
@@ -61,63 +67,12 @@ public:
         Impl &_owner;
     };
 
-    class co_awaiter: public abstract_awaiter {
-    public:        
-        co_awaiter(Impl &owner):abstract_awaiter(owner) {}
-        
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
-            this->_owner.add_ref();
-            this->_h = h;
-            this->_owner._awaiter = this;
-            this->_owner.release_ref();
-            return resume_lock::await_suspend(h);
-        }
-
-        virtual std::coroutine_handle<> get_handle() override {
-            return _h;
-        };
-
-        virtual void resume() noexcept override {
-            resume_lock::resume(_h);            
-        }
-    protected:
-        std::coroutine_handle<> _h;
-    };
-
-    class blocking_awaiter: public abstract_awaiter {
-    public:
-        blocking_awaiter(Impl &owner):abstract_awaiter(owner) {}
-        void wait() {
-            this->_owner.add_ref();
-            this->_owner._awaiter = this;
-            this->_owner.release_ref();            
-            std::unique_lock _(mx);
-            //scan await ready for now only
-            
-            //this is important as later we need to check our notification, not await_ready
-            //because if await_ready awas false, we start wait, but we also promise
-            //to keep this awaiter alive until notification arrives
-            //so even if the await_ready becomes true, we still need to wait for a call of the resume()
-            //to not release awaiter before the signal arrives.
-            _signaled = this->await_ready();
-            cvar.wait(_, [&]{return _signaled;});
-        }
-        virtual void resume() noexcept override {
-            std::unique_lock _(mx);
-            _signaled = true;
-            cvar.notify_all();
-        }
-    protected:
-        std::mutex mx;
-        bool _signaled = false;
-        std::condition_variable cvar;
-    };
 
 
 protected:    
     std::atomic<unsigned int> _pcount;
     std::atomic<bool> _ready;
-    abstract_awaiter *_awaiter = nullptr;
+    handle_t _awaiter;
     
 
     void add_ref() {
@@ -130,25 +85,9 @@ protected:
                 if (!this->_ready.load(std::memory_order_acquire)) {
                     static_cast<Impl *>(this)->set_exception(std::make_exception_ptr(await_canceled_exception()));
                 }
-                _awaiter->resume();
+                resume_lock::resume(_awaiter);
             }
         }
-    }
-    bool release_ref(std::coroutine_handle<> &hout) {
-        if (_pcount.fetch_sub(1, std::memory_order_release)-1 == 0) {
-            if (_awaiter) {
-                if (!this->_ready.load(std::memory_order_acquire)) {
-                    static_cast<Impl *>(this)->set_exception(std::make_exception_ptr(await_canceled_exception()));
-                }
-                hout = _awaiter->get_handle();
-                if (hout == nullptr) {
-                    _awaiter->resume();
-                } else {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
 };
@@ -176,9 +115,9 @@ public:
     future(const future &) = delete;
     future &operator=(const future &) = delete;
     
-    class co_awaiter: public super_t::co_awaiter {
+    class awaiter: public super_t::awaiter {
     public:
-        co_awaiter(future &owner):super_t::co_awaiter(owner) {}
+        awaiter(future &owner):super_t::awaiter(owner) {}
         T &await_resume() {
             if (this->_owner._is_exception) std::rethrow_exception(this->_owner._exception);
             else return this->_owner._value;
@@ -187,10 +126,14 @@ public:
     
 
     ///future can be awaited
-    co_awaiter operator co_await() {
-        return co_awaiter(*this);
+    awaiter operator co_await() {
+        return awaiter(*this);
     }
 
+    
+    T &wait() {
+        return sync_await(*this);
+    }
 
    
     
@@ -211,13 +154,6 @@ public:
         return this->_value;
     }
 
-    ///Get value - wait for result blocking
-    T &wait() {
-        if (this->is_ready()) return get();
-        typename super_t::blocking_awaiter awaiter(*this);
-        awaiter.wait();
-        return get();
-    }
 
 protected:
      friend class future_base<T, future<T> >;
@@ -267,17 +203,17 @@ public:
     future(const future &) = delete;
     future &operator=(const future &) = delete;
 
-    class co_awaiter:public super_t::co_awaiter {
+    class awaiter:public super_t::awaiter {
     public:
-        co_awaiter(future &owner):super_t::co_awaiter(owner) {}
+        awaiter(future &owner):super_t::awaiter(owner) {}
 
         void await_resume() {
             if (this->_owner._exception) std::rethrow_exception(this->_owner._exception);            
         }
     };
     
-    co_awaiter operator co_await() {
-        return co_awaiter(*this);
+    awaiter operator co_await() {
+        return awaiter(*this);
     }
 
     ///Check state of future, throws exception if there is such exceptional state
@@ -286,12 +222,9 @@ public:
         if (this->_exception) std::rethrow_exception(this->_exception);
     }
 
-    ///Get value - wait for result blocking
+
     void wait() {
-        if (this->is_ready()) return get();
-        blocking_awaiter awaiter(*this);
-        awaiter.wait();
-        return get();
+        sync_await(*this);
     }
 
     
@@ -353,25 +286,12 @@ public:
     
     ///Release promise object, decreases count of references, can resume associated coroutine
     void release() {
-        if (_owner) _owner->release_ref();
+        auto m = _owner;
         _owner = nullptr;
+        if (m) m->release_ref();        
     }
 
-    ///Release promise object, but don't resume coroutine, instead return coroutine handle
-    /**
-     * @param hout variable which receives the handle
-     * @retval true success, handle retrieved
-     * @retval false no coroutine waiting yet, no coroutine at all, released promise
-     */
-    bool release(std::coroutine_handle<> &hout) {
-        if (_owner) {
-            bool x = _owner->release_ref(hout);
-            _owner = nullptr;
-            return x;
-        } else {
-            return false;
-        }
-    }
+
 
     ///Returns true, if the promise is valid
     operator bool() const {
@@ -503,27 +423,21 @@ inline promise<void> future<void>::get_promise()  {
 template<typename T, typename Fn>
 promise<T> make_promise(Fn &&fn, void *buffer = nullptr, std::size_t sz = 0) {
     
-    class futimpl: public future<T> {
+    class futimpl: public future<T>, public abstract_resumable_t {
     public:
 
-        class awaiter: public future<T>::blocking_awaiter {
-        public:
-            awaiter(future<T> &owner):future<T>::blocking_awaiter(owner) {}
-            virtual void resume() noexcept override {
-                static_cast<futimpl &>(this->_owner).resume();
-            }
-        };
-
-        futimpl(Fn &&fn):_awt(*this), _cb(std::forward<Fn>(fn)) {
-            this->_awaiter = &_awt;
-        }
-        virtual ~futimpl() = default;
-        void resume() noexcept  {
+        virtual std::coroutine_handle<> resume() noexcept {
             _cb(*this);
             delete this;
+            return std::noop_coroutine();
         }
+            
+        futimpl(Fn &&fn): _cb(std::forward<Fn>(fn)) {
+            this->_awaiter = resumable_handle_t(this);
+        }
+        virtual ~futimpl() = default;
+
     protected:
-        awaiter _awt;
         Fn _cb;
     };
     

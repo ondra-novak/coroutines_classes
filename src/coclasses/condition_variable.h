@@ -55,7 +55,7 @@ public:
         bool await_ready() {
             return check_before(_pred);
         }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {            
+        std::coroutine_handle<> await_suspend(handle_t h) {            
             _h = h;
             _owner._awaiters.push(this);                
             _lock.unlock();
@@ -80,7 +80,7 @@ public:
 
     protected:
         condition_variable &_owner;
-        std::coroutine_handle<> _h;
+        handle_t _h;
         L &_lock;
         Pred _pred;
     };

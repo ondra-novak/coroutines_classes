@@ -25,7 +25,7 @@ namespace cocls {
  *  
  */
 template<typename Coro, typename T>
-struct current_queue;
+class current_queue;
 
 template<typename Coro, typename T>
 class with_queue_promise;

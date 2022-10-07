@@ -7,6 +7,7 @@
 #include "exceptions.h"
 #include "resume_lock.h"
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <future>
 #include <optional>
@@ -172,7 +173,9 @@ public:
 template<typename Owner> class abstract_task_awaiter {
 public:
     abstract_task_awaiter(Owner &owner):_owner(owner) {}
-    abstract_task_awaiter(const abstract_task_awaiter &other) = delete;
+    abstract_task_awaiter(const abstract_task_awaiter &other):_owner(other._owner) {
+        assert(next == nullptr);
+    }
     abstract_task_awaiter&operator=(const abstract_task_awaiter &other) = delete;
     virtual ~abstract_task_awaiter() = default;
 
@@ -202,8 +205,8 @@ public:
 
     bool await_ready() const noexcept {
         return this->_owner.is_ready();
-    }
-    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+    }   
+    std::coroutine_handle<> await_suspend(handle_t h) {
         _h = h;
         return resume_lock::await_suspend(h, this->_owner.register_awaiter(this));
     }
@@ -216,7 +219,7 @@ public:
 
     
 protected:
-    std::coroutine_handle<> _h;
+    handle_t _h;
 };
 
 template<typename Owner> class task_blocking_awaiter: public abstract_task_awaiter<Owner> {

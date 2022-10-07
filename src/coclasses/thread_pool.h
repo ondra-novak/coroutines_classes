@@ -54,7 +54,7 @@ public:
     
     void stop() {
         std::vector<std::thread> tmp;
-        std::queue<std::coroutine_handle<> > q;
+        std::queue<handle_t > q;
         {
             std::unique_lock lk(_mx);
             _exit = true;
@@ -94,9 +94,9 @@ public:
         void await_resume() {
             if (_owner._exit) throw await_canceled_exception(); 
         }        
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
+        std::coroutine_handle<> await_suspend(handle_t h) noexcept {
             std::lock_guard lk(_owner._mx);
-            if (_owner._exit) return h;
+            if (_owner._exit) return h.resume_handle();
             _owner._queue.push(h);
             _owner._cond.notify_one();
             return resume_lock::await_suspend();
@@ -107,7 +107,7 @@ public:
     class fork_awaiter: public awaiter {
     public:
         fork_awaiter(thread_pool &pool, Fn &&fn):awaiter(pool), _fn(std::forward<Fn>(fn)) {}
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
+        std::coroutine_handle<> await_suspend(handle_t h) noexcept {
             std::coroutine_handle<> out = awaiter::await_suspend(h);            
             _fn();
             return out;
@@ -169,7 +169,7 @@ public:
 protected:
     mutable std::mutex _mx;
     std::condition_variable _cond;
-    std::queue<std::coroutine_handle<> > _queue;
+    std::queue<handle_t> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;
     static thread_pool * & current_pool() {

@@ -9,10 +9,13 @@
 #include <coclasses/thread_pool.h>
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
+#include <coclasses/abstract_awaiter.h>
+#include <coclasses/callback_await.h>
 #include <array>
 #include <iostream>
 #include <cassert>
 #include <random>
+
 
 
 
@@ -23,10 +26,10 @@ cocls::lazy<int> co_lazy() {
 
 cocls::task<int> co_test() {
     std::cout << "(co_test) started" << std::endl;    
-    cocls::future<int> f;
+    cocls::future<int> f;    
     auto cbp = cocls::make_promise<int>([](cocls::future<int> &x){
        std::cout << "(make_promise) called:" << x.get() << std::endl; 
-    });
+    });    
     std::thread thr([p = f.get_promise(), p2 = cbp]{
         std::cout << "(co_test) thread started" << std::endl;    
         std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -174,13 +177,17 @@ int test_mutex() {
 void test_pause() {
     cocls::coboard([]{
        for (int i = 0; i < 5; i++) {
-           ([](int i)->cocls::task<void>{
+           callback_await(([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {
                   std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
                   co_await cocls::pause();
               } 
               std::cout << "Finished coroutine " << i << std::endl;
-           })(i);
+           })(i)).then(
+               [i]{
+                       std::cout << "Callback finished:" << i << std::endl; 
+               },[]{}
+           );
        }     
     });
 }
@@ -340,4 +347,4 @@ int main(int argc, char **argv) {
     
 }
 
-template class cocls::scheduler<>;
+

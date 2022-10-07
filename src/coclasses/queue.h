@@ -74,7 +74,7 @@ public:
         awaiter &operator=(const awaiter &) = delete;
         
         bool await_ready() ;
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h);
+        std::coroutine_handle<> await_suspend(handle_t h);
         T await_resume();
         queue &_owner;
         
@@ -105,7 +105,7 @@ protected:
     ///queue itself
     std::queue<T> _queue;
     ///list of awaiters - in queue
-    std::queue<std::coroutine_handle<> > _awaiters;
+    std::queue<handle_t > _awaiters;
     ///count of items in the queue reserved for return
     /**
      * once coroutine is being resumed, the item, which is going to be returned
@@ -186,7 +186,7 @@ inline bool queue<T>::awaiter::await_ready()  {
 
 template<typename T>
 inline std::coroutine_handle<> queue<T>::awaiter::await_suspend(
-        std::coroutine_handle<> h) {
+        handle_t h) {
     std::unique_lock lk(_owner._mx);
     bool suspend = _owner.empty_lk();
     if (suspend) _owner._awaiters.push(h);
@@ -218,7 +218,7 @@ inline queue<T>::~queue() {
 template<typename T>
 inline void cocls::queue<T>::resume_awaiter(std::unique_lock<std::mutex> &lk) {
     if (_awaiters.empty()) return;
-    std::coroutine_handle<> h = _awaiters.front();
+    handle_t h = _awaiters.front();
     _awaiters.pop();
     ++_reserved_items;
     lk.unlock();
