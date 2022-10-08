@@ -11,6 +11,8 @@
 #include <coclasses/with_queue.h>
 #include <coclasses/abstract_awaiter.h>
 #include <coclasses/callback_await.h>
+#include <coclasses/reusable.h>
+#include <coclasses/nocoro.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -126,6 +128,17 @@ cocls::task<void> co_multfib_reader()  {
     std::vector<cocls::generator<int> > glist;
     glist.push_back(co_async_fib(15));
     glist.push_back(co_async_fib(15,50));
+    auto g = cocls::generator_aggregator(std::move(glist));
+    while (co_await g) {
+        std::cout <<  g() << " " ;
+    }
+    std::cout<< std::endl;
+}
+cocls::task<void> co_multfib_reader2()  {
+    std::cout<< "async gen multi - sync: ";
+    std::vector<cocls::generator<int> > glist;
+    glist.push_back(co_fib2(15));
+    glist.push_back(co_fib2(15));
     auto g = cocls::generator_aggregator(std::move(glist));
     while (co_await g) {
         std::cout <<  g() << " " ;
@@ -279,7 +292,66 @@ void with_queue_test() {
     wq.push(2);
     wq.push(3);
     wq.push(0);
-    wq.join();
+    wq.join();    
+}
+
+cocls::reusable<cocls::task<void> > test_reusable_co(cocls::reusable_memory &m, cocls::scheduler<> &sch) {
+    std::cout << "(test_reusable_co) running" << std::endl;
+    co_await sch.sleep_for(std::chrono::seconds(1));
+    std::cout << "(test_reusable_co) finished" << std::endl;
+}
+
+
+void test_reusable() {
+    cocls::reusable_memory m;
+    cocls::thread_pool pool(1);
+    cocls::scheduler<> sch(pool);
+    //coroutine should allocate new block
+    {
+        test_reusable_co(m, sch).join();
+    }
+    //coroutine should reuse preallocated block
+    {
+        test_reusable_co(m, sch).join();
+    }
+    //coroutine should reuse preallocated block
+    {
+        test_reusable_co(m, sch).join();
+    }
+}
+
+void test_nocoro() {
+    cocls::thread_pool pool(1);
+    cocls::scheduler<> sch(pool);
+    
+    class test_fn: public cocls::nocoro<void, cocls::queue<int>::awaiter, cocls::scheduler<>::awaiter> {
+    public:
+        cocls::queue<int> &q;
+        cocls::scheduler<> &sch;
+        int _state = 0;
+        test_fn(cocls::queue<int> &q, cocls::scheduler<> &sch):q(q),sch(sch) {}
+        virtual void on_run() {
+            std::cout<<"(test_nocoro) started, waiting for value" << std::endl;
+            await(this, &test_fn::scheduled_sleep, sch.sleep_for(std::chrono::seconds(1)));            
+        }
+        
+        void scheduled_sleep() {
+            get_result<void>();
+            await(this, &test_fn::queue_pop, q.pop());           
+        }
+        
+        void queue_pop() {
+            int v = get_result<int>();
+            std::cout<<"(test_nocoro) received value:" <<  v << std::endl;
+            _return();            
+        }
+    };
+    
+    cocls::queue<int> q;
+    test_fn fn(q, sch);
+    fn.start();
+    q.push(42);
+    fn.join();
     
 }
 
@@ -299,6 +371,10 @@ int main(int argc, char **argv) {
     scheduler_test();
     
     with_queue_test();
+    
+    test_reusable();
+    
+    test_nocoro();
     
     auto fib = co_fib();
     std::cout<< "infinite gen: ";    
@@ -339,6 +415,7 @@ int main(int argc, char **argv) {
     co_fib3_reader().join();
     
     co_multfib_reader().join();
+    co_multfib_reader2().join();
 
     std::cout << "Mutex test" << std::endl;
     test_mutex();

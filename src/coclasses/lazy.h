@@ -6,7 +6,7 @@
 
 namespace cocls {
 
-template<typename T>
+template<typename T = void>
 class lazy_promise;
 
 template<typename T>
