@@ -71,7 +71,7 @@ public:
     class awaiter {
     public:
         awaiter(scheduler &owner, timepoint tp):_owner(owner),_tp(tp) {}
-        awaiter(const awaiter &) = delete;
+        awaiter(const awaiter &) = default;
         awaiter &operator=(const awaiter &) = delete;
         
         bool await_ready() const {
