@@ -10,6 +10,8 @@
 
 #include "reusable.h"
 
+#include "value_or_exception.h"
+
 #include <assert.h>
 #include <memory>
 #include <mutex>
@@ -30,53 +32,30 @@ template<typename T>
 class promise_base;
 
 
-template<typename T, typename Impl>
+template<typename T>
 class future_base {
 public:
-    
-    future_base():_pcount(0),_ready(false), _awaiter(nullptr) {}
-    ~future_base() {
-        assert(_pcount == 0);
+    promise<T> get_promise() {
+        return *static_cast<future<T> *>(this);
     }
     
-    future_base(const future_base &) = delete;
-    future_base &operator=(const future_base &) = delete;
-    
-    bool is_ready() {
-        return _ready.load(std::memory_order_acquire);
+    co_awaiter<future<T> >  operator co_await() {
+        return *static_cast<future<T> *>(this);
     }
-
     
-
+    auto wait() {
+        return blocking_awaiter<future<T> >(*static_cast<future<T> *>(this)).wait();
+    }
     
-    class awaiter {
-    public:
-        awaiter(Impl &owner):_owner(owner) {}
-        virtual ~awaiter() = default;
-        awaiter(const awaiter &) = default;
-        awaiter &operator=(const awaiter &) = delete;
-
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
-            this->_owner.add_ref();
-            this->_owner._awaiter = h;
-            this->_owner.release_ref();
-            return resume_lock::await_suspend();
-        }
-        bool await_ready() const noexcept {
-            return _owner._ready && _owner._pcount.load(std::memory_order_relaxed) == 0;
-        }
-
-    protected:
-        Impl &_owner;
-    };
-
-
-
-protected:    
-    std::atomic<unsigned int> _pcount;
-    std::atomic<bool> _ready;
-    std::coroutine_handle<> _awaiter;
+    auto get() {
+        return _value.get_value();
+    }
     
+protected:
+    
+    std::atomic<unsigned int> _pcount = 0;
+    abstract_awaiter<future<T> > *_awaiter = nullptr;
+    value_or_exception<T> _value;
 
     void add_ref() {
         _pcount.fetch_add(1, std::memory_order_relaxed);
@@ -85,180 +64,55 @@ protected:
     void release_ref() {
         if (_pcount.fetch_sub(1, std::memory_order_release)-1 == 0) {            
             if (_awaiter) {
-                if (!this->_ready.load(std::memory_order_acquire)) {
-                    static_cast<Impl *>(this)->set_exception(std::make_exception_ptr(await_canceled_exception()));
-                }
-                resume_lock::resume(_awaiter);
+                _awaiter->resume();
             }
         }
     }
-
+    
+    bool is_ready() {
+        return _value.is_ready() && _pcount == 0;        
+    }
+    
+    bool subscribe_awaiter(abstract_awaiter<future<T> > *x) {
+        ++_pcount;
+        _awaiter = x;
+        return  (--_pcount > 0 || !_value.is_ready());
+    }
+    
+    auto get_result() {
+        return _value.get_value();
+    }
+    
+    
+    friend class promise_base<T>;
+    friend class promise<T>;
+    friend class abstract_owned_awaiter<future<T> >;
+    friend class co_awaiter<future<T> >;
+    friend class blocking_awaiter<future<T> >;
+    
+    void unhandled_exception() {
+        _value.unhandled_exception();
+    }
 };
 
-///Creates future variable for coroutine
-/**
- * Future variable can be used in coroutine and can be awaited.
- * @tparam T type of variable. It can be void
- * 
- * variable cannot be moved or copied
- */
 template<typename T>
-class future: public future_base<T, future<T> > {
+class future: public future_base<T> {
 public:
-
-    using super_t = future_base<T, future<T> >;
     
-    future():_is_exception(false) {}
-    ~future() {
-        if (this->is_ready()) {
-            if (_is_exception) _exception.~exception_ptr();
-            else _value.~T();
-        }
+    template<typename X>
+    auto set_value(X &&x) -> decltype(std::declval<value_or_exception<T> >().set_value(x)) {
+        this->_value.set_value(std::forward<X>(x));
     }
-    future(const future &) = delete;
-    future &operator=(const future &) = delete;
-    
-    class awaiter: public super_t::awaiter {
-    public:
-        awaiter(future &owner):super_t::awaiter(owner) {}
-        T &await_resume() {
-            if (this->_owner._is_exception) std::rethrow_exception(this->_owner._exception);
-            else return this->_owner._value;
-        }
-    };
-    
-
-    ///future can be awaited
-    awaiter operator co_await() {
-        return awaiter(*this);
-    }
-
-    
-    auto wait() {
-        return sync_await *this;
-    }
-
-   
-    
-    ///Retrieves promise object
-    /**
-     * Use this object to set value of the future. 
-     * 
-     * @return promise object. It can be copied and moved
-     * 
-     * @note co_await resumes coroutine when the last promise is destroyed.
-     */
-    promise<T> get_promise();
-
-    ///Get value - only if the future is already resolved
-    T &get() {
-        if (!this->is_ready()) throw value_not_ready_exception();
-        if (this->_is_exception) std::rethrow_exception(this->_exception);
-        return this->_value;
-    }
-
-
-protected:
-     friend class future_base<T, future<T> >;
-    
-     bool _is_exception;
-     union {
-         T _value;
-         std::exception_ptr _exception;
-     };
-     
-     void set_exception(std::exception_ptr &&e) {
-         if (!this->is_ready()) {
-             new(&_exception) std::exception_ptr(std::move(e));
-             _is_exception = true;
-             this->_ready.store(true, std::memory_order_release);
-             
-         }
-     }
-     
-     template<typename X>
-     void set_value(X &&value) {
-         if (!this->is_ready()) {
-             new(&_value) T(std::forward<X>(value));
-             _is_exception = false;
-             this->_ready.store(true, std::memory_order_release);
-             
-         }
-     }
-
-     friend class promise<T>;
-     friend class promise_base<T>;
-
-    
 };
-
-///Creates future variable for coroutine - void specialization
-/**
- * This future value has no exact value. But it still can be resolved and can capture exception
- */
 template<>
-class future<void>: public future_base<void, future<void> > {
+class future<void>: public future_base<void> {
 public:
-    using super_t = future_base<void, future<void> >;
-
     
-    future():_exception(nullptr) {}
-    future(const future &) = delete;
-    future &operator=(const future &) = delete;
-
-    class awaiter:public super_t::awaiter {
-    public:
-        awaiter(future &owner):super_t::awaiter(owner) {}
-
-        void await_resume() {
-            if (this->_owner._exception) std::rethrow_exception(this->_owner._exception);            
-        }
-    };
-    
-    awaiter operator co_await() {
-        return awaiter(*this);
+    auto set_value() {
+        this->_value.set_value();
     }
-
-    ///Check state of future, throws exception if there is such exceptional state
-    void get() {
-        if (!this->is_ready()) throw value_not_ready_exception();
-        if (this->_exception) std::rethrow_exception(this->_exception);
-    }
-
-
-    void wait() {
-        sync_await(*this);
-    }
-
-    
-    promise<void> get_promise();
-
-protected:
-    
-    
-     std::exception_ptr _exception;
-     
-
-     friend class future_base<void, future<void> >;
-     friend class promise<void>;
-     friend class promise_base<void>;
-
-     void set_exception(std::exception_ptr &&e) {
-         if (!_ready) {
-             _exception = e;
-             _ready.store(true, std::memory_order_release);
-             
-         }
-     }
-     
-     void set_value() {
-         if (!_ready) {
-             _exception = nullptr;
-             _ready.store(true, std::memory_order_release);
-             
-         }
-     }
 };
+
 
 
 template<typename T>
@@ -336,11 +190,6 @@ public:
         this->_owner->set_value(x);
     }
     
-    ///set exception
-    void set_exception(std::exception_ptr &&e) const {
-        this->_owner->set_exception(std::move(e));
-    }
-    
     ///capture current exception
     void unhandled_exception() const {
         this->_owner->set_exception(std::current_exception());
@@ -376,13 +225,9 @@ public:
     void set_value() {
         _owner->set_value();
     }
-    ///sets exception
-    void set_exception(std::exception_ptr &&e) {
-        _owner->set_exception(std::move(e));
-    }
     ///capture unhandled exception
     void unhandled_exception() {
-        _owner->set_exception(std::current_exception());
+        _owner->unhandled_exception();
     }
     ///
     void operator()() {
@@ -391,15 +236,6 @@ public:
 
 };
 
-
-template<typename T>
-inline promise<T> future<T>::get_promise()  {
-    return promise<T>(*this);
-}
-
-inline promise<void> future<void>::get_promise()  {
-    return promise<void>(*this);
-}
 
 ///Makes callback promise
 /**
@@ -427,34 +263,27 @@ template<typename T, typename Fn>
 promise<T> make_promise(Fn &&fn, void *buffer = nullptr, std::size_t sz = 0) {
     
         
-    static constexpr std::size_t needsz = sizeof(Fn)+16*sizeof(void *); 
     ///Storage for coroutine containing a callback
     /** the calculation should be improved depend on final compiler 
      * because there is no way how to determine size of coroutine frame
      * in compile time
      */
-    using Storage = reusable_memory<std::array<char, needsz> >;
+        
     
-    
-    class futimpl: public future<T> {
+    class futimpl: public future<T>, public abstract_awaiter<future<T>,false> {
     public:
-
-        static reusable<task<> > invoke_cb(Storage &, Fn &&fn, futimpl *owner) noexcept {            
-            Fn _fn(std::forward<Fn>(fn));
-            co_await suspend([owner](std::coroutine_handle<> h){
-                owner->_awaiter = h;
-            });
-            _fn(*owner);
-            delete owner;
+        futimpl(Fn &&fn):_fn(std::forward<Fn>(fn)) {
+            this->_awaiter = this;
         }
-
-        futimpl(Fn &&fn) {
-            invoke_cb(_storage,std::forward<Fn>(fn),this); 
+        virtual void resume() override {
+            _fn(*this);
+            delete this;
         }
         virtual ~futimpl() = default;
-
+        
     protected:
-        Storage _storage;
+        Fn _fn;
+
     };
     
     class futimpl_inl: public futimpl {

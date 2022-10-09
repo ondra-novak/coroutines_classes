@@ -1,12 +1,10 @@
 #include "../../version.h"
 #include <coclasses/task.h>
-#include <coclasses/simple_task.h>
 #include <coclasses/future.h>
 #include <coclasses/lazy.h>
 #include <coclasses/generator.h>
 #include <coclasses/mutex.h>
 #include <coclasses/queue.h>
-#include <coclasses/condition_variable.h>
 #include <coclasses/thread_pool.h>
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
@@ -47,7 +45,7 @@ cocls::task<int> co_test() {
     co_return(i);
 }
 
-cocls::simple_task<int> co_test2() {
+cocls::task<int> co_test2() {
     std::cout << "(co_test2) co_lazy() started" << std::endl;
     cocls::lazy<int> lz = co_lazy();
     std::cout << "(co_test2) await" << std::endl;
@@ -163,7 +161,7 @@ int test_mutex() {
                         std::cout << "Coroutine start:" << idx << std::endl;
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                         for (int i = 0; i < 5; i++) {                            
-                            auto own = co_await mx;
+                            auto own = co_await mx.lock();
                             std::cout << "Coroutine running id: " << idx << std::endl;
                             std::uniform_int_distribution<int> tm(0,100);
                             auto x = ++shr;
@@ -198,29 +196,6 @@ void test_pause() {
            })(i);
        }     
     });
-}
-
-cocls::task<> test_cond_var() {
-    std::mutex mx;
-    std::unique_lock _(mx);
-    cocls::condition_variable cond;
-    bool flag = false;
-    std::thread thr([&]{
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        std::cout << "(test_con_var) trigger flag = false" << std::endl;
-        cond.notify_one();
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        {
-            std::unique_lock _(mx);
-            std::cout << "(test_con_var) trigger flag = true" << std::endl;
-            flag = true;
-            cond.notify_one(_);
-        }
-    });
-    thr.detach();
-    std::cout << "(test_con_var) Coroutine waiting" << std::endl;
-    co_await cond(_, [&]{return flag;});
-    std::cout << "(test_con_var) Coroutine released" << std::endl;
 }
 
 
@@ -316,24 +291,6 @@ void test_reusable() {
 }
 
 
-cocls::simple_task<int> test_simple_task_co(cocls::scheduler<> &sch) {
-    co_await sch.sleep_for(std::chrono::seconds(1));
-    co_return 42;
-}
-cocls::simple_task<int> test_simple_task_co2(cocls::scheduler<> &sch) {
-    int i = co_await test_simple_task_co(sch);
-    co_await sch.sleep_for(std::chrono::seconds(1));
-    co_return i*2;
-}
-
-void test_simple_task() {    
-    cocls::thread_pool pool(1);
-    cocls::scheduler<> sch(pool);
-    std::cout << "(test_simple_task) finished: " 
-            << test_simple_task_co2(sch).join() 
-            << std::endl;
-    
-}
 
 int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
@@ -343,10 +300,7 @@ int main(int argc, char **argv) {
     auto z = co_test2();
     std::cout << "(main) waiting for future" << std::endl;
     std::cout << z.join() << std::endl;
-
-    test_simple_task();
-    
-    test_cond_var().join();
+ 
 
     threadpool_test();
     

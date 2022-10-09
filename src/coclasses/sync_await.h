@@ -12,6 +12,7 @@
 namespace cocls {
 
 
+
 struct sync_await_tag{
     using sync_await_storage = reusable_memory<std::array<void *, 16> >;
 
@@ -22,12 +23,12 @@ struct sync_await_tag{
 
     
     template<typename Expr> 
-    auto operator,(Expr &&x) -> decltype(x.operator co_await().await_resume()) {
+    auto operator,(Expr &&x) -> std::remove_reference_t<decltype(x.operator co_await().await_resume())> {
         return operator,(x.operator co_await());
     }
 
     template<typename Expr> 
-    auto operator,(Expr &&expr) -> decltype(expr.await_resume()) {
+    auto operator,(Expr &&expr) -> std::remove_reference_t<decltype(expr.await_resume())> {
 
         sync_await_storage stor;
         

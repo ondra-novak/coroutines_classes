@@ -17,7 +17,7 @@ public:
     lazy() {};
     lazy(promise_type *p):task<T>(p) {}
 
-    task_awaiter<task_promise<T> > operator co_await();
+    co_awaiter<task_promise<T>,true> operator co_await();
 
     ///start coroutine now. 
     void start();
@@ -45,9 +45,9 @@ protected:
 
 
 template<typename T>
-task_awaiter<task_promise<T> > lazy<T>::operator co_await() {
+co_awaiter<task_promise<T>, true > lazy<T>::operator co_await() {
     start();
-    return task_awaiter<task_promise<T> >(*(this->_promise));
+    return co_awaiter<task_promise<T>, true >(*(this->_promise));
 }
 
 template<typename T>

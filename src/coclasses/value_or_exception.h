@@ -32,6 +32,10 @@ struct value_or_exception {
         }
     }
     
+    bool is_ready() {
+        return _value.index() == 1 || std::get<0>(_value) != nullptr;
+    }
+    
 };
 
 template<>

@@ -98,7 +98,7 @@ protected:
         }
     }
     
-    bool set_awaiter(abstract_awaiter<queue> *aw) {
+    bool subscribe_awaiter(abstract_awaiter<queue> *aw) {
         std::unique_lock lk(_mx);
         bool suspend = empty_lk();
         if (suspend) _awaiters.push(aw);
