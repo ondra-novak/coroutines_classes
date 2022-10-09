@@ -8,7 +8,8 @@
 #ifndef SRC_COCLASSES_COROID_H_
 #define SRC_COCLASSES_COROID_H_
 
-#include "handle.h"
+
+#include <coroutine>
 
 namespace cocls {
 
@@ -26,7 +27,7 @@ namespace cocls {
 class coroid_t {
 public:
     coroid_t() = default;    
-    coroid_t(handle_t h):_h(h.address()) {}
+    coroid_t(std::coroutine_handle<> h):_h(h.address()) {}
     
     bool operator == (const coroid_t &other) const {return _h == other._h;}
     bool operator != (const coroid_t &other) const {return _h != other._h;}

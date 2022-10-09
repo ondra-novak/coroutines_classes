@@ -206,7 +206,7 @@ public:
     bool await_ready() const noexcept {
         return this->_owner.is_ready();
     }   
-    std::coroutine_handle<> await_suspend(handle_t h) {
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
         _h = h;
         return resume_lock::await_suspend(h, this->_owner.register_awaiter(this));
     }
@@ -219,7 +219,7 @@ public:
 
     
 protected:
-    handle_t _h;
+    std::coroutine_handle<> _h;
 };
 
 template<typename Owner> class task_blocking_awaiter: public abstract_task_awaiter<Owner> {
@@ -229,17 +229,20 @@ public:
     task_blocking_awaiter(Owner &owner): super_t(owner) {}
 
     void wait() {
-        if (this->_owner.is_ready()) return;
+        if (this->_owner.is_ready()) return;        
         this->_owner.register_awaiter(this);
+        _signal = this->_owner.is_ready();
         std::unique_lock _(mx);
-        cond.wait(_, [&]{return this->_owner.is_ready();});
+        cond.wait(_, [&]{return _signal;});
     }
     virtual void resume() noexcept override  {
         std::unique_lock _(mx);
+        _signal = true;
         cond.notify_all();
     }
 
 protected:
+    bool _signal = false;
     std::mutex mx;
     std::condition_variable cond;
 };

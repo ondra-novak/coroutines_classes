@@ -98,7 +98,7 @@ public:
         awaiter(const awaiter &other) = default;
         awaiter &operator=(const awaiter &other) = delete;
         bool await_ready() noexcept {return _owner.await_ready();}        
-        std::coroutine_handle<> await_suspend(handle_t h) noexcept {
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
             _h = h;
             return resume_lock::await_suspend(h, _owner.await_suspend(this));
         }
@@ -110,7 +110,7 @@ public:
         }
         
     protected:
-        handle_t _h;
+        std::coroutine_handle<> _h;
         mutex &_owner;
         
     };

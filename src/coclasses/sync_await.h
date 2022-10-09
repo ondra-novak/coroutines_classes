@@ -4,57 +4,46 @@
 
 #include "common.h"
 #include "resume_lock.h"
-#include "handle.h"
+
+#include "reusable.h"
 
 #include <condition_variable>
 #include <mutex>
 namespace cocls {
 
 
-template<typename Expr> 
-auto sync_await(Expr &&x) -> decltype(x.operator co_await().await_resume()) {
-    return sync_await(x.operator co_await());
-}
+struct sync_await_tag{
+    using sync_await_storage = reusable_memory<std::array<void *, 16> >;
 
-///Synchronous await
-/**
- * Synchronous await block whole thread until the awaiting promise is resolved
- * 
- * @param expr expression. 
- * @return result of await
- * 
- * @code
- *   //async await
- *   auto x = co_await expr;
- *   
- *   //sync await
- *   auto x = sync_await(expr);
- *   
- * @endcodes
- */
-template<typename Expr> 
-auto sync_await(Expr &&expr) -> decltype(expr.await_resume()) {
-    if (expr.await_ready()) {
-        return expr.await_resume();
+    template<typename Expr>
+    static reusable<task<std::remove_reference_t<decltype(std::declval<Expr>().await_resume())> > > sync_await_coro(sync_await_storage &, Expr &expr) {
+        co_return co_await expr;    
     }
-    std::mutex mx;
-    std::condition_variable cond;
-    bool signal = false;
-    auto a = [&]{
-        std::unique_lock _(mx);
-        signal = true;
-        cond.notify_one();
-    };
-    cb_resumable_t<decltype(a)> r(std::move(a));    
+
     
-    resume_lock::resume(expr.await_suspend(handle_t(&r)));
+    template<typename Expr> 
+    auto operator,(Expr &&x) -> decltype(x.operator co_await().await_resume()) {
+        return operator,(x.operator co_await());
+    }
 
-    std::unique_lock _(mx);
-    cond.wait(_,[&]{return signal;});
-    return expr.await_resume();
+    template<typename Expr> 
+    auto operator,(Expr &&expr) -> decltype(expr.await_resume()) {
+
+        sync_await_storage stor;
+        
+        return sync_await_coro(stor, expr).join();
+    }
+
+    
+};
+
 }
 
-}
+///Sync await - similar to co_await, but can be used in outside of coroutine
+/**
+ * sync_await <expr> - waits for result synchronously
+ */
+#define sync_await ::cocls::sync_await_tag(), 
 
 
 

@@ -7,6 +7,9 @@
 #include "exceptions.h"
 
 #include "sync_await.h"
+
+#include "reusable.h"
+
 #include <assert.h>
 #include <memory>
 #include <mutex>
@@ -53,7 +56,7 @@ public:
         awaiter(const awaiter &) = default;
         awaiter &operator=(const awaiter &) = delete;
 
-        std::coroutine_handle<> await_suspend(handle_t h) {
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             this->_owner.add_ref();
             this->_owner._awaiter = h;
             this->_owner.release_ref();
@@ -72,7 +75,7 @@ public:
 protected:    
     std::atomic<unsigned int> _pcount;
     std::atomic<bool> _ready;
-    handle_t _awaiter;
+    std::coroutine_handle<> _awaiter;
     
 
     void add_ref() {
@@ -131,8 +134,8 @@ public:
     }
 
     
-    T &wait() {
-        return sync_await(*this);
+    auto wait() {
+        return sync_await *this;
     }
 
    
@@ -423,22 +426,35 @@ inline promise<void> future<void>::get_promise()  {
 template<typename T, typename Fn>
 promise<T> make_promise(Fn &&fn, void *buffer = nullptr, std::size_t sz = 0) {
     
-    class futimpl: public future<T>, public abstract_resumable_t {
+        
+    static constexpr std::size_t needsz = sizeof(Fn)+16*sizeof(void *); 
+    ///Storage for coroutine containing a callback
+    /** the calculation should be improved depend on final compiler 
+     * because there is no way how to determine size of coroutine frame
+     * in compile time
+     */
+    using Storage = reusable_memory<std::array<char, needsz> >;
+    
+    
+    class futimpl: public future<T> {
     public:
 
-        virtual std::coroutine_handle<> resume() noexcept {
-            _cb(*this);
-            delete this;
-            return std::noop_coroutine();
+        static reusable<task<> > invoke_cb(Storage &, Fn &&fn, futimpl *owner) noexcept {            
+            Fn _fn(std::forward<Fn>(fn));
+            co_await suspend([owner](std::coroutine_handle<> h){
+                owner->_awaiter = h;
+            });
+            _fn(*owner);
+            delete owner;
         }
-            
-        futimpl(Fn &&fn): _cb(std::forward<Fn>(fn)) {
-            this->_awaiter = resumable_handle_t(this);
+
+        futimpl(Fn &&fn) {
+            invoke_cb(_storage,std::forward<Fn>(fn),this); 
         }
         virtual ~futimpl() = default;
 
     protected:
-        Fn _cb;
+        Storage _storage;
     };
     
     class futimpl_inl: public futimpl {
@@ -452,12 +468,10 @@ promise<T> make_promise(Fn &&fn, void *buffer = nullptr, std::size_t sz = 0) {
     
     if (sz < sizeof(futimpl_inl)) {
         auto f = new futimpl(std::forward<Fn>(fn));
-        promise<T> p = f->get_promise();
-        return p;
+        return f->get_promise();
     } else {
         auto f = new(buffer) futimpl_inl(std::forward<Fn>(fn));
-        promise<T> p = f->get_promise();
-        return p;        
+        return f->get_promise();
     }
 }
 

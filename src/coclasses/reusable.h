@@ -7,23 +7,73 @@
 
 #ifndef SRC_COCLASSES_REUSABLE_H_
 #define SRC_COCLASSES_REUSABLE_H_
+#include <array>
 #include <vector>
 #include <new>
 
+#ifndef NDEBUG
+#include <iostream>
+#endif
+
 namespace cocls {
+
+
+class abstract_reusable_memory {
+public:
+    virtual void *alloc(std::size_t) = 0;
+    virtual void dealloc(void *ptr) = 0;
+    virtual ~abstract_reusable_memory() = default;
+};
 
 
 ///Reusable buffer for reusable coroutine
 /**
  * @see reusable
  */
-class reusable_memory {
+template<typename Storage = std::string>
+class reusable_memory;
+
+template<>
+class reusable_memory<void>:abstract_reusable_memory {
+public:
+    static std::size_t adjust_size(std::size_t sz) {
+        return sz + sizeof(abstract_reusable_memory *);        
+    }
+    
+    static void *finish_alloc(void *p, abstract_reusable_memory *owner) {
+        abstract_reusable_memory **s= reinterpret_cast<abstract_reusable_memory **>(p);
+        *s = owner;
+        return s+1;
+        
+    }
+    
+    static abstract_reusable_memory **get_block_ptr(void *p) {
+        return reinterpret_cast<abstract_reusable_memory **>(p) - 1;        
+    }
+    
+    void *alloc(std::size_t sz) {
+        return finish_alloc(::operator new(adjust_size(sz)), this);
+    }
+    
+    void dealloc(void *ptr) {
+        ::operator delete(ptr); 
+    }
+    static void generic_delete(void *ptr) {
+        abstract_reusable_memory **p = get_block_ptr(ptr);
+        (*p)->dealloc(p);
+    }
+    static reusable_memory &get_instance() {
+        static reusable_memory x;
+        return x;
+    }
+    
+};
+
+
+template<typename Storage>
+class reusable_memory: public abstract_reusable_memory {
 public:
     
-    struct block {
-        reusable_memory *owner;
-        char data[1];
-    };
 
     ///Allocate block
     /**
@@ -33,39 +83,56 @@ public:
      * @param sz requested size
      */
     void *alloc(std::size_t sz) {
-        std::size_t nsz = sz+sizeof(block::owner);
-        block *b;
-        if (_busy) {
-            b = reinterpret_cast<block *>(::operator new(nsz));
-            b->owner = nullptr;
+        bool r = _busy.exchange(true);
+        if (r) {
+            return reusable_memory<void>::get_instance().alloc(sz);
         } else {
+            auto nsz = reusable_memory<void>::adjust_size(sz);
             _buffer.resize(nsz);
-            b = reinterpret_cast<block *>(_buffer.data());
-            b->owner = this;
-            _busy = true;
+            return reusable_memory<void>::finish_alloc(_buffer.data(), this);
         }
-        return std::launder(b->data);
     }
     ///Deallocate block allocated by alloc
     /**
      * 
      * @param ptr pointer to block returned by alloc()
      */
-    static void dealloc(void *ptr) {
-        block *b = reinterpret_cast<block *>(reinterpret_cast<char *>(ptr) - sizeof(block::owner));
-        if (b->owner == nullptr) ::operator delete(b);
-        else {
-            b->owner->_busy = false;
-        }
+    void dealloc(void *) {
+        _busy = false;
     }
     
     
 protected:
-    bool _busy = false;
-    std::vector<char> _buffer;
-    
-    
+    std::atomic<bool> _busy = false;
+    Storage _buffer;
+        
 };
+
+
+template<typename T, std::size_t n>
+class reusable_memory<std::array<T,n> >:public abstract_reusable_memory {
+public:
+    void *alloc(std::size_t sz) {
+        auto nsz = reusable_memory<void>::adjust_size(sz);
+#ifndef NDEBUG
+        if (nsz > sizeof(T)*n) {
+            std::cerr << "Failed to allocate coroutine. Reserved space is too small. " << ((nsz+sizeof(T)-1)/sizeof(T)) << ">" << n << std::endl;
+        }
+#endif
+        if (nsz > sizeof(T)*n) {
+            throw std::bad_alloc();
+        }
+        return reusable_memory<void>::finish_alloc(_storage.data(), this);        
+    }
+    
+    void dealloc(void *) {
+        //empty
+    }
+private:
+    std::array<T,n> _storage;
+};
+
+
 
 ///A coroutine which reuses already allocated memory.
 /**
@@ -90,17 +157,17 @@ public:
     class promise_type: public Coro::promise_type {
     public:
         
-        template<typename ... Args>
-        void *operator new(std::size_t sz, reusable_memory &m, Args &&... ) {
+        template<typename Storage, typename ... Args>
+        void *operator new(std::size_t sz, reusable_memory<Storage> &m, Args &&... ) {
             return m.alloc(sz);
         }
-        template<typename ... Args>
-        void operator delete(void *ptr, reusable_memory &m, Args &&... ) {
-            return m.dealloc(ptr);
+        template<typename Storage, typename ... Args>
+        void operator delete(void *ptr, reusable_memory<Storage> &m, Args &&... ) {
+            m.dealloc(ptr);
         }
         
         void operator delete(void *ptr, std::size_t) {
-            return reusable_memory::dealloc(ptr);
+            reusable_memory<void>::generic_delete(ptr);
         }
 
         reusable<Coro> get_return_object() {

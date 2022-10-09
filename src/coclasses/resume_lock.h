@@ -4,7 +4,7 @@
 
 #include "common.h"
 
-#include "handle.h"
+#include <coroutine>
 #include <queue>
 
 namespace cocls {
@@ -25,7 +25,7 @@ namespace cocls {
  * In an awaiter, for implementation of await_suspend() function, use resume_lock::await_suspend 
  * and return its result as the result if above function.
  * 
- * Instead handle_t::resume(), call resume_lock::resume()
+ * Instead std::coroutine_handle<>::resume(), call resume_lock::resume()
  * 
  * 
  */
@@ -45,7 +45,7 @@ public:
      * @return handle of coroutine scheduled to resume. Just return this value as result
      * of awaiter's function await_suspend();
      */
-    static std::coroutine_handle<> await_suspend(const handle_t & h, bool suspend = true) {
+    static std::coroutine_handle<> await_suspend(const std::coroutine_handle<> & h, bool suspend = true) {
         return get_instance().await_suspend_impl(h, suspend);
     }
 
@@ -60,7 +60,7 @@ public:
      * @param h handle of consumer, which need to be resumed later
      * @return handle to be resumed
      */
-    static std::coroutine_handle<> await_suspend_yield(const handle_t & h) {
+    static std::coroutine_handle<> await_suspend_yield(const std::coroutine_handle<> & h) {
         return get_instance().await_suspend_yield_impl(h);
     }
 
@@ -72,7 +72,7 @@ public:
      * @note this function can return immediately, when resume_lock is active, however
      * the coroutine specified by the argument is scheduled.
      */
-    static void resume(const handle_t & h) {
+    static void resume(const std::coroutine_handle<> & h) {
         get_instance().resume_impl(h);
     }
 
@@ -104,7 +104,7 @@ public:
             resume_lock &lk = get_instance();
             return !lk._active;
         }
-        static std::coroutine_handle<> await_suspend(handle_t h) noexcept {                        
+        static std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {                        
             resume_lock &lk = get_instance();
             lk._waiting.push(h);
             if (!lk._finish) return std::noop_coroutine();
@@ -147,27 +147,27 @@ protected:
         if (_active && !_waiting.empty()) {
             auto h = _waiting.front();
             _waiting.pop();
-            return h.resume_handle();
+            return h;
         } else {
             return std::noop_coroutine();
         }            
     }
 
-    std::coroutine_handle<> await_suspend_yield_impl(const handle_t & h) {
+    std::coroutine_handle<> await_suspend_yield_impl(const std::coroutine_handle<> & h) {
         if (_active) {
             _waiting.push(h);
             return await_suspend_impl();
         } else {
-            return h.resume_handle();
+            return h;
         }
     }
 
     
-    std::coroutine_handle<> await_suspend_impl(const handle_t & h, bool suspend = true) {
+    std::coroutine_handle<> await_suspend_impl(const std::coroutine_handle<> & h, bool suspend = true) {
         if (suspend) {
             return await_suspend_impl();
         } else {
-            return h.resume_handle();
+            return h;
         }
     }
     
@@ -191,7 +191,7 @@ protected:
         
     }
     
-    void resume_impl(const handle_t & h) {
+    void resume_impl(const std::coroutine_handle<> & h) {
         if (_active) {
             _waiting.push(h);
         } else {
@@ -203,7 +203,7 @@ protected:
 protected:
     bool _active = false;
     bool _finish = false;
-    std::queue<handle_t > _waiting;
+    std::queue<std::coroutine_handle<> > _waiting;
 };
 
 
@@ -223,6 +223,45 @@ inline void coboard(Fn &&fn) {
 inline resume_lock::pause_suspender pause() {
     return resume_lock::pause();
 }
+
+
+template<typename Fn>
+class resume_me_awaiter {
+public:
+    resume_me_awaiter(Fn &&fn):_fn(std::forward<Fn>(fn)) {}
+    static bool await_ready() noexcept {return false;}
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+        if constexpr(std::is_convertible_v<decltype(_fn(h)), std::coroutine_handle<> >) {
+            return _fn(h);
+        } else {
+            _fn(h);
+            return resume_lock::await_suspend();
+        }
+    }
+    static void await_resume() {}
+    
+protected:
+    Fn _fn;
+};
+
+
+///Suspend current coroutine and forward its handle to somewhere
+/**
+ * @code
+ * co_await suspend([](std::coroutine_handle<>){...})
+ * @endcode
+ * 
+ * Function suspend current coroutine in exchange to retrieve its handle and calls
+ * a function with that handle. It can be useful to register this coroutine for a signal
+ * @param fn function to be called with handle
+ 
+ * @return awaiter
+ */
+template<typename Fn, typename = decltype(std::declval<Fn>()(std::declval<std::coroutine_handle<> >()))>
+resume_me_awaiter<Fn> suspend(Fn &&fn) {
+    return resume_me_awaiter<Fn>(std::forward<Fn>(fn)); 
+}
+
 
 }
 

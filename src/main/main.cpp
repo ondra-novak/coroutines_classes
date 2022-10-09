@@ -1,5 +1,6 @@
 #include "../../version.h"
 #include <coclasses/task.h>
+#include <coclasses/simple_task.h>
 #include <coclasses/future.h>
 #include <coclasses/lazy.h>
 #include <coclasses/generator.h>
@@ -10,9 +11,7 @@
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
 #include <coclasses/abstract_awaiter.h>
-#include <coclasses/callback_await.h>
 #include <coclasses/reusable.h>
-#include <coclasses/nocoro.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -48,7 +47,7 @@ cocls::task<int> co_test() {
     co_return(i);
 }
 
-cocls::task<int> co_test2() {
+cocls::simple_task<int> co_test2() {
     std::cout << "(co_test2) co_lazy() started" << std::endl;
     cocls::lazy<int> lz = co_lazy();
     std::cout << "(co_test2) await" << std::endl;
@@ -190,17 +189,13 @@ int test_mutex() {
 void test_pause() {
     cocls::coboard([]{
        for (int i = 0; i < 5; i++) {
-           callback_await(([](int i)->cocls::task<void>{
+           ([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {
                   std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
                   co_await cocls::pause();
               } 
               std::cout << "Finished coroutine " << i << std::endl;
-           })(i)).then(
-               [i]{
-                       std::cout << "Callback finished:" << i << std::endl; 
-               },[]{}
-           );
+           })(i);
        }     
     });
 }
@@ -295,7 +290,7 @@ void with_queue_test() {
     wq.join();    
 }
 
-cocls::reusable<cocls::task<void> > test_reusable_co(cocls::reusable_memory &m, cocls::scheduler<> &sch) {
+cocls::reusable<cocls::task<void> > test_reusable_co(cocls::reusable_memory<> &m, cocls::scheduler<> &sch) {
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;
@@ -303,7 +298,7 @@ cocls::reusable<cocls::task<void> > test_reusable_co(cocls::reusable_memory &m, 
 
 
 void test_reusable() {
-    cocls::reusable_memory m;
+    cocls::reusable_memory<> m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block
@@ -320,38 +315,23 @@ void test_reusable() {
     }
 }
 
-void test_nocoro() {
+
+cocls::simple_task<int> test_simple_task_co(cocls::scheduler<> &sch) {
+    co_await sch.sleep_for(std::chrono::seconds(1));
+    co_return 42;
+}
+cocls::simple_task<int> test_simple_task_co2(cocls::scheduler<> &sch) {
+    int i = co_await test_simple_task_co(sch);
+    co_await sch.sleep_for(std::chrono::seconds(1));
+    co_return i*2;
+}
+
+void test_simple_task() {    
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
-    
-    class test_fn: public cocls::nocoro<void, cocls::queue<int>::awaiter, cocls::scheduler<>::awaiter> {
-    public:
-        cocls::queue<int> &q;
-        cocls::scheduler<> &sch;
-        int _state = 0;
-        test_fn(cocls::queue<int> &q, cocls::scheduler<> &sch):q(q),sch(sch) {}
-        virtual void on_run() {
-            std::cout<<"(test_nocoro) started, waiting for value" << std::endl;
-            await(this, &test_fn::scheduled_sleep, sch.sleep_for(std::chrono::seconds(1)));            
-        }
-        
-        void scheduled_sleep() {
-            get_result<void>();
-            await(this, &test_fn::queue_pop, q.pop());           
-        }
-        
-        void queue_pop() {
-            int v = get_result<int>();
-            std::cout<<"(test_nocoro) received value:" <<  v << std::endl;
-            _return();            
-        }
-    };
-    
-    cocls::queue<int> q;
-    test_fn fn(q, sch);
-    fn.start();
-    q.push(42);
-    fn.join();
+    std::cout << "(test_simple_task) finished: " 
+            << test_simple_task_co2(sch).join() 
+            << std::endl;
     
 }
 
@@ -364,6 +344,8 @@ int main(int argc, char **argv) {
     std::cout << "(main) waiting for future" << std::endl;
     std::cout << z.join() << std::endl;
 
+    test_simple_task();
+    
     test_cond_var().join();
 
     threadpool_test();
@@ -374,7 +356,6 @@ int main(int argc, char **argv) {
     
     test_reusable();
     
-    test_nocoro();
     
     auto fib = co_fib();
     std::cout<< "infinite gen: ";    

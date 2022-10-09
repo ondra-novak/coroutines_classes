@@ -162,7 +162,7 @@ public:
         next_awaiter &operator=(const next_awaiter &other) = delete;
                 ;
         bool await_ready() const {return _owner.next_ready();}
-        std::coroutine_handle<> await_suspend(handle_t h) {
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             _owner.next_suspend(h);
             return std::coroutine_handle<promise_type>::from_promise(_owner);
         }
@@ -243,14 +243,14 @@ public:
     static std::suspend_always initial_suspend() noexcept {return {};}
 
     struct yield_suspender {
-        yield_suspender(handle_t h): _h(h) {}
+        yield_suspender(std::coroutine_handle<> h): _h(h) {}
         bool await_ready() const noexcept {return false;}
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const noexcept {
-            return _h?_h.resume_handle():std::noop_coroutine();
+            return _h?_h:std::noop_coroutine();
         }
         void await_resume() const noexcept {};
 
-        handle_t _h;
+        std::coroutine_handle<> _h;
     };
 
     /*
@@ -314,7 +314,7 @@ public:
      * sets state running - this allows to detect state after return from resume
      * 
      */
-    void next_suspend(handle_t h) {
+    void next_suspend(std::coroutine_handle<> h) {
         _awaiter = h;
         _value.reset();
         _state = State::running;
@@ -445,7 +445,7 @@ protected:
     //contains current value
     std::optional<T> _value;
     //contains consumer's handle - this coroutine must be resumed on co_yield
-    handle_t _awaiter;
+    std::coroutine_handle<> _awaiter;
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
     //stortage for callback future
