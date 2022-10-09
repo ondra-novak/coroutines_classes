@@ -153,7 +153,17 @@ public:
         return _prom->get();
     }
 
-    class next_awaiter {
+    
+    class next_awaiter : public co_awaiter<promise_type> {
+    public:
+        using co_awaiter<promise_type>::co_awaiter;
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+            this->_h = h;
+            this->_owner.subscribe_awaiter(this);
+            return std::coroutine_handle<promise_type>::from_promise(this->_owner);
+        }
+    };
+/*    class next_awaiter {
     public:
         next_awaiter(promise_type &owner):_owner(owner) {}
         next_awaiter(const next_awaiter &other) = default;
@@ -172,7 +182,7 @@ public:
         promise_type &_owner;
         
     };
-    
+*/    
     ///Allows to wait on generator in coroutine using co_await
     /**
      * You need to await to calculate next item. Result is bool
@@ -238,14 +248,14 @@ public:
     static std::suspend_always initial_suspend() noexcept {return {};}
 
     struct yield_suspender {
-        yield_suspender(std::coroutine_handle<> h): _h(h) {}
+        yield_suspender(abstract_awaiter<generator_promise> *h): _h(h) {}
         bool await_ready() const noexcept {return false;}
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const noexcept {
-            return _h?_h:std::noop_coroutine();
+        void await_suspend(std::coroutine_handle<> ) const noexcept {
+            if (_h) _h->resume();
         }
         void await_resume() const noexcept {};
 
-        std::coroutine_handle<> _h;
+        abstract_awaiter<generator_promise> *_h;
     };
 
     /*
@@ -298,7 +308,7 @@ public:
     /*
      * checks whether state is done, or data are ready. In this state, no suspend is needed
      */
-    bool next_ready() {
+    bool is_ready() {
         return _state == State::done || _state == State::data_ready;
     }
     
@@ -309,10 +319,11 @@ public:
      * sets state running - this allows to detect state after return from resume
      * 
      */
-    void next_suspend(std::coroutine_handle<> h) {
+    bool subscribe_awaiter(abstract_awaiter<generator_promise> *h) {
         _awaiter = h;
         _value.reset();
         _state = State::running;
+        return true;
     }
     
     //called by co_await from generator on await_resume
@@ -320,7 +331,7 @@ public:
      * just returns true, if state differs from done (State::data_ready or State::done is only valid there)
      
      */
-    bool next_resume() {
+    bool get_result() {
         assert(_state == State::data_ready || _state == State::done);
         return _state != State::done;
     }       
@@ -349,7 +360,7 @@ public:
     bool next() {        
         auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
         if (_state.load(std::memory_order_relaxed) == State::done) return false;
-        next_suspend(std::noop_coroutine());
+        subscribe_awaiter(nullptr);
         h.resume();
         if (_state.load(std::memory_order_relaxed) == State::running) {
             future<State> f;
@@ -361,7 +372,7 @@ public:
                 _wait_promise.release();
             }            
         }
-        return next_resume();
+        return get_result();
     }
     
 
@@ -372,14 +383,14 @@ public:
             fn(false);
             return;
         }
-        next_suspend(std::noop_coroutine());
+        subscribe_awaiter(nullptr);
         h.resume();
         if (_state.load(std::memory_order_relaxed) == State::running) {
             future<State> f;
             State chk = State::running;
             _wait_promise = cocls::make_promise<State>([this, fn = std::forward<Fn>(fn)](cocls::future<State> &f) mutable {
                 _state = f.get();
-                fn(next_resume());
+                fn(get_result());
             }, _future_storage);
             if (!_state.compare_exchange_strong(chk, State::running_promise_set, std::memory_order_release)) {
                 _wait_promise.set_value(chk);
@@ -387,7 +398,7 @@ public:
             }            
             return;
         }
-        fn(next_resume()); 
+        fn(get_result()); 
     }
     
     void return_void() {}
@@ -440,7 +451,7 @@ protected:
     //contains current value
     std::optional<T> _value;
     //contains consumer's handle - this coroutine must be resumed on co_yield
-    std::coroutine_handle<> _awaiter;
+    abstract_awaiter<generator_promise> *_awaiter = nullptr;
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
     

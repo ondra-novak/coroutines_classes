@@ -24,8 +24,6 @@ namespace cocls {
 
 template<typename T>
 class future;
-
-
 template<typename T>
 class promise;
 template<typename T>
