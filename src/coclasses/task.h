@@ -3,7 +3,6 @@
 #define SRC_COCLASSES_TASK_H_
 
 #include "common.h" 
-#include "coroid.h"
 #include "exceptions.h"
 #include "resume_lock.h"
 
@@ -106,10 +105,6 @@ public:
      */
     bool is_ready() const {
         return _promise->is_ready();
-    }
-
-    coroid_t get_id() const {
-        return coroid_t(std::coroutine_handle<promise_type>::from_promise(*_promise));
     }
 
     auto join() {

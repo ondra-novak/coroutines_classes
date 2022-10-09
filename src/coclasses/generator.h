@@ -8,8 +8,6 @@
 
 #include "queue.h"
 
-#include "coroid.h"
-
 #include <optional>
 #include <future>
 
@@ -203,9 +201,6 @@ public:
     }
     
     
-    coroid_t get_id() const {
-        return coroid_t(std::coroutine_handle<promise_type>::from_promise(*_prom));
-    }
 
 protected:
 

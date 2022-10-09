@@ -47,14 +47,14 @@ public:
             auto h = _queue.front();
             _queue.pop();
             lk.unlock();
-            resume_lock::resume(h);
+            h->resume();
             lk.lock();
         }
     }
     
     void stop() {
         std::vector<std::thread> tmp;
-        std::queue<std::coroutine_handle<> > q;
+        std::queue<abstract_awaiter<thread_pool> *> q;
         {
             std::unique_lock lk(_mx);
             _exit = true;
@@ -66,43 +66,15 @@ public:
         while (!q.empty()) {
             auto n = std::move(q.front());
             q.pop();
-            n.resume();
+            n->resume();
         }
     }
 
     ~thread_pool() {
         stop();
     }
-
-    class awaiter_base {
-    public:
-        awaiter_base(thread_pool &owner):_owner(owner) {}
-        awaiter_base(const awaiter_base &owner) = default;
-        awaiter_base &operator=(const awaiter_base &owner) = delete;
-    protected:
-        thread_pool &_owner;
-
-    };
     
-    class awaiter: public awaiter_base { 
-    public:
-        using awaiter_base::awaiter_base;
-        
-        bool await_ready() noexcept {
-            return _owner._exit;
-        }
-        void await_resume() {
-            if (_owner._exit) throw await_canceled_exception(); 
-        }        
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
-            std::lock_guard lk(_owner._mx);
-            if (_owner._exit) return h;
-            _owner._queue.push(h);
-            _owner._cond.notify_one();
-            return resume_lock::await_suspend();
-        }
-    };
-    
+    using awaiter = co_awaiter<thread_pool>;
     template<typename Fn>
     class fork_awaiter: public awaiter {
     public:
@@ -169,13 +141,29 @@ public:
 protected:
     mutable std::mutex _mx;
     std::condition_variable _cond;
-    std::queue<std::coroutine_handle<>> _queue;
+    std::queue<abstract_awaiter<thread_pool> *> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;
     static thread_pool * & current_pool() {
         static thread_local thread_pool *c = nullptr;
         return c;
     }
+    
+    friend class co_awaiter<thread_pool>;
+    bool is_ready() noexcept {
+        return _exit;
+    }
+    void get_result() {
+        if (_exit) throw await_canceled_exception(); 
+    }        
+    bool subscribe_awaiter(abstract_awaiter<thread_pool> *awt) noexcept {
+        std::lock_guard lk(_mx);
+        if (_exit) return false;
+        _queue.push(awt);
+        _cond.notify_one();
+        return true;
+    }
+
 };
 
 
