@@ -25,7 +25,7 @@ namespace cocls {
  * The promise must implement
  * 
  * bool is_ready(); - return true, if result is ready
- * bool set_awaiter(abstract_awaiter *); - return true, if set, false if resolved
+ * bool subscribe_awaiter(abstract_awaiter *); - return true, if set, false if resolved
  * auto get_result(); - return result
  * 
  */

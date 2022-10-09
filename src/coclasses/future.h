@@ -237,6 +237,48 @@ public:
 };
 
 
+namespace _details {
+
+template<typename T, typename Fn>
+class future_with_fn: public future<T>, public abstract_awaiter<future<T>,false> {
+public:
+    future_with_fn(Fn &&fn):_fn(std::forward<Fn>(fn)) {
+        this->_awaiter = this;
+    }
+    virtual void resume() override {
+        _fn(*this);
+        delete this;
+    }
+    virtual ~future_with_fn() = default;
+    
+protected:
+    Fn _fn;
+
+};
+
+template<typename T, typename Fn>
+class future_with_fn_reusable: public future_with_fn<T, Fn> {
+public:
+    using future_with_fn<T, Fn>::future_with_fn;
+    
+    template<typename Storage>
+    void *operator new(std::size_t sz, reusable_memory<Storage> &m) {
+        return m.alloc(sz);
+    }
+    template<typename Storage>
+    void operator delete(void *ptr, reusable_memory<Storage> &m) {
+        m.dealloc(ptr);
+    }
+    
+    void operator delete(void *ptr, std::size_t) {
+        reusable_memory<void>::generic_delete(ptr);
+    }
+};
+
+
+
+}
+
 ///Makes callback promise
 /**
  * Callback promise cause execution of the callback when promise is resolved.,
@@ -248,9 +290,6 @@ public:
  * @tparam T type of promise
  * @param fn callback function. Once the promise is resolved, callback function receives
  * whole future<T> object as argument (as reference). It can retrieve the value from it
- * @param buffer pointer to storage, if the future object is smaller enough to fit into
- * the buffer. 
- * @param size of the buffer
  * 
  * @return promise<T> object 
  * 
@@ -260,50 +299,16 @@ public:
  * is being destroyed as soon as possible
  */
 template<typename T, typename Fn>
-promise<T> make_promise(Fn &&fn, void *buffer = nullptr, std::size_t sz = 0) {
-    
-        
-    ///Storage for coroutine containing a callback
-    /** the calculation should be improved depend on final compiler 
-     * because there is no way how to determine size of coroutine frame
-     * in compile time
-     */
-        
-    
-    class futimpl: public future<T>, public abstract_awaiter<future<T>,false> {
-    public:
-        futimpl(Fn &&fn):_fn(std::forward<Fn>(fn)) {
-            this->_awaiter = this;
-        }
-        virtual void resume() override {
-            _fn(*this);
-            delete this;
-        }
-        virtual ~futimpl() = default;
-        
-    protected:
-        Fn _fn;
-
-    };
-    
-    class futimpl_inl: public futimpl {
-    public:
-        using futimpl::futimpl;
-        
-        void *operator new(std::size_t, void *p) {return p;}
-        void operator delete(void *, void *) {}
-        void operator delete(void *, std::size_t) {}
-    };
-    
-    if (sz < sizeof(futimpl_inl)) {
-        auto f = new futimpl(std::forward<Fn>(fn));
-        return f->get_promise();
-    } else {
-        auto f = new(buffer) futimpl_inl(std::forward<Fn>(fn));
-        return f->get_promise();
-    }
+promise<T> make_promise(Fn &&fn) {
+    auto f = new _details::future_with_fn<T, Fn>(std::forward<Fn>(fn));
+    return f->get_promise();
 }
 
+template<typename T, typename Fn, typename Storage>
+promise<T> make_promise(Fn &&fn, reusable_memory<Storage> &storage) {
+    auto f = new(storage) _details::future_with_fn_reusable<T, Fn>(std::forward<Fn>(fn));
+    return f->get_promise();
+}
 
 
 }

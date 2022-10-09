@@ -380,7 +380,7 @@ public:
             _wait_promise = cocls::make_promise<State>([this, fn = std::forward<Fn>(fn)](cocls::future<State> &f) mutable {
                 _state = f.get();
                 fn(next_resume());
-            }, _storage, sizeof(_storage));
+            }, _future_storage);
             if (!_state.compare_exchange_strong(chk, State::running_promise_set, std::memory_order_release)) {
                 _wait_promise.set_value(chk);
                 _wait_promise.release();
@@ -443,8 +443,8 @@ protected:
     std::coroutine_handle<> _awaiter;
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
-    //stortage for callback future
-    char _storage[24*sizeof(void *)];
+    
+    reusable_memory<std::string> _future_storage;
 };
 
 
@@ -454,27 +454,6 @@ protected:
  * as rvalue reference to avoid copying (because generators are movable)_
  * @return generator
  */
-#if 0
-template<typename T>
-generator<T> generator_aggregator(std::vector<generator<T> > &&list__) {
-    std::vector<generator<T> > list(std::move(list__));
-    aggregator<generator<T> *, bool> aggr;
-    for (auto &x: list) {
-        x.next(aggr.make_callback(&x));
-    }
-    while (!aggr.empty()) {
-        auto kv = co_await aggr;
-        if (kv.second) {
-            co_yield kv.first->get();
-            kv.first->next(aggr.make_callback(kv.first));
-        }
-    }
-    
-}
-#endif
-
-
-
 
 template<typename T>
 generator<T> generator_aggregator(std::vector<generator<T> > list__) {

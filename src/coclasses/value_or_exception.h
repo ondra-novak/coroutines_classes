@@ -8,6 +8,12 @@
 
 namespace cocls {
 
+///Holds value or exception
+/**
+ * Need to store coroutine result
+ * 
+ * @tparam T
+ */
 template<typename T>
 struct value_or_exception {
     
