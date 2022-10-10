@@ -149,7 +149,7 @@ int test_mutex() {
     int shared_var = 0;
     std::default_random_engine rnd(0);
     cocls::mutex mx;
-    cocls::thread_pool pool(4);
+    cocls::thread_pool pool(4,true);
     std::vector<cocls::task<> > tasks;
     for (int i = 0; i < 20; i++) {
         auto t =([&](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{

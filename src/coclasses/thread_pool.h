@@ -31,7 +31,9 @@ namespace cocls {
 class thread_pool {
 public:
     
-    thread_pool(unsigned int threads = 0) {
+    thread_pool(unsigned int threads = 0, bool use_for_resume = false)
+        :_bk(use_for_resume?&resume_backend:nullptr)
+    {
         if (!threads) threads = std::thread::hardware_concurrency();
         for (unsigned int i = 0; i < threads; i++) {
             _threads.push_back(std::thread([this]{worker();}));
@@ -48,7 +50,7 @@ public:
             auto h = _queue.front();
             _queue.pop();
             lk.unlock();
-            coroboard(&resume_backend, [&]{
+            coroboard(_bk, [&]{
                 h->resume();
             });
             lk.lock();
@@ -148,6 +150,7 @@ protected:
     std::queue<abstract_awaiter<thread_pool> *> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;
+    resume_lock::resume_backend _bk = nullptr;
     static thread_pool * & current_pool() {
         static thread_local thread_pool *c = nullptr;
         return c;
