@@ -149,43 +149,38 @@ int test_mutex() {
     int shared_var = 0;
     std::default_random_engine rnd(0);
     cocls::mutex mx;
-    std::array<std::thread, 4> thrs;
-    for (auto &t: thrs) {        
-        int p = std::distance(thrs.data(), &t);
-        t = std::thread([&,p]{           
-            std::cout << "Thread start:" << p << std::endl;
-            cocls::resume_lock::coboard([&]{
-                for (int i = 0; i < 5; i++) {
-                    //NOTE - lambda's closure disappear on first suspend
-                    auto t =([](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
-                        std::cout << "Coroutine start:" << idx << std::endl;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        for (int i = 0; i < 5; i++) {                            
-                            auto own = co_await mx.lock();
-                            std::cout << "Coroutine running id: " << idx << std::endl;
-                            std::uniform_int_distribution<int> tm(0,100);
-                            auto x = ++shr;
-                            std::this_thread::sleep_for(std::chrono::milliseconds(tm(rnd)));
-                            assert(x == shr); //variable should not change here
-                            std::cout << "Shared var increased: " << shr << std::endl;
-                            
-                        }                    
-                    })(shared_var, mx, rnd, p*10+i);
-                }
-            });
-            std::cout << "Thread exit" << std::endl;
-        });       
+    cocls::thread_pool pool(4);
+    std::vector<cocls::task<> > tasks;
+    for (int i = 0; i < 20; i++) {
+        auto t =([&](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
+            co_await pool;
+            std::cout << "Coroutine start:" << idx << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            for (int i = 0; i < 5; i++) {
+                auto own = co_await mx.lock();
+                std::cout << "Coroutine running id: " << idx << std::endl;
+                std::uniform_int_distribution<int> tm(0,100);
+                auto x = ++shr;
+                std::this_thread::sleep_for(std::chrono::milliseconds(tm(rnd)));
+                assert(x == shr); //variable should not change here
+                std::cout << "Shared var increased: " << shr << std::endl;
+
+            }
+        })(shared_var, mx, rnd, i);
+        tasks.push_back(t);
     }
-    for (auto &t: thrs) {
+    for (auto &t: tasks) {
         t.join();
     }
+
+
     return shared_var;
     
     
 }
 
 void test_pause() {
-    cocls::coboard([]{
+    cocls::coroboard([]{
        for (int i = 0; i < 5; i++) {
            ([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {

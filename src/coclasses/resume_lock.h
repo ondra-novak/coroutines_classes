@@ -32,6 +32,22 @@ namespace cocls {
 class resume_lock {
 public:
 
+    ///Resume backend
+    /** by default, all resumes are handled by resume_lock, but for
+     *  certain part of the code, you probably need to handle resumption
+     *  by a specific backend. For example, if you have a thread pool, you
+     *  probably want to resume coroutines by threads in that thread pool.
+     *
+     *  @param h coroutine handle
+     *  @retval true processed by the backend
+     *  @retval false not processed, use resume_lock processing
+     *
+     *  Don't use resume_lock::resume when you resuming coroutine in backend,
+     *  otherwise the infinite loop can happen
+     *
+     */
+    using resume_backend = bool (*)(std::coroutine_handle<> h);
+
     ///Handle suspension of coroutine through the resume_lock
     /**
      * 
@@ -95,10 +111,21 @@ public:
      * @param fn function to call on top of coroutine board
      */
     template<typename Fn>
-    static void coboard(Fn &&fn) {
+    static void coroboard(Fn &&fn) {
         get_instance().lock(std::forward<Fn>(fn));
     }
-    
+
+    ///Run coroutine board
+    /**
+     * @param bk resume backend. Function called for resume of coroutine
+     * during code is inside of coroboard
+     * @param fn function called inside of coroboard
+     */
+    template<typename Fn>
+    static void coroboard(resume_backend bk, Fn &&fn) {
+        get_instance().lock(bk, std::forward<Fn>(fn));
+    }
+
     struct pause_awaiter: std::suspend_always {
         static bool await_ready() noexcept {
             resume_lock &lk = get_instance();
@@ -170,14 +197,18 @@ protected:
             return h;
         }
     }
-    
+
+    template<typename Fn>
+    void lock(resume_backend rsbk, Fn &&fn) noexcept {
+        auto stored = this->_rsmbk;
+        this->_rsmbk = rsbk;
+        lock(std::forward<Fn>(fn));
+        this->_rsmbk = stored;
+    }
+
     template<typename Fn> 
     void lock(Fn &&fn) noexcept {
-        if (_active) {
-            //when coboard is active, just run function
-            fn();
-            return;
-        }
+        bool prev_active = _active;
         _active = true;
         fn();
         _finish = true;
@@ -186,24 +217,28 @@ protected:
             _waiting.pop();
             h.resume();
         }
-        _active = false;
+        _active = prev_active;
         _finish = false;
         
     }
     
     void resume_impl(const std::coroutine_handle<> & h) {
         if (_active) {
+            if (_rsmbk && _rsmbk(h)) {
+                return;
+            }
             _waiting.push(h);
-        } else {
-            lock([&]{
-                h.resume();
-            });
+            return;
         }
+        lock([&]{
+            h.resume();
+        });
     }     
 protected:
     bool _active = false;
     bool _finish = false;
     std::queue<std::coroutine_handle<> > _waiting;
+    resume_backend _rsmbk = nullptr;
 };
 
 
@@ -212,8 +247,12 @@ protected:
  * @copydoc resume_lock::coboard
  */
 template<typename Fn>
-inline void coboard(Fn &&fn) {
-    resume_lock::coboard(std::forward<Fn>(fn));
+inline void coroboard(Fn &&fn) {
+    resume_lock::coroboard(std::forward<Fn>(fn));
+}
+template<typename Fn>
+inline void coroboard(resume_lock::resume_backend bk, Fn &&fn) {
+    resume_lock::coroboard(bk, std::forward<Fn>(fn));
 }
 
 ///Suspend current coroutine and reschedules it to the final phase of resume_lock / coboard
