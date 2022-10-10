@@ -265,7 +265,7 @@ void with_queue_test() {
     wq.join();    
 }
 
-cocls::reusable<cocls::task<void> > test_reusable_co(cocls::reusable_memory<> &m, cocls::scheduler<> &sch) {
+cocls::reusable<cocls::task<void>,cocls::reusable_memory<> > test_reusable_co(cocls::reusable_memory<> &m, cocls::scheduler<> &sch) {
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;

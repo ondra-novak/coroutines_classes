@@ -147,7 +147,7 @@ private:
  * 
  * 
  */
-template<typename Coro>
+template<typename Coro, typename Storage>
 class reusable: public Coro {
 public:
     
@@ -157,12 +157,12 @@ public:
     class promise_type: public Coro::promise_type {
     public:
         
-        template<typename Storage, typename ... Args>
-        void *operator new(std::size_t sz, reusable_memory<Storage> &m, Args &&... ) {
+        template<typename ... Args>
+        void *operator new(std::size_t sz, Storage &m, Args &&... ) {
             return m.alloc(sz);
         }
-        template<typename Storage, typename ... Args>
-        void operator delete(void *ptr, reusable_memory<Storage> &m, Args &&... ) {
+        template<typename ... Args>
+        void operator delete(void *ptr, Storage &m, Args &&... ) {
             m.dealloc(ptr);
         }
         
@@ -170,8 +170,8 @@ public:
             reusable_memory<void>::generic_delete(ptr);
         }
 
-        reusable<Coro> get_return_object() {
-            return reusable<Coro>(std::move(Coro::promise_type::get_return_object()));
+        reusable<Coro, Storage> get_return_object() {
+            return reusable<Coro, Storage>(std::move(Coro::promise_type::get_return_object()));
         }
     private:
         //reusable promise needs argument reusable_memory 
