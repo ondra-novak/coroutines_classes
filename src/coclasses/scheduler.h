@@ -66,6 +66,8 @@ public:
         _worker = worker(pool);
     }
     
+    using timer_id = void *;
+    
 
     ///awaiter
     class awaiter {
@@ -77,9 +79,9 @@ public:
         bool await_ready() const {
             return _tp<now() || _owner._exit;
         }
-        std::coroutine_handle<> await_suspend(handle_t h) {
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             std::lock_guard _(_owner._mx);
-            if (_owner._exit) return h.resume_handle();
+            if (_owner._exit) return h;
             _h = h;
             _owner._list.push({_tp,this});
             _owner._signal = true;
@@ -87,22 +89,23 @@ public:
             return resume_lock::await_suspend();
         }
         
-        void await_resume() const {
+        timer_id await_resume() const {
             if (_canceled) throw await_canceled_exception();
+            return _h.address();
         }
         
         void resume(bool canceled) {
             _canceled = canceled;
             resume_lock::resume(_h);
         }
-        bool is(const coroid_t &id) {
-            return id == _h;
+        bool is(timer_id id) {
+            return _h.address() == id;
         }
         
     protected:
         scheduler &_owner;
         timepoint _tp;
-        handle_t _h;
+        std::coroutine_handle<> _h;
         bool _canceled = false;
     };
  
@@ -164,7 +167,7 @@ public:
      * 
      * @note canceled coroutine receives exception await_canceled_exception
      */
-    bool cancel(const coroid_t &id);
+    bool cancel(const timer_id &id);
     
 
     ///cancel waiting task
@@ -279,7 +282,7 @@ protected:
 
 
 template<typename Clock>
-inline bool scheduler<Clock>::cancel(const coroid_t &id) {
+inline bool scheduler<Clock>::cancel(const timer_id &id) {
     std::unique_lock _(_mx);
     sch_list_t oldls;
     std::swap(oldls, _list);    

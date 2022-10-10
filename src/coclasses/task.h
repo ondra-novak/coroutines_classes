@@ -3,9 +3,12 @@
 #define SRC_COCLASSES_TASK_H_
 
 #include "common.h" 
-#include "coroid.h"
 #include "exceptions.h"
 #include "resume_lock.h"
+
+#include "abstract_awaiter.h"
+
+#include "value_or_exception.h"
 #include <atomic>
 #include <cassert>
 #include <coroutine>
@@ -39,38 +42,32 @@ template<typename T = void> class task;
  */
 template<typename T> class task_promise;
 
-///Awaiter class
-/** Awaiters are helper objects created for co_await. They
- * handles resumption of a suspended coroutine
- */
-template<typename Imp> class task_awaiter;
 
-
-template<typename T> class task_base {
+template<typename T> class task{
 public:
     using promise_type = task_promise<T>;
 
     ///You can create empty task, which can be initialized later by assign
-    task_base():_promise(nullptr) {}
+    task():_promise(nullptr) {}
     ///task is internaly constructed from pointer to a promise  
-    task_base(task_promise<T> *promise): _promise(promise) {
+    task(task_promise<T> *promise): _promise(promise) {
         _promise->add_ref();
     }
     ///destruction of task decreases reference
-    ~task_base() {
+    ~task() {
         if (_promise) _promise->release_ref();
     }
     
     ///you can copy task, which just increases references
-    task_base(const task_base &other):_promise(other._promise) {
+    task(const task &other):_promise(other._promise) {
         _promise->add_ref();
     }
     ///you can move task
-    task_base(task_base &&other):_promise(other._promise) {
+    task(task &&other):_promise(other._promise) {
         other._promise = nullptr;
     }
     ///you can assign
-    task_base &operator=(const task_base &other){
+    task &operator=(const task &other){
         if (this != &other) {
             if (_promise) _promise->release_ref();
             _promise = other._promise;
@@ -79,7 +76,7 @@ public:
         return *this;
     }
     ///you can move-assign
-    task_base &operator=(task_base &&other) {
+    task &operator=(task &&other) {
         if (this != &other) {
             if (_promise) _promise->release_ref();
             _promise = other._promise;
@@ -91,11 +88,11 @@ public:
     /**
      * @return awaiter
      * 
-     * awaiting the task causes suspend of curreny coroutine until
+     * awaiting the task causes suspend of current coroutine until
      * the awaited task is finished
      */
-    task_awaiter<task_promise<T> > operator co_await() {
-        return task_awaiter<task_promise<T> >(*_promise);
+    co_awaiter<task_promise<T>,true> operator co_await() {
+        return *_promise;
     }
     
     ///Determines whether task is finished and return value is ready
@@ -110,10 +107,11 @@ public:
         return _promise->is_ready();
     }
 
-    coroid_t get_id() const {
-        return coroid_t(std::coroutine_handle<promise_type>::from_promise(*_promise));
+    auto join() {
+        blocking_awaiter<task_promise<T>, true> aw(*_promise);
+        return aw.wait();
     }
-
+    
     
     
 protected:
@@ -124,50 +122,6 @@ protected:
 };
 
 
-template<typename T>
-class task: public task_base<T> {
-public:
-    task() = default;
-    task(task_promise<T> *p):task_base<T>(p) {}
-
-    ///try to retrieve return value of the task
-    /**
-     * @return return value of the task
-     * @exception value_not_ready_exception when value is not ready yet
-     */ 
-    T &get() const;
-    
-    ///Retrieve result of the task - waits if task is not ready yet
-    /**     
-     * @return result of the task. Note that operation can be blocking. If the
-     * task cannot be finished because this thread is blocked then deadlock can happen 
-     */
-    T &join() const;
-
-
-    std::future<T> as_future() const;
-    
-};
-
-template<>
-class task<void>: public task_base<void> {
-public:
-    task() = default;
-    task(task_promise<void> *p):task_base<void>(p) {}
-    
-    ///try to retrieve value of the task
-    /** Because the task doesn't return value, function just check for exception
-     */
-    void get() const;
-
-    ///try to retrieve value of the task
-    /** Because the task doesn't return value, function joins the coroutine and
-     * checks for exception
-     */
-    void join() const;
-
-    std::future<void> as_future() const;
-};
 
 
 template<typename Owner> class abstract_task_awaiter {
@@ -195,32 +149,6 @@ protected:
 };
 
 
-template<typename Owner> class task_awaiter: public abstract_task_awaiter<Owner> {
-public:
-    using Value = typename Owner::ValueT;
-    using ValRef = std::add_lvalue_reference_t<Value>;
-    using super_t = abstract_task_awaiter<Owner>;
-    
-    task_awaiter(Owner &owner): super_t(owner) {}
-
-    bool await_ready() const noexcept {
-        return this->_owner.is_ready();
-    }   
-    std::coroutine_handle<> await_suspend(handle_t h) {
-        _h = h;
-        return resume_lock::await_suspend(h, this->_owner.register_awaiter(this));
-    }
-    ValRef await_resume() {
-        return this->_owner.get_value();
-    }
-    virtual void resume() noexcept override  {
-        resume_lock::resume(_h);
-    }
-
-    
-protected:
-    handle_t _h;
-};
 
 template<typename Owner> class task_blocking_awaiter: public abstract_task_awaiter<Owner> {
 public:
@@ -229,57 +157,24 @@ public:
     task_blocking_awaiter(Owner &owner): super_t(owner) {}
 
     void wait() {
-        if (this->_owner.is_ready()) return;
+        if (this->_owner.is_ready()) return;        
         this->_owner.register_awaiter(this);
+        _signal = this->_owner.is_ready();
         std::unique_lock _(mx);
-        cond.wait(_, [&]{return this->_owner.is_ready();});
+        cond.wait(_, [&]{return _signal;});
     }
     virtual void resume() noexcept override  {
         std::unique_lock _(mx);
+        _signal = true;
         cond.notify_all();
     }
 
 protected:
+    bool _signal = false;
     std::mutex mx;
     std::condition_variable cond;
 };
 
-template<typename Impl> class task_promise_base {
-public:
-    task_promise_base():_ready(false),_awaiters(nullptr) {}
-
-    void resolve(abstract_task_awaiter<Impl> *dont_resume) {
-        abstract_task_awaiter<Impl> *list = _awaiters.exchange(nullptr);
-        while (list) {
-            auto *p = list;
-            list = list->get_next();
-            if (p != dont_resume) p->resume();            
-        }
-    }
-    
-    bool is_ready() const {
-        return _ready;
-    }
-
-    bool register_awaiter(abstract_task_awaiter<Impl> *ptr) {
-        if (_ready) return false;
-        ptr->push_to(_awaiters);
-        if (_ready) {
-            resolve(ptr);
-            return false;
-        }
-        return true;
-    }
-    
-    auto &get_value() {
-        return static_cast<const Impl &>(*this).get_value();
-    }
-    
-    
-protected:
-    std::atomic<bool> _ready;
-    std::atomic<abstract_task_awaiter<Impl> *> _awaiters;
-};
 
 template<typename Impl> class task_coroutine_base {
 public:
@@ -327,183 +222,74 @@ protected:
     std::atomic<unsigned int> _ref_count;
 };
 
-template<typename T> class task_promise:
-        public task_coroutine_base<task_promise<T> >,
-        public task_promise_base<task_promise<T> >
-        
+template<typename T> 
+class task_promise_base: public task_coroutine_base<task_promise<T> >            
 {
 public:
     
-    using ValueT = T;
-    using awaiter = task_awaiter<task_promise<T> >;
-     
+    using AW = abstract_awaiter<task_promise<T>, true>;
     
-    task_promise(): _is_exception(false)  {}
-    ~task_promise() {
-        if (this->is_ready()) {
-            if (_is_exception) {
-                _exception.~exception_ptr();
-            } else {
-                _value.~T();
-            }
-        }
-    }
-
-    typename task_coroutine_base<task_promise<T> >::final_awaiter final_suspend() noexcept {
-        this->resolve(nullptr);
-        return task_coroutine_base<task_promise<T> >::final_suspend();
-    }
-
+    value_or_exception<T> _value;
+    std::atomic<bool> _ready;
+    std::atomic<AW *> _awaiter_chain;
     
-    void return_value(T &&val) {
-        if (!this->_ready) {
-            new(&_value) T(std::move(val));
-            this->_ready = true;
-        }
-    }
-
-    void return_value(const T &val) {
-        if (!this->_ready) {
-            new(&_value) T(val);
-            this->_ready = true;
-        }
-    }
-
-    void unhandled_exception() {
-        set_exception(std::current_exception());
+    bool is_ready() const {
+        return _ready;
     }
     
-    void set_exception(std::exception_ptr &&e) {
-        if (!this->_ready) {
-            new(&_exception) std::exception_ptr(e);
-            _is_exception = true;
-            this->_ready = true;
-        }        
-    }
-    
-    T &get_value()  {
-        if (!this->_ready) {
-            throw value_not_ready_exception();
-        }
-        if (_is_exception) {
-            std::rethrow_exception(_exception);
+    bool subscribe_awaiter(AW *aw) {
+        aw->subscribe(_awaiter_chain);
+        if (_ready) {
+            aw->resume_chain(_awaiter_chain, aw);
+            return false;
         } else {
-            return _value;
+            return true;
         }
     }
-        
+    
+    auto get_result() {
+        return _value.get_value();
+    }
+    
+   
     
     
+    void unhandled_exception() {
+        _value.unhandled_exception();
+        this->_ready = true;
+        AW::resume_chain(this->_awaiter_chain, nullptr);
+    }
+    
+};
+
+template<typename T> 
+class task_promise: public task_promise_base<T> {
+public:
+    using AW = typename task_promise_base<T>::AW;
+    template<typename X>
+    auto return_value(X &&val)->decltype(std::declval<value_or_exception<T> >().set_value(val)) {
+        this->_value.set_value(std::forward<X>(val));
+        this->_ready = true;
+        AW::resume_chain(this->_awaiter_chain, nullptr);
+    }
     task<T> get_return_object() {
         return task<T>(this);
     }
-    
-    
-    
-protected:
-    bool _is_exception;
-        
-    union {
-        T _value;
-        std::exception_ptr _exception;
-    };
 };
 
-template<> class task_promise<void>: 
-        public task_promise_base<task_promise<void> >,
-        public task_coroutine_base<task_promise<void> >
-{
+template<> 
+class task_promise<void>: public task_promise_base<void> {
 public:
-    using ValueT = void;
-    
-    typename task_coroutine_base<task_promise<void> >::final_awaiter final_suspend() noexcept {
-        this->resolve(nullptr);
-        return task_coroutine_base<task_promise<void> >::final_suspend();
-    }
-
-    
-    void unhandled_exception() {
-        set_exception(std::current_exception());
-    }
-    
-    void set_exception(std::exception_ptr &&e) {
-        if (!this->_ready) {
-            _exception = std::move(e);
-        }        
-    }
-    
-    void get_value()  {
-        if (!this->_ready) {
-            throw value_not_ready_exception();
-        }
-        if (_exception) {
-            std::rethrow_exception(_exception);
-        }
-    }
-        
-    
-    void return_void() {
+    using AW = typename task_promise_base<void>::AW;
+    auto return_void() {
+        this->_value.set_value();
         this->_ready = true;
+        AW::resume_chain(this->_awaiter_chain, nullptr);
     }
-    
     task<void> get_return_object() {
         return task<void>(this);
     }
-    
-    
-protected:
-    std::exception_ptr _exception;
 };
-
-template<typename T>
-inline T& task<T>::get() const {
-    return this->_promise->get_value();
-}
-
-template<typename T>
-inline T& task<T>::join() const {
-    task_blocking_awaiter<task_promise<T> > bk(*this->_promise);
-    bk.wait();
-    return get();
-}
-
-template<typename T>
-inline std::future<T> task<T>::as_future() const {
-    std::future<T> f;
-    ([&]()->task<>{
-       std::promise<T> p;
-       task me = *this;
-       f = p.get_future();
-       p.set_value(co_await me);
-    })();
-    return f;
-}
-
-inline void task<void>::get() const
-{
-    return this->_promise->get_value();
-}
-
-inline void task<void>::join() const
-{
-    task_blocking_awaiter<task_promise<void> > bk(*this->_promise);
-    bk.wait();
-    return get();
-
-}
-
-inline std::future<void> task<void>::as_future() const {
-       std::future<void> f;
-       ([&]()->task<>{
-          std::promise<void> p;
-          task me = *this;
-          f = p.get_future();
-          co_await me;
-          p.set_value();
-       })();
-       return f;
-       
-}
 
 
 }

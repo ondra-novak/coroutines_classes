@@ -1,3 +1,5 @@
+#include "abstract_awaiter.h"
+
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -68,44 +70,62 @@ public:
      */
     std::size_t size();
     
-    struct awaiter {
-        awaiter(queue<T> &owner):_owner(owner) {}
-        awaiter(const awaiter &) = default;
-        awaiter &operator=(const awaiter &) = delete;
-        
-        bool await_ready() ;
-        std::coroutine_handle<> await_suspend(handle_t h);
-        T await_resume();
-        queue &_owner;
-        
-        ///Along with pop() which returns awaiter, allows conversion to std::optional<T> for non-blocking access
-        operator std::optional<T> ();
-        ///Along with pop() which returns awaiter, allows conversion to T for non-blocking access
-        operator T() {
-            auto x = operator std::optional<T>();
-            if (x.has_value()) return *x;
-            else throw value_not_ready_exception();
-        }
-    };
     
-    ///return awaiter
-    awaiter operator co_await() {
+    co_awaiter<queue> operator co_await() {
         return *this;
     }
     
-    awaiter pop() {
+    ///return awaitable object
+    /**
+     * To retrieve value synchronously, call wait() on result
+     * @return
+     */
+    co_awaiter<queue> pop() {
         return *this;
     }
     
     
     
 protected:
+    
+    bool is_ready() {
+        std::unique_lock lk(_mx);
+        if (!empty_lk()) {
+            ++_reserved_items;
+            return true;
+        } else {
+            return false;
+        }
+    }
+    
+    bool subscribe_awaiter(abstract_awaiter<queue> *aw) {
+        std::unique_lock lk(_mx);
+        bool suspend = empty_lk();
+        if (suspend) _awaiters.push(aw);
+        else ++_reserved_items;
+        lk.unlock();
+        return suspend;
+        
+    }
+
+    T get_result() {
+        std::unique_lock lk(_mx);
+        if (_exit) throw await_canceled_exception();
+        T  x = std::move(_queue.front());
+        _queue.pop();
+        _reserved_items--;
+        return x;
+    }
+
+    
+    friend class co_awaiter<queue>;
+    friend class blocking_awaiter<queue>;
     ///lock protects internal
     std::mutex _mx;
     ///queue itself
     std::queue<T> _queue;
     ///list of awaiters - in queue
-    std::queue<handle_t > _awaiters;
+    std::queue<abstract_awaiter<queue> *> _awaiters;
     ///count of items in the queue reserved for return
     /**
      * once coroutine is being resumed, the item, which is going to be returned
@@ -148,17 +168,6 @@ inline void queue<T>::push(const T &x) {
     resume_awaiter(lk);
 }
 
-template<typename T>
-inline queue<T>::awaiter::operator std::optional<T>() {
-    std::optional<T> x;
-    std::unique_lock lk(_owner._mx);   
-    if (!_owner.empty_lk()) {
-         x = (std::move(_owner._queue.front()));
-        _owner._queue.pop();        
-        return x;
-    }
-    return x;;
-}
 
 template<typename T>
 inline bool queue<T>::empty() {
@@ -172,38 +181,7 @@ inline std::size_t queue<T>::size() {
     return size_lk();
 }
 
-template<typename T>
-inline bool queue<T>::awaiter::await_ready()  {
-    std::unique_lock lk(_owner._mx);
-    if (!_owner.empty_lk()) {
-        ++_owner._reserved_items;
-        return true;
-    } else {
-        return false;
-    }
-    
-}
 
-template<typename T>
-inline std::coroutine_handle<> queue<T>::awaiter::await_suspend(
-        handle_t h) {
-    std::unique_lock lk(_owner._mx);
-    bool suspend = _owner.empty_lk();
-    if (suspend) _owner._awaiters.push(h);
-    else ++_owner._reserved_items;
-    lk.unlock();
-    return resume_lock::await_suspend(h, suspend);
-}
-
-template<typename T>
-inline T queue<T>::awaiter::await_resume() {
-    std::unique_lock lk(_owner._mx);
-    if (_owner._exit) throw await_canceled_exception();
-    T  x = std::move(_owner._queue.front());
-    _owner._queue.pop();
-    _owner._reserved_items--;
-    return x;
-}
 
 template<typename T>
 inline queue<T>::~queue() {
@@ -211,18 +189,18 @@ inline queue<T>::~queue() {
     while (!_awaiters.empty()) {
         auto x = _awaiters.front();        
         _awaiters.pop();
-        x.resume();
+        x->resume();
     }
 }
 
 template<typename T>
 inline void cocls::queue<T>::resume_awaiter(std::unique_lock<std::mutex> &lk) {
     if (_awaiters.empty()) return;
-    handle_t h = _awaiters.front();
+    auto h = _awaiters.front();
     _awaiters.pop();
     ++_reserved_items;
     lk.unlock();
-    resume_lock::resume(h);
+    h->resume();
 }
 }
 

@@ -5,14 +5,11 @@
 #include <coclasses/generator.h>
 #include <coclasses/mutex.h>
 #include <coclasses/queue.h>
-#include <coclasses/condition_variable.h>
 #include <coclasses/thread_pool.h>
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
 #include <coclasses/abstract_awaiter.h>
-#include <coclasses/callback_await.h>
 #include <coclasses/reusable.h>
-#include <coclasses/nocoro.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -152,80 +149,48 @@ int test_mutex() {
     int shared_var = 0;
     std::default_random_engine rnd(0);
     cocls::mutex mx;
-    std::array<std::thread, 4> thrs;
-    for (auto &t: thrs) {        
-        int p = std::distance(thrs.data(), &t);
-        t = std::thread([&,p]{           
-            std::cout << "Thread start:" << p << std::endl;
-            cocls::resume_lock::coboard([&]{
-                for (int i = 0; i < 5; i++) {
-                    //NOTE - lambda's closure disappear on first suspend
-                    auto t =([](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
-                        std::cout << "Coroutine start:" << idx << std::endl;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        for (int i = 0; i < 5; i++) {                            
-                            auto own = co_await mx;
-                            std::cout << "Coroutine running id: " << idx << std::endl;
-                            std::uniform_int_distribution<int> tm(0,100);
-                            auto x = ++shr;
-                            std::this_thread::sleep_for(std::chrono::milliseconds(tm(rnd)));
-                            assert(x == shr); //variable should not change here
-                            std::cout << "Shared var increased: " << shr << std::endl;
-                            
-                        }                    
-                    })(shared_var, mx, rnd, p*10+i);
-                }
-            });
-            std::cout << "Thread exit" << std::endl;
-        });       
+    cocls::thread_pool pool(4,true);
+    std::vector<cocls::task<> > tasks;
+    for (int i = 0; i < 20; i++) {
+        auto t =([&](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
+            co_await pool;
+            std::cout << "Coroutine start:" << idx << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            for (int i = 0; i < 5; i++) {
+                auto own = co_await mx.lock();
+                std::cout << "Coroutine running id: " << idx << std::endl;
+                std::uniform_int_distribution<int> tm(0,100);
+                auto x = ++shr;
+                std::this_thread::sleep_for(std::chrono::milliseconds(tm(rnd)));
+                assert(x == shr); //variable should not change here
+                std::cout << "Shared var increased: " << shr << std::endl;
+
+            }
+        })(shared_var, mx, rnd, i);
+        tasks.push_back(t);
     }
-    for (auto &t: thrs) {
+    for (auto &t: tasks) {
         t.join();
     }
+
+
     return shared_var;
     
     
 }
 
 void test_pause() {
-    cocls::coboard([]{
+    cocls::coroboard([]{
        for (int i = 0; i < 5; i++) {
-           callback_await(([](int i)->cocls::task<void>{
+           ([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {
                   std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
                   co_await cocls::pause();
               } 
               std::cout << "Finished coroutine " << i << std::endl;
-           })(i)).then(
-               [i]{
-                       std::cout << "Callback finished:" << i << std::endl; 
-               },[]{}
-           );
+           })(i);
        }     
     });
-}
-
-cocls::task<> test_cond_var() {
-    std::mutex mx;
-    std::unique_lock _(mx);
-    cocls::condition_variable cond;
-    bool flag = false;
-    std::thread thr([&]{
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        std::cout << "(test_con_var) trigger flag = false" << std::endl;
-        cond.notify_one();
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        {
-            std::unique_lock _(mx);
-            std::cout << "(test_con_var) trigger flag = true" << std::endl;
-            flag = true;
-            cond.notify_one(_);
-        }
-    });
-    thr.detach();
-    std::cout << "(test_con_var) Coroutine waiting" << std::endl;
-    co_await cond(_, [&]{return flag;});
-    std::cout << "(test_con_var) Coroutine released" << std::endl;
 }
 
 
@@ -295,7 +260,7 @@ void with_queue_test() {
     wq.join();    
 }
 
-cocls::reusable<cocls::task<void> > test_reusable_co(cocls::reusable_memory &m, cocls::scheduler<> &sch) {
+cocls::reusable<cocls::task<void>,cocls::reusable_memory<> > test_reusable_co(cocls::reusable_memory<> &m, cocls::scheduler<> &sch) {
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;
@@ -303,7 +268,7 @@ cocls::reusable<cocls::task<void> > test_reusable_co(cocls::reusable_memory &m, 
 
 
 void test_reusable() {
-    cocls::reusable_memory m;
+    cocls::reusable_memory<> m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block
@@ -320,40 +285,7 @@ void test_reusable() {
     }
 }
 
-void test_nocoro() {
-    cocls::thread_pool pool(1);
-    cocls::scheduler<> sch(pool);
-    
-    class test_fn: public cocls::nocoro<void, cocls::queue<int>::awaiter, cocls::scheduler<>::awaiter> {
-    public:
-        cocls::queue<int> &q;
-        cocls::scheduler<> &sch;
-        int _state = 0;
-        test_fn(cocls::queue<int> &q, cocls::scheduler<> &sch):q(q),sch(sch) {}
-        virtual void on_run() {
-            std::cout<<"(test_nocoro) started, waiting for value" << std::endl;
-            await(this, &test_fn::scheduled_sleep, sch.sleep_for(std::chrono::seconds(1)));            
-        }
-        
-        void scheduled_sleep() {
-            get_result<void>();
-            await(this, &test_fn::queue_pop, q.pop());           
-        }
-        
-        void queue_pop() {
-            int v = get_result<int>();
-            std::cout<<"(test_nocoro) received value:" <<  v << std::endl;
-            _return();            
-        }
-    };
-    
-    cocls::queue<int> q;
-    test_fn fn(q, sch);
-    fn.start();
-    q.push(42);
-    fn.join();
-    
-}
+
 
 int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
@@ -363,8 +295,7 @@ int main(int argc, char **argv) {
     auto z = co_test2();
     std::cout << "(main) waiting for future" << std::endl;
     std::cout << z.join() << std::endl;
-
-    test_cond_var().join();
+ 
 
     threadpool_test();
     
@@ -374,7 +305,6 @@ int main(int argc, char **argv) {
     
     test_reusable();
     
-    test_nocoro();
     
     auto fib = co_fib();
     std::cout<< "infinite gen: ";    

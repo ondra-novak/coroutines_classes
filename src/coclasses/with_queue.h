@@ -108,19 +108,18 @@ public:
         auto &promise = _h.promise();
         const char *qn = typeid(current_queue<Coro, T>).name();
         assert(std::strcmp(qn, promise.queue_name) == 0); //invalid queue
-        auto awaiter = promise._q.pop();
-        if (awaiter.await_ready()) {
+        _awaiter.emplace(std::move(promise._q.pop()));
+        if (_awaiter->await_ready()) {
             return h;
         }
-        return awaiter.await_suspend(h);
+        return _awaiter->await_suspend(h);
     }
     T await_resume() {
-        auto &promise = _h.promise();
-        return promise._q.pop().await_resume();
-        
+        return _awaiter->await_resume();
     }
 protected:
     std::coroutine_handle<promise_t> _h;
+    std::optional<co_awaiter<queue<T> >> _awaiter;
 };
 
 template<typename Coro ,typename T>
