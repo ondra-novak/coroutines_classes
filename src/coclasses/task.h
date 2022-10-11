@@ -5,7 +5,7 @@
 #include "common.h" 
 #include "exceptions.h"
 #include "resume_lock.h"
-
+#include "debug.h"
 #include "abstract_awaiter.h"
 
 #include "value_or_exception.h"
@@ -178,31 +178,49 @@ protected:
 
 template<typename Impl> class task_coroutine_base {
 public:
-    task_coroutine_base():_ref_count(1) {}
+    
+};
 
-    task_coroutine_base(const task_coroutine_base &) = delete;
-    task_coroutine_base &operator=(const task_coroutine_base &) = delete;
+template<typename T> 
+class task_promise_base  {
+public:
+
+    task_promise_base():_ref_count(0) {}
+
+    task_promise_base(const task_promise_base &) = delete;
+    task_promise_base &operator=(const task_promise_base &) = delete;
+    ~task_promise_base() {
+        if (_ready == State::ready) {
+            std::exception_ptr e = _value.get_exception();
+            if (e) unhandled_exception_reporter::get_instance()
+                    .report_exception(e, typeid(task<T>));
+        }
+    }
 
     ///handles final_suspend
     class final_awaiter {
     public:
-        final_awaiter(task_coroutine_base &prom): _owner(prom) {}        
+        final_awaiter(task_promise_base &prom): _owner(prom) {}        
         
         final_awaiter(const final_awaiter &prom) = default;
         final_awaiter &operator=(const final_awaiter &prom) = delete;
         
-        bool await_ready() const noexcept {
+        bool await_ready() noexcept {
             return _owner._ref_count == 0;
         }
-        constexpr void await_suspend(std::coroutine_handle<>) const noexcept {}
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept {
+            return resume_lock::await_suspend();
+        }
         constexpr void await_resume() const noexcept {}        
     protected:
-        task_coroutine_base &_owner;
+        task_promise_base &_owner;
     };
     
-    std::suspend_never initial_suspend() const noexcept {return {};}
+    std::suspend_never initial_suspend()  noexcept {
+        ++_ref_count;
+        return {};}
     final_awaiter final_suspend() noexcept {
-        --_ref_count;
+        --_ref_count;        
         return *this;
     }
     
@@ -211,35 +229,32 @@ public:
     }
     void release_ref() {
         if (--_ref_count == 0) {
-            Impl &me = static_cast<Impl &>(*this);
-            auto h = std::coroutine_handle<Impl >::from_promise(me);
+            task_promise<T> &me = static_cast<task_promise<T>  &>(*this);
+            auto h = std::coroutine_handle<task_promise<T> >::from_promise(me);
             h.destroy();
         }
     }
 
-    
-protected:
-    std::atomic<unsigned int> _ref_count;
-};
 
-template<typename T> 
-class task_promise_base: public task_coroutine_base<task_promise<T> >            
-{
-public:
+    using AW = abstract_awaiter<true>;
     
-    using AW = abstract_awaiter<task_promise<T>, true>;
+    enum class State {
+        not_ready,
+        ready,
+        processed
+    };
     
     value_or_exception<T> _value;
-    std::atomic<bool> _ready;
+    std::atomic<State> _ready;
     std::atomic<AW *> _awaiter_chain;
     
     bool is_ready() const {
-        return _ready;
+        return _ready != State::not_ready;
     }
     
     bool subscribe_awaiter(AW *aw) {
         aw->subscribe(_awaiter_chain);
-        if (_ready) {
+        if (is_ready()) {
             aw->resume_chain(_awaiter_chain, aw);
             return false;
         } else {
@@ -248,6 +263,10 @@ public:
     }
     
     auto get_result() {
+        State s = State::ready;
+        if (!_ready.compare_exchange_strong(s, State::processed)) {
+            if (s == State::not_ready) throw value_not_ready_exception();
+        }
         return _value.get_value();
     }
     
@@ -256,10 +275,11 @@ public:
     
     void unhandled_exception() {
         _value.unhandled_exception();
-        this->_ready = true;
+        this->_ready = State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     
+    std::atomic<unsigned int> _ref_count;
 };
 
 template<typename T> 
@@ -269,7 +289,7 @@ public:
     template<typename X>
     auto return_value(X &&val)->decltype(std::declval<value_or_exception<T> >().set_value(val)) {
         this->_value.set_value(std::forward<X>(val));
-        this->_ready = true;
+        this->_ready = task_promise_base<T>::State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     task<T> get_return_object() {
@@ -283,7 +303,7 @@ public:
     using AW = typename task_promise_base<void>::AW;
     auto return_void() {
         this->_value.set_value();
-        this->_ready = true;
+        this->_ready = State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     task<void> get_return_object() {

@@ -242,20 +242,24 @@ public:
         done
     };
     
+    ~generator_promise() {
+        
+    }
+    
     generator<T> get_return_object() {
         return generator<T>(this);
     }
     static std::suspend_always initial_suspend() noexcept {return {};}
 
     struct yield_suspender {
-        yield_suspender(abstract_awaiter<generator_promise> *h): _h(h) {}
+        yield_suspender(abstract_awaiter<> *h): _h(h) {}
         bool await_ready() const noexcept {return false;}
         void await_suspend(std::coroutine_handle<> ) const noexcept {
             if (_h) _h->resume();
         }
         void await_resume() const noexcept {};
 
-        abstract_awaiter<generator_promise> *_h;
+        abstract_awaiter<> *_h;
     };
 
     /*
@@ -319,7 +323,7 @@ public:
      * sets state running - this allows to detect state after return from resume
      * 
      */
-    bool subscribe_awaiter(abstract_awaiter<generator_promise> *h) {
+    bool subscribe_awaiter(abstract_awaiter<> *h) {
         _awaiter = h;
         _value.reset();
         _state = State::running;
@@ -451,7 +455,7 @@ protected:
     //contains current value
     std::optional<T> _value;
     //contains consumer's handle - this coroutine must be resumed on co_yield
-    abstract_awaiter<generator_promise> *_awaiter = nullptr;
+    abstract_awaiter<> *_awaiter = nullptr;
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
     

@@ -98,7 +98,7 @@ protected:
         }
     }
     
-    bool subscribe_awaiter(abstract_awaiter<queue> *aw) {
+    bool subscribe_awaiter(abstract_awaiter<> *aw) {
         std::unique_lock lk(_mx);
         bool suspend = empty_lk();
         if (suspend) _awaiters.push(aw);
@@ -125,7 +125,7 @@ protected:
     ///queue itself
     std::queue<T> _queue;
     ///list of awaiters - in queue
-    std::queue<abstract_awaiter<queue> *> _awaiters;
+    std::queue<abstract_awaiter<> *> _awaiters;
     ///count of items in the queue reserved for return
     /**
      * once coroutine is being resumed, the item, which is going to be returned

@@ -41,6 +41,10 @@ struct value_or_exception {
     bool is_ready() {
         return _value.index() == 1 || std::get<0>(_value) != nullptr;
     }
+    std::exception_ptr get_exception() const {
+        if (_value.index() != 0) return nullptr;
+        else return std::get<0>(_value); 
+    }
     
 };
 

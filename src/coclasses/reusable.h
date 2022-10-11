@@ -157,19 +157,34 @@ public:
     class promise_type: public Coro::promise_type {
     public:
         
+        ///allocator for normal function
         template<typename ... Args>
         void *operator new(std::size_t sz, Storage &m, Args &&... ) {
             return m.alloc(sz);
         }
+        ///deallocator for normal function when exception is thrown
         template<typename ... Args>
         void operator delete(void *ptr, Storage &m, Args &&... ) {
             m.dealloc(ptr);
         }
-        
+
+        ///allocator for member function
+        template<typename THIS, typename ... Args>
+        void *operator new(std::size_t sz,THIS &&, Storage &m, Args &&... ) {
+            return m.alloc(sz);
+        }
+        ///deallocator for member function when exception is thrown
+        template<typename THIS,typename ... Args>
+        void operator delete( void *ptr, THIS &&,Storage &m, Args &&... ) {
+            m.dealloc(ptr);
+        }
+
+        ///deallocator when coroutine finishes normally
         void operator delete(void *ptr, std::size_t) {
             reusable_memory<void>::generic_delete(ptr);
         }
 
+        ///cast return object
         reusable<Coro, Storage> get_return_object() {
             return reusable<Coro, Storage>(std::move(Coro::promise_type::get_return_object()));
         }

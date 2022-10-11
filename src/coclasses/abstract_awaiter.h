@@ -30,15 +30,15 @@ namespace cocls {
  * 
  */
 
-template<typename promise_type, bool chain = false>
+template<bool chain = false>
 class abstract_awaiter {
 public:
     virtual void resume() = 0;
     virtual ~abstract_awaiter() = default;
 };
 
-template<typename promise_type>
-class abstract_awaiter<promise_type, true> {
+template<>
+class abstract_awaiter<true> {
 public:
     abstract_awaiter()=default;
     abstract_awaiter(const abstract_awaiter &)=default;
@@ -58,21 +58,36 @@ public:
             if (y != skip) y->resume();
         }
     }
+
     
-    abstract_awaiter<promise_type,true> *_next = nullptr;
+    abstract_awaiter<true> *_next = nullptr;
 protected:
 };
 
 template<typename promise_type, bool chain = false>
-class abstract_owned_awaiter: public abstract_awaiter<promise_type, chain> {
+class abstract_owned_awaiter: public abstract_awaiter<chain> {
 public:
     abstract_owned_awaiter(promise_type &owner):_owner(owner) {}
     abstract_owned_awaiter(const abstract_owned_awaiter  &) = default;
     abstract_owned_awaiter &operator=(const abstract_owned_awaiter &) = delete;
 
+
     
 protected:
     promise_type &_owner;
+};
+
+template<typename promise_type>
+class abstract_owned_awaiter<promise_type, true>: public abstract_awaiter<true> {
+public:
+
+    abstract_owned_awaiter(promise_type &owner):_owner(owner) {}
+    abstract_owned_awaiter(const abstract_owned_awaiter &)=default;
+    abstract_owned_awaiter &operator=(const abstract_owned_awaiter &)=delete;
+
+protected:
+    promise_type &_owner;
+    
 };
 
 
@@ -80,6 +95,8 @@ protected:
 template<typename promise_type, bool chain = false>
 class co_awaiter: public abstract_owned_awaiter<promise_type, chain> {
 public:
+    
+    
     co_awaiter(promise_type &owner):abstract_owned_awaiter<promise_type, chain>(owner) {}
     bool await_ready() {
         return this->_owner.is_ready();
@@ -98,6 +115,18 @@ public:
     
     auto wait();
     
+    
+    ///Subscribe custom awaiter
+    /**
+     * Allows to declare custom awaiter, which is resumed, when awaited result is ready. 
+     * @param awt reference to awaiter. You need to keep reference valid until it is called
+     * @retval true registration done
+     * @retval false awaiting expression is already resolved, so no registration done, you can
+     * call await_resume()
+     */
+    bool subscribe_awaiter(abstract_awaiter<> *awt) {
+        return this->_owner.subscribe_awaiter(awt);
+    }
     
     
 protected:

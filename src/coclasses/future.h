@@ -52,7 +52,7 @@ public:
 protected:
     
     std::atomic<unsigned int> _pcount = 0;
-    abstract_awaiter<future<T> > *_awaiter = nullptr;
+    abstract_awaiter<> *_awaiter = nullptr;
     value_or_exception<T> _value;
 
     void add_ref() {
@@ -71,7 +71,7 @@ protected:
         return _value.is_ready() && _pcount == 0;        
     }
     
-    bool subscribe_awaiter(abstract_awaiter<future<T> > *x) {
+    bool subscribe_awaiter(abstract_awaiter<> *x) {
         ++_pcount;
         _awaiter = x;
         return  (--_pcount > 0 || !_value.is_ready());
@@ -235,19 +235,23 @@ public:
 };
 
 
-namespace _details {
-
+///Futures with callback function
+/**
+ * When future is resolved a callback function i called
+ * @tparam T type of value
+ * @tparam Fn function type
+ */
 template<typename T, typename Fn>
-class future_with_fn: public future<T>, public abstract_awaiter<future<T>,false> {
+class future_with_cb: public future<T>, public abstract_awaiter<false> {
 public:
-    future_with_fn(Fn &&fn):_fn(std::forward<Fn>(fn)) {
+    future_with_cb(Fn &&fn):_fn(std::forward<Fn>(fn)) {
         this->_awaiter = this;
     }
     virtual void resume() override {
         _fn(*this);
         delete this;
     }
-    virtual ~future_with_fn() = default;
+    virtual ~future_with_cb() = default;
     
 protected:
     Fn _fn;
@@ -255,9 +259,9 @@ protected:
 };
 
 template<typename T, typename Fn>
-class future_with_fn_reusable: public future_with_fn<T, Fn> {
+class future_with_cb_reusable: public future_with_cb<T, Fn> {
 public:
-    using future_with_fn<T, Fn>::future_with_fn;
+    using future_with_cb<T, Fn>::future_with_cb;
     
     template<typename Storage>
     void *operator new(std::size_t sz, reusable_memory<Storage> &m) {
@@ -273,9 +277,6 @@ public:
     }
 };
 
-
-
-}
 
 ///Makes callback promise
 /**
@@ -298,13 +299,13 @@ public:
  */
 template<typename T, typename Fn>
 promise<T> make_promise(Fn &&fn) {
-    auto f = new _details::future_with_fn<T, Fn>(std::forward<Fn>(fn));
+    auto f = new future_with_cb<T, Fn>(std::forward<Fn>(fn));
     return f->get_promise();
 }
 
 template<typename T, typename Fn, typename Storage>
 promise<T> make_promise(Fn &&fn, reusable_memory<Storage> &storage) {
-    auto f = new(storage) _details::future_with_fn_reusable<T, Fn>(std::forward<Fn>(fn));
+    auto f = new(storage) future_with_cb_reusable<T, Fn>(std::forward<Fn>(fn));
     return f->get_promise();
 }
 

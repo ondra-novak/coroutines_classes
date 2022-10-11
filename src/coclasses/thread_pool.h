@@ -11,10 +11,12 @@
 #include "resume_lock.h"
 #include "exceptions.h"
 
+#include "abstract_awaiter.h"
 #include <condition_variable>
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <variant>
 #include <vector>
 
 namespace cocls {
@@ -59,7 +61,7 @@ public:
     
     void stop() {
         std::vector<std::thread> tmp;
-        std::queue<abstract_awaiter<thread_pool> *> q;
+        std::queue<abstract_awaiter<> *> q;
         {
             std::unique_lock lk(_mx);
             _exit = true;
@@ -147,7 +149,7 @@ public:
 protected:
     mutable std::mutex _mx;
     std::condition_variable _cond;
-    std::queue<abstract_awaiter<thread_pool> *> _queue;
+    std::queue<abstract_awaiter<> *> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;
     resume_lock::resume_backend _bk = nullptr;
@@ -163,7 +165,7 @@ protected:
     void get_result() {
         if (_exit) throw await_canceled_exception(); 
     }        
-    bool subscribe_awaiter(abstract_awaiter<thread_pool> *awt) noexcept {
+    bool subscribe_awaiter(abstract_awaiter<> *awt) noexcept {
         std::lock_guard lk(_mx);
         if (_exit) return false;
         _queue.push(awt);

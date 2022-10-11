@@ -59,7 +59,7 @@ public:
 
     using co_awaiter = ::cocls::co_awaiter<mutex, true>;
     using blocking_awaiter = ::cocls::blocking_awaiter<mutex, true>;
-    using abstract_awaiter = ::cocls::abstract_awaiter<mutex, true>; 
+    using abstract_awaiter = ::cocls::abstract_awaiter<true>; 
     class null_awaiter: public abstract_awaiter {
         virtual void resume() {}
     };
