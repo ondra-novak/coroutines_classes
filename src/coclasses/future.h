@@ -34,7 +34,7 @@ template<typename T>
 class future_base {
 public:
     promise<T> get_promise() {
-        return *static_cast<future<T> *>(this);
+        return promise<T>(*static_cast<future<T> *>(this));
     }
     
     co_awaiter<future<T> >  operator co_await() {
@@ -60,7 +60,9 @@ protected:
     }
    
     void release_ref() {
-        if (_pcount.fetch_sub(1, std::memory_order_release)-1 == 0) {            
+        unsigned int x = _pcount.fetch_sub(1, std::memory_order_release)-1;
+        assert(x < static_cast<unsigned int>(-10));
+        if (x == 0) {            
             if (_awaiter) {
                 _awaiter->resume();
             }
@@ -117,10 +119,12 @@ template<typename T>
 class promise_base {
 public:
     promise_base():_owner(nullptr) {}
-    promise_base(future<T> &fut):_owner(&fut) {_owner->add_ref();}
+    explicit promise_base(future<T> &fut):_owner(&fut) {_owner->add_ref();}
     promise_base(const promise_base &other):_owner(other._owner) {if (_owner) _owner->add_ref();}
     promise_base(promise_base &&other):_owner(other._owner) {other._owner = nullptr;}
-    ~promise_base() {if (_owner) _owner->release_ref();}
+    ~promise_base() {
+        release();
+    }
     promise_base &operator=(const promise_base &other) {
         if (this != &other) {
             if (_owner) _owner->release_ref();

@@ -14,6 +14,7 @@
 #include "abstract_awaiter.h"
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <thread>
 #include <variant>
@@ -88,8 +89,9 @@ public:
     public:
         fork_awaiter(thread_pool &pool, Fn &&fn):awaiter(pool), _fn(std::forward<Fn>(fn)) {}
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
+            Fn fn (std::forward<Fn>(_fn));
             std::coroutine_handle<> out = awaiter::await_suspend(h);            
-            _fn();
+            fn();
             return out;
         }
     protected:
@@ -100,6 +102,7 @@ public:
         return *this;
     }
 
+    ///Call 
     template<typename Fn>
     fork_awaiter<Fn> fork(Fn &&fn) {
         return fork_awaiter<Fn>(*this, std::forward<Fn>(fn));
