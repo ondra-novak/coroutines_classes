@@ -102,7 +102,15 @@ public:
         return *this;
     }
 
-    ///Call 
+    /*
+     * BUG - GCC 10.3-12.2+ - do not inline lambda to this function
+     * 
+     * declare lambda as variable auto, and pass the variable to the
+     * argument by std::move() - otherwise bad things can happen
+     * 
+     * https://godbolt.org/z/nz1coM5YP
+     * 
+     */ 
     template<typename Fn>
     fork_awaiter<Fn> fork(Fn &&fn) {
         return fork_awaiter<Fn>(*this, std::forward<Fn>(fn));
