@@ -17,22 +17,31 @@
 
 namespace cocls {
 
-class unhandled_exception_reporter {
+class debug_reporter {
 public:
     
-    virtual ~unhandled_exception_reporter() = default; 
+    virtual ~debug_reporter() = default;
+
+    static void demangle_type(const std::type_info &type, std::string &msg) {
+#ifndef NDEBUG
+#ifdef _WIN32
+        msg.append(type.name());
+#else
+        int status = -1;
+        char *demangled_name = abi::__cxa_demangle(type.name(), NULL, NULL, &status);
+        msg.append(demangled_name);
+        free(demangled_name);
+#endif
+#else
+        msg.append(type.name());
+#endif
+        }
+
     virtual void report_exception(std::exception_ptr ptr, const std::type_info &task_type) {
 #ifndef NDEBUG
         std::string msg;
         msg.append("cocls: unhandled exception in coroutine: ");
-#ifdef _WIN32
-        msg.append(task_type.name());
-#else
-        int status = -1;
-        char *demangled_name = abi::__cxa_demangle(task_type.name(), NULL, NULL, &status);
-        msg.append(demangled_name);
-        free(demangled_name);
-#endif
+        demangle_type(task_type, msg);
         msg.append(" - ");
         try {
             std::rethrow_exception(ptr);
@@ -42,19 +51,41 @@ public:
         } catch (...) {
             msg.append("<non-standard exception>");            
         }
-        msg.append("\r\n");
+        output_debug(std::move(msg));
+    }
+
+    static void output_debug(std::string &&msg) {
 #ifdef _WIN32
         OutputDebugStringA(msg.c_str());        
+        msg.append("\r\n");
 #else
+        msg.append("\n");
         ::write(2, msg.data(), msg.size());
 #endif
 #endif
     }
+    virtual void reusable_alloc_size(std::size_t sz, const std::type_info &task_type, const std::vector<const std::type_info *> &args) {
+#ifndef NDEBUG
+        std::string msg;
+        msg.append("II coro-static alloc: ");
+        msg.append(std::to_string(sz));
+        msg.append(" bytes - ");
+        demangle_type(task_type, msg);
+        msg.append(" - (");
+        bool sep = false;
+        for (const std::type_info *c: args) {
+            if (sep) msg.append(", "); else sep = true;
+            demangle_type(*c, msg);
+        }
+        msg.append(")");
+        output_debug(std::move(msg));
+#endif
+    }
     
-    static void set_instance(unhandled_exception_reporter *inst) {
+    static void set_instance(debug_reporter *inst) {
         get_instance_ptr() = inst;
     }
-    static unhandled_exception_reporter &get_instance() {
+    static debug_reporter &get_instance() {
         return *get_instance_ptr();
     }
     
@@ -63,9 +94,9 @@ public:
     
 protected:
     
-    static unhandled_exception_reporter *& get_instance_ptr() {
-        static unhandled_exception_reporter inst;
-        static unhandled_exception_reporter *inst_ptr = &inst;
+    static debug_reporter *& get_instance_ptr() {
+        static debug_reporter inst;
+        static debug_reporter *inst_ptr = &inst;
         return inst_ptr;
     }
 };

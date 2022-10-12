@@ -192,7 +192,7 @@ public:
     ~task_promise_base() {
         if (_ready == State::ready) {
             std::exception_ptr e = _value.get_exception();
-            if (e) unhandled_exception_reporter::get_instance()
+            if (e) debug_reporter::get_instance()
                     .report_exception(e, typeid(task<T>));
         }
     }

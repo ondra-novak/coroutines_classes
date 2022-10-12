@@ -7,6 +7,9 @@
 
 #ifndef SRC_COCLASSES_REUSABLE_H_
 #define SRC_COCLASSES_REUSABLE_H_
+#include "task.h"
+#include "debug.h"
+
 #include <array>
 #include <vector>
 #include <new>
@@ -157,9 +160,34 @@ public:
     class promise_type: public Coro::promise_type {
     public:
         
+#ifndef NDEBUG
+        template<typename T, typename ... Args>
+        static void arg_types(std::vector<const std::type_info *> &targs, T&& , Args &&...args) {
+            targs.push_back(&typeid(T));
+            arg_types(targs, std::forward<Args>(args)...);
+        }
+
+        static void arg_types(std::vector<const std::type_info *> &targs) {
+        }
+#endif
+
+        template<typename ... Args>
+        static void report_size(std::size_t sz, Args && ... args) {
+#ifndef NDEBUG
+            static bool rep = true;
+            if (rep) {
+                rep = false;
+                std::vector<const std::type_info *> targs;
+                arg_types(targs, std::forward<Args>(args)...);
+                debug_reporter::get_instance().reusable_alloc_size(sz, typeid(reusable), targs);
+            }
+#endif
+        }
+
         ///allocator for normal function
         template<typename ... Args>
-        void *operator new(std::size_t sz, Storage &m, Args &&... ) {
+        void *operator new(std::size_t sz, Storage &m, Args &&...args ) {
+            report_size(sz, std::forward<Args>(args)...);
             return m.alloc(sz);
         }
         ///deallocator for normal function when exception is thrown
@@ -170,7 +198,8 @@ public:
 
         ///allocator for member function
         template<typename THIS, typename ... Args>
-        void *operator new(std::size_t sz,THIS &&, Storage &m, Args &&... ) {
+        void *operator new(std::size_t sz,THIS &&, Storage &m, Args &&... args) {
+            report_size(sz, std::forward<Args>(args)...);
             return m.alloc(sz);
         }
         ///deallocator for member function when exception is thrown
@@ -193,6 +222,64 @@ public:
         void *operator new(std::size_t ) {throw std::bad_alloc();};
     };
 };
+
+
+///Contains coroutine and awaiter as one piece, while coroutine frame is allocated inside of awaiter
+/**
+ * @tparam T type of return value
+ * @tparam reserved_space reserved space for  coroutine frame - should be large enough - you must guess :)
+ * @tparam Args arguments of coroutine - required
+ *
+ * It is better to create startup function, which inicializes the awaiter with arguments and
+ * coroutine itself
+ *
+ *
+ * @note @b LIMITATION - the coroutine must be static, cannot be method of an object. You can
+ * eventually pass this as argument
+ */
+template<typename T, std::size_t reserved_space, typename ... Args>
+class elided_task_awaiter {
+public:
+
+    ///Storage - must be first argument of the coroutine
+    using Storage = reusable_memory<std::array<void *, reserved_space> >;
+    ///TaskType - return value of the coroutine (declaration)
+    using TaskType  = reusable<task<T>, Storage>;
+    ///Whole prototype of the coroutine
+    using FunctionPtr = TaskType (*)(Storage &, Args ...);
+
+    ///Construct the awaiter, start the coroutine
+    /**
+     * @param fn pointer to coroutine
+     * @param args arguments of coroutine
+     */
+    elided_task_awaiter(FunctionPtr fn, Args && ... args) {
+        _task = fn(_storage, std::forward<Args>(args)...);
+    }
+    ///object can't be copied
+    elided_task_awaiter(const elided_task_awaiter &) = delete;
+    ///object can't be assigned
+    elided_task_awaiter &operator=(const elided_task_awaiter &) = delete;
+
+
+    ///retrieve awaitable object
+    /**
+     * @return something you can await
+     *
+     * @note ensure, that this object is not destroyed during awaition!
+     */
+    co_awaiter<task_promise<T>,true> operator co_await() {
+        return _task.operator co_await();
+    }
+
+
+protected:
+    ///Contains task
+   TaskType _task;
+    ///Contains storage
+     Storage _storage;
+};
+
 }
 
 
