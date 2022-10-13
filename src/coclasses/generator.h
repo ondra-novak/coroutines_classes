@@ -7,6 +7,7 @@
 #include "exceptions.h"
 
 #include "queue.h"
+#include "poolalloc.h"
 
 #include <optional>
 #include <future>
@@ -224,7 +225,7 @@ protected:
 };
 
 template<typename T>
-class generator_promise {
+class generator_promise: public coro_promise_base {
 public:
     
     enum class State {

@@ -7,6 +7,7 @@
 #include "resume_lock.h"
 #include "debug.h"
 #include "abstract_awaiter.h"
+#include "poolalloc.h"
 
 #include "value_or_exception.h"
 #include <atomic>
@@ -182,7 +183,7 @@ public:
 };
 
 template<typename T> 
-class task_promise_base  {
+class task_promise_base: public coro_promise_base  {
 public:
 
     task_promise_base():_ref_count(0) {}

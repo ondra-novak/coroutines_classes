@@ -274,10 +274,10 @@ public:
 
 
 protected:
-    ///Contains task
-   TaskType _task;
     ///Contains storage
      Storage _storage;
+     ///Contains task
+    TaskType _task;
 };
 
 }

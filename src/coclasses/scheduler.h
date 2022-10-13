@@ -32,18 +32,15 @@ namespace cocls {
  */
 
 
-template<typename Clock = std::chrono::system_clock>
+template<typename Clock>
+struct scheduler_traits;
+
+template<typename Clock = std::chrono::system_clock, typename Traits = scheduler_traits<Clock> >
 class scheduler {
 public:
-    using timepoint = typename Clock::time_point;
+    using timepoint = typename Traits::timepoint;
     using clock = Clock;
     
-    static timepoint now() {return  Clock::now();}
-    static timepoint tp_max() {return timepoint::max();}
-    static timepoint tp_min() {return timepoint::min();}
-    
-    template<typename Dur>
-    static timepoint add(const timepoint &tp, Dur &&dur) {return tp + dur;}
     
     ///Initialize scheduler, but don't start it now
     scheduler() = default;
@@ -77,7 +74,7 @@ public:
         awaiter &operator=(const awaiter &) = delete;
         
         bool await_ready() const {
-            return _tp<now() || _owner._exit;
+            return _tp<Traits::now() || _owner._exit;
         }
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             std::lock_guard _(_owner._mx);
@@ -85,7 +82,7 @@ public:
             _h = h;
             _owner._list.push({_tp,this});
             _owner._signal = true;
-            _owner._cond.notify_one();
+            _owner._sleeper.notify_one();
             return resume_lock::await_suspend();
         }
         
@@ -125,9 +122,9 @@ public:
      * 
      * @return awaiter
      */
-    template<typename Dur, typename = decltype(add(std::declval<timepoint>(), std::declval<Dur>()))>
+    template<typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
     awaiter sleep_for(const Dur &dur) {
-        return awaiter(*this, add(now(), dur));
+        return awaiter(*this, Traits::from_duration(dur));
     }
     
     
@@ -146,11 +143,11 @@ public:
     template<typename Dur, typename = decltype(add(std::declval<timepoint>(), std::declval<Dur>()))>
     generator<unsigned int> interval(Dur dur) {
         unsigned int n = 0;
-        timepoint nexttp = add(now(),dur);
+        timepoint nexttp = Traits::from_duration(dur);
         try {
             for(;;) {
                 co_await sleep_until(nexttp);
-                nexttp = add(now(),dur);
+                nexttp = Traits::from_duration(dur);
                 co_yield n++;
             }
         } catch (await_canceled_exception &) {
@@ -199,7 +196,7 @@ public:
         {
             std::lock_guard _(_mx);
             _exit = true;
-            _cond.notify_all();
+            _sleeper.notify_all();
         }
         _worker.join();        
         while (!_list.empty()) {
@@ -230,7 +227,7 @@ protected:
     sch_list_t _list;    
     std::vector<std::coroutine_handle<> > _canceled;
     std::mutex _mx;
-    std::condition_variable _cond;
+    typename Traits::sleeper _sleeper;
     bool _exit = false;
     bool _signal = false;
     task<> _worker;
@@ -257,7 +254,7 @@ protected:
     awaiter *get_expired() {
         std::lock_guard _(_mx);
         if (_list.empty()) return nullptr;
-        auto t = now();
+        auto t = Traits::now();
         if (_list.top().tp < t) {
             awaiter *aw = _list.top().aw;
             _list.pop();
@@ -270,19 +267,42 @@ protected:
         std::unique_lock _(_mx);
         while (_list.empty() && !_exit) {
             _signal = false;
-            _cond.wait(_, [&]{return _signal || _exit;});            
+            _sleeper.wait(_, [&]{return _signal || _exit;});            
         } 
         if (!_exit) {
-            _cond.wait_until(_,_list.top().tp, [&]{return _signal || _exit;});
+            _sleeper.wait_until(_,_list.top().tp, [&]{return _signal || _exit;});
         }
         _signal = false;
     }
 };
 
-
-
 template<typename Clock>
-inline bool scheduler<Clock>::cancel(const timer_id &id) {
+struct scheduler_common_traits {
+    using timepoint = typename Clock::time_point;
+    static timepoint now() {return  Clock::now();}
+    static timepoint tp_max() {return timepoint::max();}
+    static timepoint tp_min() {return timepoint::min();}
+    
+    template<typename Dur>
+    static timepoint from_duration(Dur &&dur) {return now() + dur;}
+    class sleeper {
+        template<typename Pred>
+        void wait_until(std::mutex &_mx, const timepoint &tp, Pred &&pred);        
+        template<typename Pred>
+        void wait(std::mutex &_mx, Pred &&pred );
+        void notify();
+    };
+  
+};
+
+template<>
+struct scheduler_traits<std::chrono::system_clock>: scheduler_common_traits<std::chrono::system_clock> {
+    using sleeper = std::condition_variable;
+};
+
+
+template<typename Clock, typename Traits>
+inline bool scheduler<Clock, Traits>::cancel(const timer_id &id) {
     std::unique_lock _(_mx);
     sch_list_t oldls;
     std::swap(oldls, _list);    
