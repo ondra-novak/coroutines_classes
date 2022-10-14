@@ -10,6 +10,7 @@
 #include <coclasses/with_queue.h>
 #include <coclasses/abstract_awaiter.h>
 #include <coclasses/no_alloc.h>
+#include <coclasses/publisher.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -287,6 +288,47 @@ void test_reusable() {
     }
 }
 
+cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
+    cocls::subscriber<int> src(pub);
+    try {
+        for(;;) {
+            int x = co_await src;
+            std::cout<<"(subscriber_1) value ." << x << std::endl;
+        } 
+    } catch (cocls::no_more_values_exception &) {
+        //exit now
+    }
+}
+
+cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+    cocls::subscriber<int> src(pub);
+    try {
+        for(;;) {
+            int x = co_await src;
+            co_await sch.sleep_for(std::chrono::milliseconds(100));
+            std::cout<<"(subscriber_2) value ..." << x << std::endl;
+        } 
+    } catch (cocls::no_more_values_exception &) {
+        //exit now
+    }
+}
+
+void publisher_test() {
+    cocls::publisher<int> pub;
+    cocls::thread_pool thp(1);
+    cocls::scheduler<> sch(thp);
+    
+    auto s1 = subscriber_fast(pub);
+    auto s2 = subscriber_slow(pub, sch);;
+    for (int i = 0; i < 10; i++) {
+        pub.publish(i);
+        if (i == 5) std::this_thread::sleep_for(std::chrono::seconds(1));
+    }    
+    pub.close_graciously().join();
+    s1.join();
+    s2.join();
+    
+}
 
 
 int main(int argc, char **argv) {
@@ -306,7 +348,8 @@ int main(int argc, char **argv) {
     with_queue_test();
     
     test_reusable();
-    
+
+    publisher_test();
     
     auto fib = co_fib();
     std::cout<< "infinite gen: ";    

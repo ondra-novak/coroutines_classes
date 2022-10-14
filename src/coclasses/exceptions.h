@@ -34,6 +34,15 @@ public:
     
 };
 
+///Requested value is no longer available
+class no_longer_avaible_exception: public std::exception {
+public:
+    const char *what() const noexcept {
+        return "Requested value is no longer available";
+    }
+    
+};
+
 }
 
 
