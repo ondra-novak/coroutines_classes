@@ -459,8 +459,8 @@ protected:
     abstract_awaiter<> *_awaiter = nullptr;
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
-    
-    reusable_memory<std::string> _future_storage;
+    //storage for future
+    storage_t<> _future_storage;
 };
 
 

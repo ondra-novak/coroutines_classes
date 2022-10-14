@@ -143,24 +143,26 @@ struct thread_local_cache {
     
     void *alloc() {
         auto x = _prepared;
-        if (!x) {
+        if (!x) [[unlikely]] {
             x = _dropped;            
             _dropped = nullptr;
             _count = 0;
+           
+            if (!x) [[unlikely]] {
+                x =  _cache->swap_out_chain(nullptr);            
+            
+                if (!x) [[unlikely]] {
+                    return ::operator new(sz);
+                }         
+            }
         }
-        if (!x) {
-            x =  _cache->swap_out_chain(nullptr);            
-        }
-        if (!x) {
-            return ::operator new(sz);
-        }         
         _prepared = x->next;
         return x;
     }
     
     void dealloc(void *ptr) {
         block<sz> *b = reinterpret_cast<block<sz> *>(ptr);
-        if (_count >= _max_count) {
+        if (_count >= _max_count) [[unlikely]] {
             //if cache is full, check for refill global cache
             if (_cache->swap_chain_in(_dropped)) {
                 //if refill succeed, put new item into empty local cache
@@ -177,7 +179,7 @@ struct thread_local_cache {
         b->next = _dropped;
         _dropped = b;
         //check whether global cache is empty, if does, refill it
-        if (_cache->swap_chain_in(_dropped)) {
+        if (_cache->swap_chain_in(_dropped)) [[unlikely]] {
             //refilled, so local cache is empty
             _count = 0;
             _dropped = nullptr;

@@ -9,7 +9,7 @@
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
 #include <coclasses/abstract_awaiter.h>
-#include <coclasses/reusable.h>
+#include <coclasses/no_alloc.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -149,7 +149,7 @@ int test_mutex() {
     int shared_var = 0;
     std::default_random_engine rnd(0);
     cocls::mutex mx;
-    cocls::thread_pool pool(4,true);
+    cocls::thread_pool pool(4);
     std::vector<cocls::task<> > tasks;
     for (int i = 0; i < 20; i++) {
         auto t =([&](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
@@ -260,15 +260,16 @@ void with_queue_test() {
     wq.join();    
 }
 
-cocls::reusable<cocls::task<void>,cocls::reusable_memory<> > test_reusable_co(cocls::reusable_memory<> &m, cocls::scheduler<> &sch) {
+cocls::no_alloc<cocls::task<void>,cocls::storage_t<> > test_reusable_co(cocls::storage_t<> &m, cocls::scheduler<> &sch) {
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;
+    co_return;
 }
 
 
 void test_reusable() {
-    cocls::reusable_memory<> m;
+    cocls::storage_t<> m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block
@@ -294,7 +295,7 @@ int main(int argc, char **argv) {
     std::cout << "(main) starting co_test2" << std::endl;    
     auto z = co_test2();
     std::cout << "(main) waiting for future" << std::endl;
-    std::cout << z.join() << std::endl;
+    std::cout << (sync_await z) << std::endl;
  
 
     threadpool_test();

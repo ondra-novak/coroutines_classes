@@ -106,8 +106,10 @@ public:
     std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
         _h = std::coroutine_handle<promise_t>::from_address(h.address());
         auto &promise = _h.promise();
+#ifndef NDEBUG
         const char *qn = typeid(current_queue<Coro, T>).name();
         assert(std::strcmp(qn, promise.queue_name) == 0); //invalid queue
+#endif
         _awaiter.emplace(std::move(promise._q.pop()));
         if (_awaiter->await_ready()) {
             return h;

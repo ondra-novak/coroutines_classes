@@ -13,6 +13,7 @@
 //rewrite co_return as throw
 #define co_return throw
 #define co_yield throw
+#define consteval constexpr
 #endif
 
 

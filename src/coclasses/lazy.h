@@ -17,12 +17,24 @@ public:
     lazy() {};
     lazy(promise_type *p):task<T>(p) {}
 
-    co_awaiter<task_promise<T>,true> operator co_await();
+    co_awaiter<task_promise<T>,true> operator co_await() {
+        start();
+        return co_awaiter<task_promise<T>, true >(*(this->_promise));
+    }
 
     ///start coroutine now. 
-    void start();
+    void start() {
+        auto prom = static_cast<lazy_promise<T> *>(this->_promise);
+        if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
+            auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
+            resume_lock::resume(h);
+        }
+    }
 
-    std::add_lvalue_reference<T> join();
+    auto join() {
+        start();
+        return task<T>::join();
+    }
 
 };
 
@@ -32,7 +44,10 @@ template<typename T> class lazy_promise: public task_promise<T>
 public:
     lazy_promise():_started(false) {}
     
-    std::suspend_always initial_suspend() const noexcept {return {};}
+    std::suspend_always initial_suspend() noexcept {
+        task_promise<T>::initial_suspend();
+        return {};
+    }
     
     lazy<T> get_return_object() {
         return lazy<T>(this);
@@ -44,29 +59,7 @@ protected:
 };;
 
 
-template<typename T>
-co_awaiter<task_promise<T>, true > lazy<T>::operator co_await() {
-    start();
-    return co_awaiter<task_promise<T>, true >(*(this->_promise));
-}
 
-template<typename T>
-inline std::add_lvalue_reference<T> lazy<T>::join()  {
-    start();
-    return task<T>::join();
-
-}
-
-
-
-template<typename T>
-inline void cocls::lazy<T>::start() {
-    auto prom = static_cast<lazy_promise<T> *>(this->_promise);
-    if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
-        auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
-        resume_lock::resume(h);
-    }
-}
 
 }
 #endif /* SRC_COCLASSES_LAZY_H_ */

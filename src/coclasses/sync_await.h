@@ -4,8 +4,9 @@
 
 #include "common.h"
 #include "resume_lock.h"
+#include "no_alloc.h"
 
-#include "reusable.h"
+
 
 #include <condition_variable>
 #include <mutex>
@@ -14,10 +15,10 @@ namespace cocls {
 
 
 struct sync_await_tag{
-    using sync_await_storage = reusable_memory<std::array<void *, 16> >;
+    using sync_await_storage = static_storage_t<16*sizeof(void *)>;
 
     template<typename Expr>
-    static reusable<task<std::remove_reference_t<decltype(std::declval<Expr>().await_resume())> >, sync_await_storage> sync_await_coro(sync_await_storage &, Expr &expr) {
+    static no_alloc<task<std::remove_reference_t<decltype(std::declval<Expr>().await_resume())> >, sync_await_storage> sync_await_coro(sync_await_storage &, Expr &expr) {
         co_return co_await expr;    
     }
 

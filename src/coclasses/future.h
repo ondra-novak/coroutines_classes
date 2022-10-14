@@ -8,7 +8,6 @@
 
 #include "sync_await.h"
 
-#include "reusable.h"
 
 #include "value_or_exception.h"
 
@@ -246,7 +245,7 @@ public:
  * @tparam Fn function type
  */
 template<typename T, typename Fn>
-class future_with_cb: public future<T>, public abstract_awaiter<false> {
+class future_with_cb: public future<T>, public abstract_awaiter<false>, public coro_promise_base {
 public:
     future_with_cb(Fn &&fn):_fn(std::forward<Fn>(fn)) {
         this->_awaiter = this;
@@ -262,22 +261,20 @@ protected:
 
 };
 
-template<typename T, typename Fn>
-class future_with_cb_reusable: public future_with_cb<T, Fn> {
+template<typename T, typename Storage, typename Fn>
+class future_with_cb_no_alloc: public future_with_cb<T, Fn> {
 public:
     using future_with_cb<T, Fn>::future_with_cb;
     
-    template<typename Storage>
-    void *operator new(std::size_t sz, reusable_memory<Storage> &m) {
+    void *operator new(std::size_t sz, Storage &m) {
         return m.alloc(sz);
     }
-    template<typename Storage>
-    void operator delete(void *ptr, reusable_memory<Storage> &m) {
+    void operator delete(void *ptr, Storage &m) {
         m.dealloc(ptr);
     }
     
     void operator delete(void *ptr, std::size_t) {
-        reusable_memory<void>::generic_delete(ptr);
+        Storage::dealloc(ptr);
     }
 };
 
@@ -308,8 +305,8 @@ promise<T> make_promise(Fn &&fn) {
 }
 
 template<typename T, typename Fn, typename Storage>
-promise<T> make_promise(Fn &&fn, reusable_memory<Storage> &storage) {
-    auto f = new(storage) future_with_cb_reusable<T, Fn>(std::forward<Fn>(fn));
+promise<T> make_promise(Fn &&fn, Storage &storage) {
+    auto f = new(storage) future_with_cb_no_alloc<T, Storage, Fn>(std::forward<Fn>(fn));
     return f->get_promise();
 }
 

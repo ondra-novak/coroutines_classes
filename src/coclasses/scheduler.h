@@ -140,7 +140,7 @@ public:
      * 
      * 
      */
-    template<typename Dur, typename = decltype(add(std::declval<timepoint>(), std::declval<Dur>()))>
+    template<typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
     generator<unsigned int> interval(Dur dur) {
         unsigned int n = 0;
         timepoint nexttp = Traits::from_duration(dur);
