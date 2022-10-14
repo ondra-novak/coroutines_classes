@@ -1,10 +1,8 @@
-/*
- * mutex.h
+/**
+ * @file mutex.h
  *
- *  Created on: 4. 10. 2022
- *      Author: ondra
  */
-
+#pragma once
 #ifndef SRC_COCLASSES_MUTEX_H_
 #define SRC_COCLASSES_MUTEX_H_
 
@@ -30,7 +28,7 @@ namespace cocls {
  * 
  * @code
  * cocls::mutex mx;
- * auto ownership = co_await mx;  //lock the mutex
+ * auto ownership = co_await mx.lock();  //lock the mutex
  * //mutex is unlocked, when ownership is destroyed
  * //or ownership is released: ownership.release()
  * @endcode 
@@ -64,7 +62,10 @@ public:
         virtual void resume() {}
     };
 
-
+    ///construct a mutex
+    /**
+     * Mutex can't be copied or moved
+     */
     mutex() {}
     mutex(const mutex &) = delete;
     mutex &operator=(const mutex &) = delete;
@@ -74,13 +75,30 @@ public:
         assert(_requests == nullptr);
     }
 
+    ///Contains ownership of the mutex
+    /** By holding this object, you owns an ownership */
     class ownership {
     public:
         ownership(co_awaiter &&awt):ownership(awt.wait()) {}
         ownership(ownership &&) = default;
         ownership &operator=(ownership &&) = delete;
+        ///Release ownership
+        /**
+         * From now, ownership is not held, even if you still have the object
+         */
         void release() {_ptr.reset();}
+        
+        ///Returns true, if you still owns the mutex (not released)
+        /**
+         * @retval true ownership is still held
+         * @retval false ownership has been released
+         */
         operator bool() const {return _ptr != nullptr;}
+        ///Returns true, if ownership has been released
+        /**
+         * @retval false ownership is still held
+         * @retval true ownership has been released
+         */
         bool operator !() const {return _ptr == nullptr;}
     protected:
         ownership(mutex *mx):_ptr(mx) {}
@@ -88,8 +106,36 @@ public:
         std::unique_ptr<mutex, ownership_deleter> _ptr; 
     };
 
-
+    ///lock the mutex, obtain the ownership
+    /**
+     * @return ownership. It is always held until it is released
+     * 
+     * @note function must be called with co_await. You can also use wait()
+     * to obtain ownership outside of coroutine
+     */
     co_awaiter lock() {return co_awaiter(*this);}
+    
+    
+    
+    ///try lock the mutex
+    /**
+     * @return returns ownership object. You need to test the object
+     * whether it holds ownership
+     */
+    ownership try_lock() {
+        return is_ready()?ownership(this):ownership(nullptr);
+    }
+    
+    
+protected:
+    
+    friend class ::cocls::blocking_awaiter<mutex, true>;
+    friend class ::cocls::co_awaiter<mutex, true>;
+    
+    
+    std::atomic<abstract_awaiter *> _requests = nullptr;
+    abstract_awaiter *_queue = nullptr;
+    null_awaiter _locked;
     
     void unlock() {
             bool rep;
@@ -118,23 +164,7 @@ public:
             } while (rep);
             //all done
         }
-    
-    
-    ownership try_lock() {
-        return is_ready()?ownership(this):ownership(nullptr);
-    }
-    
-    
-protected:
-    
-    friend class ::cocls::blocking_awaiter<mutex, true>;
-    friend class ::cocls::co_awaiter<mutex, true>;
-    
-    
-    std::atomic<abstract_awaiter *> _requests = nullptr;
-    abstract_awaiter *_queue = nullptr;
-    null_awaiter _locked;
-    
+
     bool is_ready() {
         abstract_awaiter *n = nullptr;
         bool ok = _requests.compare_exchange_strong(n, &_locked);

@@ -1,3 +1,10 @@
+/**
+ * @file no_alloc.h
+ * 
+ * contains classes and tools to make coroutines allocated by some faster mechanism. 
+ * For example allocation on stack or in prepared space 
+ */
+
 #pragma once
 #ifndef SRC_COCLASSES_NO_ALLOC_H_
 #define SRC_COCLASSES_NO_ALLOC_H_
@@ -11,7 +18,7 @@
 ///Controls multiplier of all static storage
 /**
  * It can happen, that preallocated static storage is too small for given compiler.
- * This multiplier can increase this space for all allocation. 
+ * This multiplier can increase this space for all allocations. 
  * Define this constant as macro on command line
  * Value is in percent
  * 
@@ -84,6 +91,10 @@ public:
 
 
 
+///Storage which uses a container to store one instance of coroutine
+/**
+ * @tparam T type fo container - default is vector
+ */
 template<typename T = std::vector<char> >
 class storage_t {
 public:
@@ -127,13 +138,41 @@ public:
         me->_busy = false;
     }
     
+    ///Construct empty storage
+    storage_t() {}    
+    ///Storage can be copied, however, it always results in new empty storage
+    /**
+     * This is to allow put storage to the copyable objects
+     */
+    storage_t(const storage_t &) {}    
+    ///Storage cannot be assigned
+    storage_t &operator=(const storage_t &) = delete;
+    ///Storage can be moved, but keep in mind, that operation is not MT Safe
+    /**
+     * @param other source storage
+     * 
+     * @note if the storage is not used, it can be moved without limitation. If
+     * the storage is used, ensure, that other thread can't interact with the storage
+     * during moving. Move operation updates back reference in the allocated storage
+     * 
+     * @note don't move, if used container implements moving by copying items
+     * in the containers. So vector is fain, it only copies pointer to memory block
+     * 
+     */
+    storage_t(storage_t &&other):_buffer(std::move(other._buffer)),_busy(other._busy) {
+        if (_busy) {
+            storage_t **x = reinterpret_cast<storage_t **>(_buffer.data());
+            if (*x == &other) (*x = this);
+        }
+    }
+    
     
 protected:
     std::atomic<bool> _busy = false;
     T _buffer;
 };
 
-
+///Thrown if reserved memory is too small
 class static_storage_too_small: public std::exception {
 public:
     static_storage_too_small(std::size_t need, std::size_t avail, std::size_t orig_avail)
@@ -159,40 +198,43 @@ protected:
     std::size_t orig_avail;
     mutable std::string msg;
     
+
 };
 
-template<std::size_t sz>
-class static_storage_buffer_t {
-public:
 
-    static constexpr std::size_t _size = sz * (COCLS_STATIC_STORAGE_MULTIPLIER)/100; 
-    
-    
-    static constexpr void resize(unsigned int s) {
-        if (s > _size) {
-            throw static_storage_too_small(s, _size, sz);
-        }
-    }
-    
-    void *data() {
-        return _buffer.data();
-    }
-    
-protected:
-    std::array<char, _size> _buffer;
-};
-
+///Statically allocated storage
+/**
+ * Can be used as a storage for the no_alloc coroutine.
+ * 
+ * @tparam sz preallocated size. If the size is too small, exception is thrown
+ * 
+ * @note There is no deterministick way to find size of coroutine during compilation.
+ * So you need to 'guess a value' It is better to specify a value as a multiplication
+ * of sizeof(void *), which covers the most of platforms.
+ * 
+ * @code
+ * static_storage_t<16*sizeof(void *)>
+ * @endcode
+ * 
+ * If the compiler requires more space to store coroutine frame, you
+ * can increase this space globally through COCLS_STATIC_STORAGE_MULTIPLIER -
+ * which multiplies the value by a specified amount. 
+ */
 template<std::size_t sz>
 class static_storage_t {
 public:
+    static_storage_t() {}
+    static_storage_t(const static_storage_t &other) = default;
+    static_storage_t &operator=(const static_storage_t &other) = delete;
+    
     static constexpr std::size_t _size = sz * (COCLS_STATIC_STORAGE_MULTIPLIER)/100; 
 
     ///Allocate block
      /**
-      * This object can hold only one block. If block is already allocated, standard new is used
+      * This object can hold only one block. Subsequent allocations has undefined behavior
       * 
       * @note not MT Safe
-      * @param sz requested size
+      * @param s requested size
       */
      void *alloc(std::size_t s) {         
          if (s > _size) {
@@ -201,12 +243,9 @@ public:
              return _buffer;
          }
      }
-     ///Deallocate block allocated by alloc
-     /**
-      * 
-      * @param ptr pointer to block returned by alloc()
-      */
+     ///Function is empty
      constexpr static void dealloc(void *) {
+         
      }
     
      char _buffer[_size];    

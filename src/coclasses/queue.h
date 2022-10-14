@@ -1,17 +1,19 @@
-#include "abstract_awaiter.h"
-
-#include <mutex>
-#include <optional>
-#include <queue>
-
+/**
+ * @file queue.h
+ */
 #pragma once
 #ifndef SRC_COCLASSES_QUEUE_H_
 #define SRC_COCLASSES_QUEUE_H_
 
 #include "common.h"
+#include "abstract_awaiter.h"
 #include "exceptions.h"
 #include "resume_lock.h"
 #include <coroutine>
+
+#include <mutex>
+#include <optional>
+#include <queue>
 
 namespace cocls {
 
@@ -26,13 +28,25 @@ namespace cocls {
  * The implementation is MT Safe - for the purpose of this object. So it is allowed
  * to push items from multiple threads without any extra synchronizations. It
  * is also possible to have multiple awaiting coroutines
+ * 
+ * 
+ * @code
+ * queue<int> q;
+ * 
+ * q.push(42);
+ * 
+ * int value = co_await q;
+ * @endcode
  */
 template<typename T>
 class queue {
 public:
+    ///construct empty queue
     queue() = default;
     ~queue();
+    ///Queue can't be copied
     queue(const queue &) = delete;
+    ///Queue can't be moved
     queue &operator=(const queue &) = delete;
     
     ///Push the item
@@ -51,12 +65,6 @@ public:
      */
     void push(const T &x);
     
-    ///Pop an item without waiting
-    /**
-     * @return optional result, if there is no available item, returns empty value 
-     */
-    
-    
     ///Determines, whether queue is empty
     /**
      * @retval true queue is empty
@@ -71,14 +79,20 @@ public:
     std::size_t size();
     
     
-    co_awaiter<queue> operator co_await() {
-        return *this;
-    }
     
-    ///return awaitable object
+    ///pop the item from the queue
     /**
-     * To retrieve value synchronously, call wait() on result
-     * @return
+     * @return awaiter which can be awaited
+     * 
+     * @code
+     * queue<int> q;
+     * 
+     *   //async
+     * int val1 = co_await q.pop();
+     * 
+     *   //sync
+     * int val2 = q.pop().wait();
+     * @endcode
      */
     co_awaiter<queue> pop() {
         return *this;

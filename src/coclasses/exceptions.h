@@ -1,3 +1,6 @@
+/**
+ * @file exceptions.h
+ */
 #pragma once
 #ifndef SRC_COCLASSES_EXCEPTIONS_H_
 #define SRC_COCLASSES_EXCEPTIONS_H_

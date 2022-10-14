@@ -1,10 +1,13 @@
-/** Allocation pool
+/**
+ * @file poolalloc.h
+ * 
+ *  Allocation pool
  * 
  * Helps to speedup memory allocation for coroutines
  * 
  * Every coroutine uses custom allocator which allocates memory through the POOLALLOC. You
  * can disable this feature by specifying macro COCLS_DISABLE_POOLALLOC. You can
- * also define your custom allocator through macro COCLS_USE_CUSTROM_ALLOCATOR where
+ * also define your custom allocator through macro COCLS_USE_CUSTOM_ALLOCATOR where
  * you need to specify full qualified name of class which defines custom new/delete operators
  * 
  * POOLALLOC
@@ -42,13 +45,17 @@
 #include <atomic>
 #include <cstddef>
 #include <vector>
+#include "common.h"
+
 
 
 namespace cocls {
 
+///Specify custom allocator for coroutines
 #ifdef COCLS_USE_CUSTOM_ALLOCATOR
 using coro_promise_base = COCLS_USE_CUSTOM_ALLOCATOR
 #else
+///Disable using poolalloc
 #ifdef COCLS_DISABLE_POOLALLOC
 class coro_promise_base {};
 #else
@@ -90,6 +97,7 @@ class coro_promise_base {};
  */
 #define COCLS_POOLALLOC_LEVELS 20
 #endif
+
 
 namespace poolalloc {
 
@@ -296,7 +304,10 @@ struct alloc_master {
 
 }
 
-
+///base class for every coroutine promise
+/**
+ * The main purpose is to define custom new / delete operators
+ */
 class coro_promise_base  {
 public:
     void *operator new(std::size_t sz) {

@@ -1,10 +1,10 @@
-/*
- * thread_pool.h
+/**
+ * @file thread_pool.h
  *
  *  Created on: 6. 10. 2022
  *      Author: ondra
  */
-
+#pragma once
 #ifndef SRC_COCLASSES_THREAD_POOL_H_
 #define SRC_COCLASSES_THREAD_POOL_H_
 #include "common.h"
@@ -23,10 +23,10 @@
 namespace cocls {
 
 ///thread pool for coroutines. 
-/** Main benefit of such object is zero allocation during transfering the coroutine to the
+/** Main benefit of such object is zero allocation during transferring the coroutine to the
  * other thread
  * 
- * Each thread also initializes the coboard() so coroutines can be scheduled manually inside of
+ * Each thread also initializes the coroboard() so coroutines can be scheduled manually inside of
  * each thread
  * 
  */
@@ -34,6 +34,11 @@ namespace cocls {
 class thread_pool {
 public:
     
+    ///Start thread pool
+    /**     
+     * @param threads count of threads. Default value creates same amount as count 
+     * of available CPU cores (hardware_concurrency)
+     */
     thread_pool(unsigned int threads = 0)        
     {
         if (!threads) threads = std::thread::hardware_concurrency();
@@ -43,6 +48,11 @@ public:
     }
 
     
+    ///Start a worker
+    /**
+     * By default, workers are started during construction. This function allows
+     * to add a worker. Current thread becomes a worker until stop() is called.
+     */
     void worker() {
         current_pool() = this;
         std::unique_lock lk(_mx);
@@ -59,6 +69,10 @@ public:
         }
     }
     
+    ///Stops all threads
+    /**
+     * Stopped threads cannot be restarted
+     */
     void stop() {
         std::vector<std::thread> tmp;
         std::queue<abstract_awaiter<> *> q;
@@ -77,6 +91,10 @@ public:
         }
     }
 
+    ///Destroy the thread pool 
+    /**
+     * It also stops all threads
+     */
     ~thread_pool() {
         stop();
     }
@@ -96,6 +114,19 @@ public:
         Fn _fn;
     };
     
+    
+    ///Transfer coroutine to the thread pool
+    /**
+     * 
+     * @return awaiter
+     * 
+     * @code
+     * task<> coro_test(thread_pool &p) {
+     *      co_await p;
+     *      //now we are running in the thread pool
+     * }
+     * @endcode
+     */
     awaiter operator co_await() {
         return *this;
     }
@@ -109,6 +140,29 @@ public:
      * https://godbolt.org/z/nz1coM5YP
      * 
      */ 
+    /// For the code, transfers coroutine to different thread while some code continues in this thread
+    /**
+     * @param fn function to be called in current thread after coroutine is transfered.
+     * @return awaiter you need to await for the result to execute this fork
+     * 
+     * @code
+     * co_await pool.fork([=]{
+     *          //forked code
+     * })
+     * @endcode
+     * 
+     * @note BUG - GCC 10.3-12.2+ - do not inline lambda to this function: https://godbolt.org/z/nz1coM5YP
+     * 
+     * @code
+     * auto forked = [=] {
+     *          //forked code
+     * };
+     * co_await pool.fork(std:::move(forked));
+     * @endcode
+     * 
+     * 
+     */
+ 
     template<typename Fn>
     fork_awaiter<Fn> fork(Fn &&fn) {
         return fork_awaiter<Fn>(*this, std::forward<Fn>(fn));

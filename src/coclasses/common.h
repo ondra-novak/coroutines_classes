@@ -17,6 +17,17 @@
 #endif
 
 
+///Coroutine classes use this namespace
+namespace cocls {
+
+    ///Coroutine identifier.
+    /**
+     * For various purposes. For example scheduler<> uses it to cancel sleeping on
+     * specified coroutine.
+     */
+    using coro_id = const void *;
+
+}
 
 
 #endif /* SRC_COCLASSES_COMMON_H_ */

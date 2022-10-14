@@ -1,3 +1,6 @@
+/**
+ * @file resume_lock.h
+ */
 #pragma once
 #ifndef SRC_COCLASSES_RESUME_LOCK_H_
 #define SRC_COCLASSES_RESUME_LOCK_H_
@@ -34,37 +37,33 @@ public:
 
 
 
-    ///Handle suspension of coroutine through the resume_lock
+    ///Handle suspension of coroutine through the resume lock
     /**
+     * It is expected, that function is called from the await_suspend, which
+     * returns std::coroutine_handle<>. (it is recommended to have all these
+     * function returning std::coroutine_handle<>. Returning void or bool is 
+     * not much useful)
      * 
-     * Function schedules next waiting coroutine if there is such. Otherwise, schedules 
-     * return to the original caller
+     * @return function returns handle of coroutine ready to be resume, which
+     * can be unrelated to suspending coroutine. Because current coroutine is
+     * being suspended, the resume_lock object can choose which coroutine will
+     * be resumed for next run. If there is no coroutine ready, function returns 
+     * std::noop_coroutine(), which eventually returns execution to the
+     * original caller. 
      * 
-     * @param h handle of coroutine being suspended.
-     * @param suspend result to be returned by standard await_suspend. This is for convince. If
-     * this argument is true, the coroutine will be suspended. if this argument is false, 
-     * the coroutine will not be suspended.
-     * @return handle of coroutine scheduled to resume. Just return this value as result
-     * of awaiter's function await_suspend();
+     *
+     * @code 
+     *  std::coroutine_handle await_suspend(std::coroutine_handle h) {
+     *          _awaiting = h;
+     *          return resume_lock::await_suspend();
+     * }
+     * @endcode
      */
-    static std::coroutine_handle<> await_suspend(const std::coroutine_handle<> & h, bool suspend = true) {
-        return get_instance().await_suspend_impl(h, suspend);
-    }
-
     static std::coroutine_handle<> await_suspend() {
         return get_instance().await_suspend_impl();
     }
 
-    ///Await_suspend for yield
-    /**
-     * Function uses queue for resumption, if there is resume_lock, otherwise, it resumes normaly
-     * 
-     * @param h handle of consumer, which need to be resumed later
-     * @return handle to be resumed
-     */
-    static std::coroutine_handle<> await_suspend_yield(const std::coroutine_handle<> & h) {
-        return get_instance().await_suspend_yield_impl(h);
-    }
+
 
     
     ///Resume coroutine
@@ -72,7 +71,9 @@ public:
      * @param h handle of coroutine to resume
      * 
      * @note this function can return immediately, when resume_lock is active, however
-     * the coroutine specified by the argument is scheduled.
+     * the coroutine specified by the argument is scheduled to resume on nearest
+     * await_suspend(). If there are more such coroutines, they are managed in
+     * a queue.
      */
     static void resume(const std::coroutine_handle<> & h) {
         get_instance().resume_impl(h);
@@ -82,8 +83,8 @@ public:
     /**
      * Coroutine board is base level for coroutines. It allows to schedule multiple 
      * coroutines where one awaits to other. The feature is build on top of resume_lock. 
-     * When coboard is started, resume lock is held and then specified function is called. 
-     * Once the function returns, the coboard processes all scheduled coroutines. During
+     * When coroboard() is started, resume lock is held and then specified function is called. 
+     * Once the function returns, the coroboard() processes all scheduled coroutines. During
      * this phase, queue can be also extended. 
      * 
      * Function exits, when queue is empty. This can happen, when all coroutines exits or
@@ -91,7 +92,7 @@ public:
      * 
      * Main purpose if this function is to avoid starvation of a coroutine which is started
      * as first, because it can be probably suspended for long time while waiting to
-     * clean up the resume queue. By starting coboard transfers this issue to the coboard itself
+     * clean up the resume queue. By starting coroboard() transfers this issue to the coroboard() itself
      * where it is harmless
      * 
      * @param fn function to call on top of coroutine board
@@ -111,7 +112,7 @@ public:
             resume_lock &lk = get_instance();
             lk._waiting.push(h);
             if (!lk._finish) return std::noop_coroutine();
-            return lk.await_suspend_impl(h, true);
+            return lk.await_suspend_impl();
         }        
     };
     
@@ -120,12 +121,12 @@ public:
     };
     
     
-    ///Suspend current coroutine and reschedules it to the final phase of resume_lock / coboard
+    ///Suspend current coroutine and reschedules it to the final phase of resume_lock / coroboard()
     /**
      * To use this function you need to call `co_await pause()`
      * 
      * The main purpose of this function to move execution of the corutine out of current stack.
-     * If there is coboard or resume lock active, the execution is scheduled to its final
+     * If there is coroboard() or resume lock active, the execution is scheduled to its final
      * phase. 
      * 
      * You can use this function to manually schedule multiple coroutines. If all coroutines
@@ -133,7 +134,7 @@ public:
      * moves this coroutine to the queue and removes other coroutine from the queue and resumes
      * it.
      * 
-     * If there is no active coboard, or no active resume lock the current coroutine isn't suspended 
+     * If there is no active coroboard(), or no active resume lock the current coroutine isn't suspended 
      * and continues normally.  
      * 
      * @return object which can be co_awated
@@ -156,23 +157,6 @@ protected:
         }            
     }
 
-    std::coroutine_handle<> await_suspend_yield_impl(const std::coroutine_handle<> & h) {
-        if (_active) {
-            _waiting.push(h);
-            return await_suspend_impl();
-        } else {
-            return h;
-        }
-    }
-
-    
-    std::coroutine_handle<> await_suspend_impl(const std::coroutine_handle<> & h, bool suspend = true) {
-        if (suspend) {
-            return await_suspend_impl();
-        } else {
-            return h;
-        }
-    }
 
 
     template<typename Fn> 
@@ -210,14 +194,14 @@ protected:
 
 ///Run coroutine board
 /**
- * @copydoc resume_lock::coboard
+ * @copydoc resume_lock::coroboard()
  */
 template<typename Fn>
 inline void coroboard(Fn &&fn) {
     resume_lock::coroboard(std::forward<Fn>(fn));
 }
 
-///Suspend current coroutine and reschedules it to the final phase of resume_lock / coboard
+///Suspend current coroutine and reschedules it to the final phase of resume_lock / coroboard()
 /**
  * @copydoc resume_lock::pause
  */

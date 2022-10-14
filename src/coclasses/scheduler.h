@@ -1,3 +1,6 @@
+/**
+ * @file scheduler.h
+ */
 #pragma once
 #ifndef SRC_COCLASSES_SCHEDULER_H_
 #define SRC_COCLASSES_SCHEDULER_H_
@@ -16,29 +19,32 @@
 
 namespace cocls {
 
+
+template<typename Clock>
+struct scheduler_traits;
+
 ///Scheduler - schedules resumption of coroutines at given time, or suspension for given duration
 /**
  * Sheduler is object, which exposes function sleep_for and sleep_until that can
- * be co_await-ed. During waiting for the specified time, coroutine is suspeneded
+ * be co_await-ed. During waiting for the specified time, coroutine is suspended
  * 
  * 
  * @tparam Clock specifies clock type. Default is std::chrono::system_clock
+ * @tparam Traits specifies class of traits of the Clock
  * 
  * @note scheduler has no thread. You need to supply a thread_pool instance. 
  * Scheduler need minimal 1 thread. More threads allows to resume more coroutines
  * scheduled on same time point, while each coroutine is resumed in different thread
  * 
  * You can cancel scheduled coroutines
+ * 
+ * @see scheduler_common_traits
  */
-
-
-template<typename Clock>
-struct scheduler_traits;
 
 template<typename Clock = std::chrono::system_clock, typename Traits = scheduler_traits<Clock> >
 class scheduler {
 public:
-    using timepoint = typename Traits::timepoint;
+    using time_point = typename Traits::time_point;
     using clock = Clock;
     
     
@@ -63,13 +69,12 @@ public:
         _worker = worker(pool);
     }
     
-    using timer_id = void *;
     
 
     ///awaiter
     class awaiter {
     public:
-        awaiter(scheduler &owner, timepoint tp):_owner(owner),_tp(tp) {}
+        awaiter(scheduler &owner, time_point tp):_owner(owner),_tp(tp) {}
         awaiter(const awaiter &) = default;
         awaiter &operator=(const awaiter &) = delete;
         
@@ -86,32 +91,39 @@ public:
             return resume_lock::await_suspend();
         }
         
-        timer_id await_resume() const {
+        void await_resume() const {
             if (_canceled) throw await_canceled_exception();
-            return _h.address();
         }
         
         void resume(bool canceled) {
             _canceled = canceled;
             resume_lock::resume(_h);
         }
-        bool is(timer_id id) {
+        bool is(coro_id id) {
             return _h.address() == id;
         }
         
     protected:
         scheduler &_owner;
-        timepoint _tp;
+        time_point _tp;
         std::coroutine_handle<> _h;
         bool _canceled = false;
     };
  
-    ///suspend coroutine until given timepoint
+    ///suspend coroutine until given time_point
     /**
-     * @param tp timepoint. If the timepoint is in the pass, coroutine is not suspended
+     * @param tp time_point. If the time_point is in the pass, coroutine is not suspended
      * @return awaiter
+     * 
+     * @exception await_canceled_exception operation has been canceled by cancel() function or because scheduler is being destroyed
+     * 
+     * @code
+     * task<> sleeper(scheduler<> &sch, std::chrono::system_clock::time_point tp) {
+     *      co_await sch.sleep_until(tp);
+     * }
+     * @endcode 
      */
-    awaiter sleep_until(const timepoint &tp) {
+    awaiter sleep_until(const time_point &tp) {
         return awaiter(*this, tp);
     }
     
@@ -121,6 +133,14 @@ public:
      *  std::chrono::system_clock, you can use std::chrono::duration 
      * 
      * @return awaiter
+     * @exception await_canceled_exception operation has been canceled by cancel() function or because scheduler is being destroyed
+     *  
+     * @code
+     * task<> sleeper(scheduler<> &sch) {
+     *      co_await sch.sleep_for(std::chrono::seconds(10));
+     * }
+     * @endcode 
+     * 
      */
     template<typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
     awaiter sleep_for(const Dur &dur) {
@@ -143,7 +163,7 @@ public:
     template<typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
     generator<unsigned int> interval(Dur dur) {
         unsigned int n = 0;
-        timepoint nexttp = Traits::from_duration(dur);
+        time_point nexttp = Traits::from_duration(dur);
         try {
             for(;;) {
                 co_await sleep_until(nexttp);
@@ -160,18 +180,18 @@ public:
     /**
      * @param id coroutine identifier to cancel
      * @retval true coroutine canceled
-     * @retval false coroutine is not scheduled at the time
+     * @retval false coroutine is not scheduled at tbis time
      * 
      * @note canceled coroutine receives exception await_canceled_exception
      */
-    bool cancel(const timer_id &id);
+    bool cancel(coro_id id);
     
 
     ///cancel waiting task
     /**
      * @param task task to cancel
      * @retval true coroutine canceled
-     * @retval false coroutine is not scheduled at the time
+     * @retval false coroutine is not scheduled at tbis time
      * 
      * @note canceled coroutine receives exception await_canceled_exception
      */
@@ -183,7 +203,7 @@ public:
     /**
      * @param generator generator to cancel
      * @retval true coroutine canceled
-     * @retval false coroutine is not scheduled at the time
+     * @retval false coroutine is not scheduled at tbis time
      * 
      * @note canceled coroutine receives exception await_canceled_exception
      */
@@ -192,6 +212,11 @@ public:
         return cancel(generator_.get_id());
     }
     
+    
+    ///stop the scheduler
+    /**
+     * All sleeping coroutines are canceled
+     */
     void stop() {        
         {
             std::lock_guard _(_mx);
@@ -212,7 +237,7 @@ public:
 protected:
     
     struct sch_item_t {
-        timepoint tp;
+        time_point tp;
         awaiter *aw;
         bool operator<(const sch_item_t &a) const {return tp < a.tp;} 
         bool operator>(const sch_item_t &a) const {return tp > a.tp;} 
@@ -276,18 +301,27 @@ protected:
     }
 };
 
+///List of required traits
 template<typename Clock>
 struct scheduler_common_traits {
-    using timepoint = typename Clock::time_point;
-    static timepoint now() {return  Clock::now();}
-    static timepoint tp_max() {return timepoint::max();}
-    static timepoint tp_min() {return timepoint::min();}
+    ///Declaration of type used as time point
+    using time_point = typename Clock::time_point;
+    ///Function which returns current time
+    static time_point now() {return  Clock::now();}
+    ///Function which returns max time value 
+    static time_point tp_max() {return time_point::max();}
+    ///Function which returns min time value 
+    static time_point tp_min() {return time_point::min();}
     
+    ///Function which converts duration to absolute time point
     template<typename Dur>
-    static timepoint from_duration(Dur &&dur) {return now() + dur;}
+    static time_point from_duration(Dur &&dur) {return now() + dur;}
+    
+    ///Interface object responsible to sleep the thread while waiting on event or time
+    /** In short, it has same interface as std::condition_variable */
     class sleeper {
         template<typename Pred>
-        void wait_until(std::mutex &_mx, const timepoint &tp, Pred &&pred);        
+        void wait_until(std::mutex &_mx, const time_point &tp, Pred &&pred);        
         template<typename Pred>
         void wait(std::mutex &_mx, Pred &&pred );
         void notify();
@@ -295,6 +329,7 @@ struct scheduler_common_traits {
   
 };
 
+///Traits for system_clock
 template<>
 struct scheduler_traits<std::chrono::system_clock>: scheduler_common_traits<std::chrono::system_clock> {
     using sleeper = std::condition_variable;
@@ -302,7 +337,7 @@ struct scheduler_traits<std::chrono::system_clock>: scheduler_common_traits<std:
 
 
 template<typename Clock, typename Traits>
-inline bool scheduler<Clock, Traits>::cancel(const timer_id &id) {
+inline bool scheduler<Clock, Traits>::cancel(coro_id id) {
     std::unique_lock _(_mx);
     sch_list_t oldls;
     std::swap(oldls, _list);    

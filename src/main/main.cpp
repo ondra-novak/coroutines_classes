@@ -242,11 +242,12 @@ void scheduler_test() {
     scheduler_test_task(sch).join();
 }
 
-cocls::with_queue<cocls::task<void>, int> with_queue_task() {
-        int i = co_await cocls::current_queue<cocls::task<void>, int>();
+using queued_task = cocls::with_queue<cocls::task<void>, int>; 
+ queued_task with_queue_task() {
+        int i = co_await queued_task::current_queue();
         while (i) {
             std::cout<<"(with_queue_task) Received from queue: " << i << std::endl;
-            i = co_await cocls::current_queue<cocls::task<void>, int>();
+            i = co_await queued_task::current_queue();
         }
         std::cout<<"(with_queue_task) Done" << std::endl;        
 }

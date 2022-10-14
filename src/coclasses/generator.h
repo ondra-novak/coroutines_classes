@@ -1,3 +1,7 @@
+/**
+ * @file generator.h
+ */
+
 #pragma once
 
 #ifndef SRC_COCLASSES_GENERATOR_H_
@@ -211,7 +215,11 @@ public:
         _prom->next_cb(std::forward<FN>(fn));
     }
     
-    
+    ///Retrieve unique coroutine identifier
+    coro_id get_id() {
+        return std::coroutine_handle<promise_type>::from_promise(*_prom).address();
+    }
+
 
 protected:
 

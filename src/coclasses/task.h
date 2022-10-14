@@ -1,3 +1,7 @@
+/**
+ * @file task.h  - task type coroutine
+ */
+
 #pragma once
 #ifndef SRC_COCLASSES_TASK_H_
 #define SRC_COCLASSES_TASK_H_
@@ -113,6 +117,11 @@ public:
         return aw.wait();
     }
     
+    
+    ///Retrieve unique coroutine identifier
+    coro_id get_id() {
+        return std::coroutine_handle<promise_type>::from_promise(*_promise).address();
+    }
     
     
 protected:

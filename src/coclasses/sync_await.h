@@ -1,3 +1,6 @@
+/**
+ * @file sync_await.h - introduces sync_await operator
+ */
 #pragma once
 #ifndef SRC_COCLASSES_SYNC_AWAIT_H_
 #define SRC_COCLASSES_SYNC_AWAIT_H_

@@ -91,16 +91,24 @@ protected:
 };
 
 
-
+///Awaiter which can be awaited by co_await
+/**
+ * In most of cases, this object is returned by co_await on various primitives
+ * @tparam promise_type type of promise
+ * @tparam chain set true if the awaiter can be chained, otherwise false
+ */
 template<typename promise_type, bool chain = false>
 class co_awaiter: public abstract_owned_awaiter<promise_type, chain> {
 public:
     
     
     co_awaiter(promise_type &owner):abstract_owned_awaiter<promise_type, chain>(owner) {}
+    
+    ///co_await related function
     bool await_ready() {
         return this->_owner.is_ready();
     }
+    ///co_await related function
     std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
         _h = h; 
         if (this->_owner.subscribe_awaiter(this)) {
@@ -109,10 +117,16 @@ public:
             return h; 
         }
     }
+    ///co_await related function
     auto await_resume() {
         return this->_owner.get_result();
     }
     
+    ///Wait synchronously
+    /**
+     * Blocks execution until awaiter is signaled
+     * @return result of awaited operation
+     */
     auto wait();
     
     

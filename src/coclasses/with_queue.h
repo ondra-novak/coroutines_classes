@@ -1,13 +1,15 @@
+/** @file with_queue.h
+ * 
+ */
+
 #pragma once
-#ifndef SRC_COCLASSES_WITH_QUEUE_H_
-#define SRC_COCLASSES_WITH_QUEUE_H_
+#ifndef _SRC_COCLASSES_WITH_QUEUE_H_qwpikqxpow
+#define _SRC_COCLASSES_WITH_QUEUE_H_qwpikqxpow
+#include "common.h"
 #include "queue.h"
 
-#ifndef NDEBUG
-#include <cstring>
-#include <cassert>
-#endif
 
+///
 namespace cocls {
 
 ///Awaitable object represents current_queue of a coroutine declared as with_queue
@@ -15,7 +17,10 @@ namespace cocls {
  * To await this object, just construct it and perform co_await
  * 
  * @code
- * co_await current_queue<Coro, T>()
+ * with_queue<task<>, int> queued_coro() {
+ *      co_await with_queue<task<>, int>::current_queue();
+ * }
+ * @endcode
  * 
  * 
  * @tparam Coro type of coroutine (task<> or generator<> )
@@ -48,7 +53,11 @@ class with_queue: public Coro {
 public:
     
     using promise_type = with_queue_promise<Coro, T>;
-    using current_queue = ::cocls::current_queue<Coro, T>;
+    ///awaitable object, which represents a queue associated with current task
+    /**
+     * You need to just create it and immediatelly co_await it
+     */
+    using current_queue = ::cocls::current_queue<Coro, T>;   
     with_queue(Coro &&x):Coro(std::move(x)) {}
     with_queue() {}
     
@@ -92,9 +101,6 @@ public:
         return with_queue<Coro,T>(std::move(Coro::promise_type::get_return_object()));
     }
     
-#ifndef NDEBUG
-    const char *queue_name = typeid(current_queue<Coro, T>).name();
-#endif
     
 };
 
@@ -106,10 +112,6 @@ public:
     std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
         _h = std::coroutine_handle<promise_t>::from_address(h.address());
         auto &promise = _h.promise();
-#ifndef NDEBUG
-        const char *qn = typeid(current_queue<Coro, T>).name();
-        assert(std::strcmp(qn, promise.queue_name) == 0); //invalid queue
-#endif
         _awaiter.emplace(std::move(promise._q.pop()));
         if (_awaiter->await_ready()) {
             return h;

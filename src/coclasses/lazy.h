@@ -1,3 +1,6 @@
+/**
+ * @file lazy.h
+ */
 #pragma once
 #ifndef SRC_COCLASSES_LAZY_H_
 #define SRC_COCLASSES_LAZY_H_
@@ -9,6 +12,10 @@ namespace cocls {
 template<typename T = void>
 class lazy_promise;
 
+///Lazy coroutine is coroutine, which is executed on first await
+/**
+ * @tparam T type of result
+ */
 template<typename T>
 class lazy: public task<T> {
 public:
@@ -17,12 +24,13 @@ public:
     lazy() {};
     lazy(promise_type *p):task<T>(p) {}
 
+    ///co_await the result
     co_awaiter<task_promise<T>,true> operator co_await() {
         start();
         return co_awaiter<task_promise<T>, true >(*(this->_promise));
     }
 
-    ///start coroutine now. 
+    ///start coroutine now.
     void start() {
         auto prom = static_cast<lazy_promise<T> *>(this->_promise);
         if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
