@@ -1,8 +1,8 @@
-## COCLASSES
+# COCLASSES
 
 Small template library with classes to support C++20 coroutines.
 
-### namespace
+## namespace
 
 The coclasses library is put inside `cocls` namespace.
 
@@ -12,306 +12,169 @@ You can put into your code
 use namespace cocls;
 ```
 
-### Types of supported tools?
+## Types of supported tools?
 
-* **task** 
-* **lazy**
-* **generator**
-* **future**
+* **task<T>** 
+* **lazy<T>**
+* **generator<T>**
+* **future<T>**
 * **mutex**
-* **queue**
-* **condition_variable**
+* **queue<T>**
 * **thread_pool**
 * **scheduler**
-* **with_queue<>**
-* **resume_lock/coboard**
+* **publisher<T>** - **subscriber<T>**
+* **resume_lock framework**
+* **coroboard/pause/manual scheduling**
+* **sync_await**
+* **abstract_awaiter**
+
+## Explore examples
+
+* [Examples](src/examples) 
 
 
+## task<T>
 
-### Task
+* awaitable (you can `co_await`)
+* joinable (function `.join()` )
+* copyable - sharing
+* movable
+* multi-await supported
+* task<void>, task<> 
+* captures exceptions
 
-Task represents coroutine, which can be use **co_await** and  **co_return**. Result of execution of
-such coroutine is a future object `task<T>` which itself can be awaited. 
+## lazy<T>
 
-```
-task<int> coroutine_example() {
-    co_return 42; //very simple example
-}
+* task which starts suspended and it is resumed  on the first `co_await`
 
-int main(int argc, char **argv) {
-    task<int> result = coroutine_example();
-    std::cout << result.get() << std::endl;
+## generator<T>
 
-}
-```
+* finite or infinte
+* awaitable (you can co_await)
+* iterator (range for for finite generator)
+* async supported - generator can co_await
+* destroyable - you can destroy generator when it is suspended
+* you can request to call a callback when generator suspends on `co_yield`
 
-#### Object task<T> - features
+## future<T>
 
-* represents a coroutine itself and once the coroutine is finished, it can access to its result
-* it acts as `shared_ptr` so it can be copied, which means, that reference to coroutine is shared
-* can be moved
-* can be awaited `co_await`, result of operation is return value of the coroutine
-* if it is shared, multiple coroutines can await to single coroutine.
-* outside of coroutine, you can check state of the coroutine using functions is_done()
-* you can `get()` result of the coroutine, if the coroutine is not yet finished, it performs a blocking operation until the result is ready
-* you can register callback function which is called when the coroutine is finished
+* awaitable object (you can `co_await`)
+* allocated on stack/frame (no memory allocation)
+* future<T> is not copyable nor movable
+* satellite object `promise<T>` can be retrieved by `.get_promise()`
+* `promise<T>` is copyable and movable
+* use `promise<T>` to set value of the future
+* don't forget to destroy all instances of `promise<T>` to resume awaiting task
+* can be synchronously waiter (function `.wait()`)
+* you can create callback promise (function `.make_promise()`)
 
-### Lazy
+## mutex
 
-* represents a lazily evaluated coroutine. It is executed once it is `co_await` for the first time. 
-* the rest of features are similar to `task<T>`
+* awaitable object
+* ownership is tracked by object `mutex::ownership` which is movable
+* lock() and try_lock()
+* mutex is not tied with thread, so you can hold the ownership even if the coroutine is resumed in a different thread
+* no memory allocation
+* lockfree
 
+## queue<T>
 
+* awaitable (`co_await queue.pop()`)
+* watiable (`queue.pop().wait()`)
+* multiple awaiter supported
+* multiple pushers supported
+* MT Safe
 
-### Generator
+## thread_pool
 
-* represents a generator coroutine which can use co_yield to generate values. 
-* can contain finite or infinite cycle. Once generator is no longer needed, it can be destroyed anytime
-* to control generator and access generated values the object exposes an iterator. Working with the generator is similar to working with iterators
+* awaitable - (you can `co_await`)
+* awaiting thread pool causes to transfer execution into the thread pool
+* operation fork() - split execution to two threads
 
-```
-cocls::generator<int> co_fib(int count) {
-    int a = 0;
-    int b = 1;
-    for(int i = 0;i < count; i++) {
-        int c = a+b;        
-        co_yield c;
-        a = b;
-        b = c;
-    }
-}
+## scheduler<>
 
-int main(int argc, char **argv) {
-    auto fib = co_fib(15);
-    for (int &i: fib) {
-        std::cout << i << " ";
-    }
-    std::cout<< std::endl;
-}
+* awaitable `.sleep_for()`, `.sleep_until()`
+* awaitable - `pause()` - suspends current coroutine in favor to other ready coroutines
+* bind to a thread_pool - allocates one thread
+* single-threaded mode - it is running, when there is no coroutine to execute
+* custom clock, and clock's traits
 
-```
+## publisher<T> - subscriber<T>
 
-### Asynchronous generator and using generators in coroutines
+* publisher - function publish
+* subscriber - awaitable object -> returns `std::optional<T>`
+* easy to use
+* shared queue, subscribers can read unprocessed data after the publisher is destroyed.
 
-* generator can be asynchronous, i.e. it can use co_await
-* using asynchronous generator in normal function is implemented as blocking operation. 
-* to use asynchronous generator in a coroutine, you need to use co_await on it. The reading
-cycle is slighly different
+## resume_lock framework
 
-```
-generator<int> g = run_async_gen();
+* starts when a coroutine resumes other coroutine to prevent resume recursion
+* in this case, coroutines are not resumed immediately. Resumption is done on next
+`co_await`
+* resume_lock framework is thread local feature
+* if you write your own awaiter you should use following function
+    * instead `h.resume()` use `cocls::resume_lock::resume(h)`
+    * for `await_suspend`, always return result of `cocls::resume_lock::await_suspend()`
+    * this automatically uses *symmetric transfer*
 
-while (co_await g) {
-    int v = g();
-    process(v);
-}
-```
+## coroboard/pause/manual scheduling
 
-The unusual difference is that coroutine need to co_await on the generator object, and result
-of such operation is `bool` which becomes `true` if the value is ready, and `false` if no
-more values are available (eof). Then you can use `operator()` to read the value
-
-
-### Future
-
-* represents awaitable object, which can hold future value. Along with the `future` object there is a satelite object `promise` which can be passed deep into code, and the promise is fulfilled, the `future` object is signaled and the result is available
-
-```
-cocls::future<int> fut;
-run_async(fut.get_promise());  //run_async receives cocls::promise<int>                    
-int result = co_await fut;
-        //run_async(cocls::promise<int> p) {
-        //  ...
-        //  p.set_value(42);
-        //}
-```
-
-**notes** 
-* the `future` object can't be moved or copied
-* the `promise` object can be copied or moved.
-* You need to destroy all promises before the future object. Otherwise UO
-* Only one `promise` can receive value. Receiving value is not MT Safe
-* The awaiting coroutine is resumed only after all promises are destroyed. So it is not resumed immediately, this removes potential sideeffect in part of the code which is resolving the promise, and postopones resumption to the part when everything is probably destroyed.
-
-
-### Mutex
-
-* simple mutex which supports coroutines. 
+* coroboard - framework (coroutine board) for manual scheduling - cooperative multitasking
+* coroboard() function - enters to manual scheduling and calls a specified function
 
 ```
-cocls::mutex mx
-...
-//coroutine
-{
-    auto ownership = co_await mx;
-    //you own mutex
-    ownershop.reset()
-    //you no longer own mutex
-}
-
-//standard function
-{
-    auto ownership = mx.lock();
-    // you own mutex
-    ownership.reset();
-    //you no longer own mutex
-```
-Mutex works across threads and coroutines. Ownership of the mutex can be transfered between
-threads. Ownership is automatically released at the end of function, if it is not transfered
-(ownership is movable)
-
-### Queue
-
-* repesents multi-reader, multi-writer queue. It is MT Safe object. You need this
-function to aggregate values from multiple sources into single or multiple
-coroutines
-
-* operations: `push()`, `co_await pop()`
-
-### Condition variable
-
-* similar to std::condition_variable
-* instead of calling wait(). you call `co_await`
-* you can specify arguments for `co_await`. You can specify custom mutex/Lockable and custom predicate. The mute/Lockable can protect access to shared data of the predicate. In this case, mutex is controled during suspension and resumption. The mutex/Lockable must be in locked state. The predicate must be fulfilled to resume given coroutine. The mutex is remains locked after resumption. 
-
-* There is a small difference in case, that there is a mutex/Lockable in use. You need specify this mutex/Lockable as argument of `notify_one` or `notify_all`, because the function need to unlock this mutex in case that coroutine is resumed. The resumption is done on current thread and the mutex/Lockable must be unlocked to avoid deadlock - because resumed coroutine starts with locking-back that mutex/Lockable.
-
-### Thread pool
-
-* Thread pool for coroutines. Very simple tool, you just need to construct it and specify count of threads. Awaiting to this object causes that execution of coroutine is transfered to some thread belongs to the thread pool. 
-
-```
-//declaration
-thread_pool pool(4);
-
-//in coroutine
-co_await pool;
-```
-
-#### function fork
-
-Function forks execution when one code continues in current thread, the coroutine itself continues in different thread. 
-
-You can for example accept connection and fork execution while current thread continues with connection and coroutine itself starts waiting to accept different connection.
-
-```
-co_await pool.fork([&]{
-   //forked code
+cocls::coroboard([&]{
+    //execute under coroboard()
 });
 ```
 
-
-### Scheduler
-
-Scheduler gives to coroutine feature to sleep for certain period of time without blocking a thread. 
-
-```
-//declaration
-thread_pool pool(4);
-scheduler<> sch(pool);
-
-//in coroutine
-co_await sch.sleep_for(std::chrono::second(1));
+* all coroutines under coroboard are scheduled using *symmetric transfer*
+* no coroutine is resumed immediately, it is always resumed on suspend of an other coroutine (use co_await or co_yield)
+* function **pause** - allows you co use co_await without waiting on anything, however this allows to resume other prepared coroutines
 
 ```
-
-You can also retrieve a generator, which returns a values in specified interval
-
-```
-auto g = sch.interval(std::chrono::second(1));
-co_await g;  //wait 1 second
-co_await g;  //wait 1 second
-co_await g;  //wait 1 second
+co_await cocls::pause();
 ```
 
-### with_queue<>
+* this allows cooperative multitasking. One coroutne yields running in favor of another coroutine. You cannot choose which coroutine will be resumed. 
+    * if you need to resume exact coroutine, you need to have its handle. Then you can call `cocls::resume_lock::resume(handle)`. Note that this doesn't cause resumption, but choosen coroutine will be scheduled and resumed on `co_await pause()`
+    * if you want to get handle of current coroutine, you need to suspsnd it first. For this purpose there is function cocls::suspend(), which calls a custom callback and pass coroutine handle after the coroutine is suspended
 
-This is template class, which can wrap a specified coroutine (task or generator) with a queue. You can then pass values to the coroutine using function push();
+## sync_await
 
-Inside of coroutine, you can co_await on a special object `current_queue`, where each co_await retrieves one value from the queue and if the queue is empty, the coroutine is suspended
+* `sync_await` is macro
+* works similar as `co_await` but can be used in non-coroutine function
+* suspends whole thread
+* use only, if the object doesn't support other ways to wait - for `task<>` it is `.join()`, other objects are probably have `wait()`
+* the most of awaiters support `wait()`
+
+
 
 ```
-cocls::with_queue<cocls::task<void>, int> with_queue_task() {
-        int i = co_await cocls::current_queue<cocls::task<void>, int>();
-        while (i) {
-            std::cout<<"(with_queue_task) Received from queue: " << i << std::endl;
-            i = co_await cocls::current_queue<cocls::task<void>, int>();
-        }
-        std::cout<<"(with_queue_task) Done" << std::endl;        
-}
+scheduler<> sch;
 
-void with_queue_test() {
-    cocls::with_queue<cocls::task<void>, int> wq = with_queue_task();
-    wq.push(1);
-    wq.push(2);
-    wq.push(3);
-    wq.push(0);
-    wq.join();
+(sch.operator co_await()).wait()
+```
+
+
+## abstract_awaiter<>
+
+* abstract_awaiter is base class for awaiters in `cocls`. It has virtual function `resume()` which is called for resumption of coroutine
+* you can write own implementation, so you can receive signal instead resumption
+* you can call `subscribe_awaiter(abstract_awaiter<>)` on a co_awaiter<> (most of awaiters in this library), so instead of waiting in coroutine or synchronously, your awaiter will be called for `.resume()` when awaitable object is ready
+
+### co_awaiter<X,chain>
+
+* co_awaiter is awaitable object. The most primitives of this library uses this awaiter to implement co_await. It also supports
+    * `.wait() - synchronous waiting
+    * `.subscribe_awaiter() - subscribe custom awaiter
     
-}
-```
-
-
-### Resume lock / coboard
-
-Suspenssion and resumption of coroutines can build up the stack asi each operation creates a new frame. This issue is handled by resume_lock, which converts these operations to the symmetric transfer. This means resumption of coroutine don't need to be carried immediately, especially
-in other coroutine. This operation can be schedules to next suspension point - so if you need
-to ensure, that resumption is done immediately, you need to perform co_await on something
-
-#### function pause()
-
-Function `pause()` can be used to temporary suspend current coroutine in favor to other suspended coroutines that has been scheduled during `resume_lock`. 
-
-```
-co_await cocls::pause()
-```
-
-This function can be used to manually schedule coroutines.  Following code executes coroutines in parallel using manual scheduling
-
-```
-task<int> corun(int i) {
-      for (int j = 0; j < 5; j++) {
-          std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
-          co_await cocls::pause();
-      } 
-      std::cout << "Finished coroutine " << i << std::endl;
-}
-
-void interleaved() {
-    cocls::coboard([]{
-       for (int i = 0; i < 5; i++) {
-            corun(i);
-       }     
-    });
-}
-```
-
-#### function coboard()
-
-Represents coroutine board, base level where resume lock is in effect. All coroutines suspended and resumed in current thread will use symetric transfer. Inside coboard you can start many coroutines as you want. Function exits when all created coroutines are finished or transfered
-to different thread.
-
-
 
 ## Use in code
 
 * you can include header files directly
 * you can include library.cmake into your cmake project, and headers <coclasses/*> should become available
 
-## Using promises in normal code
+## Reference manual
 
-Promises can be used without need to introduce coroutines. You can easly create promise which executes callback once the promise is resolved
-
-
-```
-{
-    cocls::promise<int> p = cocls::make_promise([=](future<int> &f) {
-        int val = f.get();
-        //work with value   
-    });
-    
-    p.set_value(42);
-    //...some other code
-    
-    //callback is called at the end of the block
-}
+* use **Doxygen** 
