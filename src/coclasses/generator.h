@@ -67,11 +67,11 @@ public:
     template<typename X>
     class awaiter_t : public co_awaiter<X> {
     public:
-        using co_awaiter<promise_type>::co_awaiter;
+        using co_awaiter<X>::co_awaiter;
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             this->_h = h;
-            this->_owner.subscribe_awaiter(this);
-            return std::coroutine_handle<promise_type>::from_promise(this->_owner);
+            this->_owner.subscribe_awaiter(this);            
+            return this->_owner.get_handle();
         }
     };
     
@@ -110,8 +110,12 @@ public:
         bool get_result() {
             return _owner._promise->check_ready();
         }
+        std::coroutine_handle<> get_handle() {
+            return std::coroutine_handle<promise_type>::from_promise(*_owner._promise);
+        }
         
         friend class awaiter_t<next_res>;
+        friend class co_awaiter<next_res>;
         
     };
 
@@ -122,19 +126,19 @@ public:
         return std::coroutine_handle<promise_type>::from_promise(*_promise).address();
     }
     iterator begin() {
-        return iterator(this, _promise->next());
+        return iterator(this, !_promise->next());
     }
     iterator end() {
-        return iterator(this, false);
+        return iterator(this, true);
     }
-    bool next() {
-        return _promise->next();
+    next_res next() {
+        return *this;
     }
     T &value() {
-        _promise->iter_get();
+        return _promise->get();
     }
     const T &value() const {
-        _promise->get();
+        return _promise->get();
     }
     std::optional<T> operator()() {
         if (_promise->next()) {
@@ -331,7 +335,7 @@ public:
     }
     
     bool check_ready() {
-        if (_state == State::done) return true;
+        if (_state == State::done) return false;
         assert(_state != State::running);
         assert(_state != State::running_promise_set);
         return true;
@@ -346,7 +350,11 @@ public:
     }
     
     friend class co_awaiter<generator_promise>;
-    
+
+    std::coroutine_handle<> get_handle() {
+        return std::coroutine_handle<generator_promise>::from_promise(*this);
+    }
+
 protected:
     //contain state
     std::atomic<State>  _state = State::not_started;

@@ -1,5 +1,6 @@
-#include <../coclasses/old_generator.h>
 #include "../../version.h"
+#include <coclasses/generator.h>
+#include <coclasses/generator_aggregator.h>
 #include <coclasses/task.h>
 #include <coclasses/future.h>
 #include <coclasses/lazy.h>
@@ -11,6 +12,7 @@
 #include <coclasses/abstract_awaiter.h>
 #include <coclasses/no_alloc.h>
 #include <coclasses/publisher.h>
+#include <coclasses/sync_await.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -99,24 +101,24 @@ cocls::generator<int> co_async_fib(int count, int delay = 100) {
 cocls::task<void> co_fib_reader()  {
     std::cout<< "async gen - co_await: ";
     auto g = co_async_fib(15);
-    while (co_await g) {
-        std::cout << g() << " " ;
+    while (co_await g.next()) {
+        std::cout << g.value() << " " ;
     }
     std::cout<< std::endl;
 }
 cocls::task<void> co_fib2_reader()  {
     std::cout<< "sync gen - co_await;";
     auto g = co_fib2(15);
-    while (co_await g) {
-        std::cout << g() << " " ;
+    while (co_await g.next()) {
+        std::cout << g.value() << " " ;
     }
     std::cout<< std::endl;
 }
 cocls::task<void> co_fib3_reader()  {
     std::cout<< "sync gen - resume in coroutine: ";
     auto g = co_fib2(15);
-    while (g) {
-        std::cout << g() << " " ;
+    while (g.next()) {
+        std::cout << g.value() << " " ;
     }
     std::cout<< std::endl;
     co_return; //need co_return to have this as coroutine
@@ -127,8 +129,8 @@ cocls::task<void> co_multfib_reader()  {
     glist.push_back(co_async_fib(15));
     glist.push_back(co_async_fib(15,50));
     auto g = cocls::generator_aggregator(std::move(glist));
-    while (co_await g) {
-        std::cout <<  g() << " " ;
+    while (co_await g.next()) {
+        std::cout <<  g.value() << " " ;
     }
     std::cout<< std::endl;
 }
@@ -138,8 +140,8 @@ cocls::task<void> co_multfib_reader2()  {
     glist.push_back(co_fib2(15));
     glist.push_back(co_fib2(15));
     auto g = cocls::generator_aggregator(std::move(glist));
-    while (co_await g) {
-        std::cout <<  g() << " " ;
+    while (co_await g.next()) {
+        std::cout <<  g.value() << " " ;
     }
     std::cout<< std::endl;
 }
@@ -224,13 +226,11 @@ void threadpool_test() {
 
 cocls::task<> scheduler_test_task(cocls::scheduler<> &sch) {
     std::cout << "(scheduler_test_task) started "<< std::endl;
-    auto gen = sch.interval(std::chrono::milliseconds(100));
-    co_await gen;
-    auto n = gen();
-    while (n != 20) {
-        std::cout << "(scheduler_test_task) interval generator tick: " << n << std::endl;
-        co_await gen;
-        n = gen();
+    auto gen = sch.interval(std::chrono::milliseconds(100));    
+    auto n = co_await gen;
+    while (*n != 20) {
+        std::cout << "(scheduler_test_task) interval generator tick: " << *n << std::endl;
+        n = co_await gen;        
     }
     std::cout << "(scheduler_test_task) exiting "<< std::endl;
     
@@ -376,8 +376,8 @@ int main(int argc, char **argv) {
 
     auto fib3 = co_fib2(15);
     std::cout<< "finite gen - next/read: ";
-    while (!!fib3) {
-        std::cout << fib3() << " ";
+    while (fib3.next()) {
+        std::cout << fib3.value() << " ";
     }
     std::cout<< std::endl;
 
@@ -386,8 +386,8 @@ int main(int argc, char **argv) {
 
     auto fib4 = co_async_fib(15);
     std::cout<< "async gen2 - next/read (sync): ";
-    while (!!fib4) {
-        std::cout << fib4() << " ";
+    while (fib4.next()) {
+        std::cout << fib4.value() << " ";
     }
     std::cout<< std::endl;
 
