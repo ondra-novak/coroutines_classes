@@ -14,3 +14,13 @@ add_executable (generator_aggregator_infinite  generator_aggregator_infinite.cpp
 add_executable (generator_aggregator_async_infinite  generator_aggregator_async_infinite.cpp)
 add_executable (generator_aggregator  generator_aggregator.cpp)
 add_executable (generator_aggregator_async  generator_aggregator_async.cpp)
+add_executable (cooperative_multitasking cooperative_multitasking.cpp)
+add_executable (scheduler scheduler.cpp)
+add_executable (scheduler_single_thread scheduler_single_thread.cpp)
+add_executable (mutex mutex.cpp)
+add_executable (thread_pool thread_pool.cpp)
+add_executable (fork fork.cpp)
+add_executable (queue queue.cpp)
+add_executable (with_queue with_queue.cpp)
+add_executable (publisher_subscriber publisher_subscriber.cpp)
+

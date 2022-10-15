@@ -4,7 +4,7 @@
 #pragma once
 #ifndef SRC_COCLASSES_SCHEDULER_H_
 #define SRC_COCLASSES_SCHEDULER_H_
-#include "old_generator.h"
+#include "generator.h"
 #include "task.h"
 
 #include "thread_pool.h"
@@ -68,6 +68,17 @@ public:
         _worker = worker(pool);
     }
     
+    ///starts single thread scheduler, exits when specified task finishes
+    /**     
+     * @param join_task task to be joined to exit scheduler
+     * 
+     */
+    template<typename T>
+    void start(task<T> join_task) {
+        start_single_thread(std::move(join_task));
+    }
+    
+        
     
 
     ///awaiter
@@ -147,6 +158,20 @@ public:
     }
     
     
+    ///Pause current coroutine and return execution to the scheduler
+    /**This can be useful in single thread scheduler, if the current
+     * coroutine wants give to scheduler to run scheduled tasks.
+     * 
+     * In multithread version this function moves coroutine into pool's thread
+     * 
+     * equivalent to sleep_until(now())
+     *  
+     * @return awaiter
+     */
+    awaiter pause() {
+        return sleep_until(Traits::now());
+    }
+    
     ///Generator of intervals
     /**
      * @param dur duration.
@@ -222,7 +247,9 @@ public:
             _exit = true;
             _sleeper.notify_all();
         }
-        _worker.join();        
+        if (_worker.valid()) {
+            _worker.join();        
+        }
         while (!_list.empty()) {
             _list.top().aw->resume(true);
             _list.pop();
@@ -298,6 +325,37 @@ protected:
         }
         _signal = false;
     }
+
+    template<typename X>
+    void start_single_thread(task<X> join_task) {
+        class exit_signal: public abstract_awaiter<true> {
+        public:
+            exit_signal(scheduler *sch):_sch(sch) {}
+            virtual void resume() override {
+                std::lock_guard _(_sch->_mx);
+                _sch->_exit = true;
+                _sch->_sleeper.notify_all();
+            }
+            scheduler *_sch;
+        };
+        exit_signal s(this);
+        
+        auto join_awaiter = join_task.operator co_await();
+        if (join_awaiter.subscribe_awaiter(&s)) {
+            do {
+                awaiter *aw = get_expired();
+                if (aw) {
+                    coroboard([&]{
+                        aw->resume(false);
+                    });
+                } else {                
+                    wait();
+                }            
+            } while (!_exit);
+            _exit = false;
+        }
+    }
+
 };
 
 ///List of required traits

@@ -124,6 +124,10 @@ public:
     }
     
     
+    bool valid() const {
+        return _promise!=nullptr;
+    }
+    
 protected:
     task_promise<T> *_promise;
     

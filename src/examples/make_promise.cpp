@@ -13,6 +13,6 @@ int main(int, char **) {
     }    
     std::cout << "Finished"  <<std::endl;
     
-    
+    return 0;
 }
 

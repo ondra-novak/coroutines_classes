@@ -140,7 +140,7 @@ public:
      * @retval false awaiting expression is already resolved, so no registration done, you can
      * call await_resume()
      */
-    bool subscribe_awaiter(abstract_awaiter<> *awt) {
+    bool subscribe_awaiter(abstract_awaiter<chain> *awt) {
         return this->_owner.subscribe_awaiter(awt);
     }
     
