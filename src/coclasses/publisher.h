@@ -9,9 +9,28 @@
 
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <queue>
+#include <set>
 
 namespace cocls {
+
+
+
+enum class subscribtion_type {
+    ///read all values, no skipping, if the subscriber is left behind, it is dropped
+    /** default mode, subscriber receives all published values */
+    all_values,
+    ///read all values, but if the subscriber is behind, the values are skipped    
+    skip_if_behind,
+    ///always skip to recent value, don't read historical values
+    /**
+     * useful, when subscriber doesn't need complete history 
+     */
+    skip_to_recent
+    
+};
+
 
 template<typename T>
 class subscriber;
@@ -21,7 +40,9 @@ class subscriber;
 /**
  * Object allows to publish values and register subscribers
  * 
- * @tparam T type of published value
+ * @tparam T type of published value. The subscriber then 
+ *          returns std::optional<T> which allows to 
+ *          report EOF state 
  * 
  * Publisher contains a queue, which gives subscribers chance to catch values
  * if they are slower than publisher. You can also configure minimal queue size 
@@ -31,183 +52,264 @@ template<typename T>
 class publisher {
 public:
     
-    ///construct publisher with default settings - infinite queue length
-    publisher() = default;
+    enum class read_mode {
+    };
+    
+    class queue {
+    public:
+        
+        queue() = default;
+        queue(std::size_t max_queue_len, std::size_t min_queue_len = 1)
+            :_max_queue_len(max_queue_len), _min_queue_len(min_queue_len)
+        {
+            assert(_min_queue_len > 0);
+            assert(_max_queue_len >= _min_queue_len);
+        }
+        ///announce position
+        void subscribe(const subscriber<T> *sub, std::size_t pos) {
+            std::lock_guard _(_mx);
+            subscribe_lk(sub,pos);
+        }
+        ///announce position - set to most recent
+        std::size_t subscribe(const subscriber<T> *sub) {
+            std::lock_guard _(_mx);
+            return subscribe_lk(sub);
+        }
+        bool advance(const subscriber<T> *sub, std::size_t &pos, subscribtion_type type) {
+            std::lock_guard _(_mx);
+            return advance_lk(sub,pos,type);
+        }
+        bool advance_suspend(const subscriber<T> *sub, std::size_t &pos, abstract_awaiter<true> *awt) {
+            std::lock_guard _(_mx);
+            return advance_suspend_lk(sub,pos,awt);
+        }
+        
+        void leave(const subscriber<T> *sub, std::size_t pos) {
+            std::lock_guard _(_mx);
+            leave_lk(sub, pos);
+        }
+        
+        std::optional<T> get_value(const subscriber<T> *sub, std::size_t pos, subscribtion_type type) {
+            std::lock_guard _(_mx);
+            return get_value_lk(sub, pos,type);
+        }
+        void push(T &&val) {
+            std::unique_lock<std::mutex> lk(_mx);
+            _q.push_front(std::move(val));
+            push_lk(lk);
+        }
+        void push(const T &val) {
+            std::unique_lock<std::mutex> lk(_mx);
+            _q.push_front(val);
+            push_lk(lk);
+        }
+        void close() {
+            std::unique_lock<std::mutex> lk(_mx);
+            if (_closed) [[unlikely]] return;
+            _pos--;
+            _closed = true;
+            push_lk(lk);
+        }
+        
+    protected:
+        using lock_pos = std::pair<std::size_t, const subscriber<T> *>;        
+
+        template<typename X>
+        struct allocator {
+        public:
+            allocator() = default;
+            allocator(const allocator &other) {};
+            allocator &operator=(const allocator &other) = delete;
+            struct block {                 // @suppress("Miss copy constructor or assignment operator")
+                block *_next;
+                char _buffer[sizeof(X)];
+            };
+            X *allocate(auto n) {
+                assert(n == 1);
+                void *ret;
+                if (blks) {
+                    ret = blks->_buffer;
+                    blks = blks->_next;
+                } else {
+                    block *b = new block;
+                    ret = b->_buffer;
+                }
+                return reinterpret_cast<X *>(ret);
+            }
+            
+            void deallocate(X *ptr, auto n) {
+                assert(n == 1);
+                block *b = reinterpret_cast<block *>(reinterpret_cast<char *>(ptr)-offsetof(block, _buffer));
+                b->_next = blks;
+                blks = b;
+            }
+
+            ~allocator() {
+                while (blks) {
+                    auto x = blks;
+                    blks = blks->_next;
+                    delete x;
+                }
+            }
+            
+            using value_type = X;
+            block *blks = nullptr;
+        };
+
+        using pos_set = std::set<lock_pos, std::less<lock_pos>, allocator<lock_pos> >; 
+        
+        const std::size_t _max_queue_len = std::numeric_limits<std::size_t>::max();
+        const std::size_t _min_queue_len = 1; 
+
+        std::mutex _mx;
+        std::deque<T> _q;
+        pos_set _positions;
+        std::size_t _pos = 0;
+        abstract_awaiter<true> * _awaiters = nullptr;
+        bool _closed = false;
+        
+        void subscribe_lk(const subscriber<T> *sub, std::size_t pos) {
+            _positions.insert(lock_pos(pos, sub));
+        }
+        std::size_t subscribe_lk(const subscriber<T> *sub) {            
+            _positions.insert(lock_pos(_pos-1, sub));
+            return _pos-1;
+        }
+        void leave_lk(const subscriber<T> *sub, std::size_t pos) {
+            _positions.erase(lock_pos(pos, sub));
+        }
+        bool advance_lk(const subscriber<T> *sub, std::size_t &pos, subscribtion_type t) {
+            if (pos+1 == _pos && !_closed) return false;
+            switch (t) {
+                default:
+                case subscribtion_type::all_values:
+                    _positions.erase(lock_pos(pos, sub));
+                    pos++;
+                    _positions.insert(lock_pos(pos, sub));
+                    break;
+                case subscribtion_type::skip_if_behind:
+                    _positions.erase(lock_pos(pos, sub));
+                    pos = std::max(pos+1, _pos - _q.size());                    
+                    _positions.insert(lock_pos(pos, sub));
+                    break;
+                case subscribtion_type::skip_to_recent:
+                    _positions.erase(lock_pos(pos, sub));
+                    pos = std::max(pos+1, _pos - 1);
+                    _positions.insert(lock_pos(pos, sub));
+                    break;
+            }
+            return true;
+        }
+        bool advance_suspend_lk(const subscriber<T> *sub, std::size_t &pos, abstract_awaiter<true> *awt) {
+            _positions.erase(lock_pos(pos, sub));
+            pos++;
+            _positions.insert(lock_pos(pos, sub));
+            if (pos == _pos) {
+                awt->_next = _awaiters;
+                _awaiters = awt;
+            }
+            return pos == _pos;
+        }
+        std::optional<T> get_value_lk(const subscriber<T> *sub, std::size_t pos, subscribtion_type type) {
+            if (pos == _pos) return {};
+            switch (type) {
+                default:
+                case subscribtion_type::all_values: {
+                    std::size_t relpos = _pos - pos - 1;
+                    if (relpos >= _q.size()) return {};
+                    return _q[relpos];
+                }
+                case subscribtion_type::skip_if_behind: {
+                    std::size_t relpos = _pos - pos - 1;
+                    if (relpos >= _q.size()) relpos = _q.size()-1;
+                    return _q[relpos];
+                }
+                case subscribtion_type::skip_to_recent: {
+                    return _q[0];                    
+                }
+            }
+            
+        }
+        void push_lk(std::unique_lock<std::mutex> &lk) {
+            _pos++;
+            std::size_t need_len = _min_queue_len;
+            auto iter = _positions.begin();
+            if (iter != _positions.end()) {
+                need_len = std::max(_pos - iter->first,_min_queue_len);                
+            }            
+            _q.resize(std::min({need_len, _max_queue_len, _q.size()}));
+            abstract_awaiter<true> *x = _awaiters;
+            _awaiters = nullptr;
+            lk.unlock();
+            x->resume_chain_lk(x, nullptr);            
+        }
+        
+        
+    };
+    
+    ///Construct publisher with default settings
     /**
-     * construct publisher and configure it
+     * The default settings is
+     *  - minimal queue size is set to 1.
+     *  - maximal queue size is set to infinity
+     */
+    publisher():_q(std::make_shared<queue>()) {}
+
+    ///Constructs publisher with settings
+    /**
+     * @param max_queue_len specifies maximum queue length. If there is subscriber too slow
+     * to processes published values, it can be left behind and drop out. For that subscriber,
+     * EOF is reported in this case
      * 
-     * @param max_queue_len specifies max queue length. Subscribers which need longer queue
-     * are kicked out with exception - no_longer_available_exception;
-     * 
-     * @param min_queue_len specifies min queue length. By default queue is shrank to slowest
-     * subscriber. This doesn't allow to 'reconnect' with ability to start reading 
-     * from specified position. You can specify min queue length, which causes, that queue
-     * will contain at least specified count of items, so subcriber can restart reading
-     * at choosen position if the position is in min_queue_len window.
+     * @param min_queue_len specifies minimal queue length kept even if all subscribers already
+     * processed these values. This allows to subscriber to "reconnect" the queue at 
+     * some position and if this position is still in range of the queue, it can continue
+     * to process these values.
      */
     publisher(std::size_t max_queue_len, std::size_t min_queue_len = 1)
-        :_min_q(std::max<std::size_t>(1, min_queue_len))
-        ,_max_q(max_queue_len) {}
+        :_q(std::make_shared<queue>(max_queue_len, min_queue_len)) {}
     
     ///Publish a value
-    void publish(const T &val) {        
-        std::unique_lock<std::mutex> _(_mx);
-        _q.push_front(val);
-        after_publish(_,1);
-    }
-    
-    ///Publish a value
-    void publish(T &&val) {        
-        std::unique_lock<std::mutex> _(_mx);
-        _q.push_front(std::move(val));
-        after_publish(_,1);
-    }
-
-    ///Close the publisher, kick out all subscribers
     /**
-    * All subscribers are kicked, even slower ones, so if there is subscriber which did not
-    * read last values, it is kicked anyway.
-    * 
-    * If you need to close publisher graciously, use close_graciously() 
-    */
-    void close() {
-        remove_all();
-    }
-    
-    ///Closes the publisher graciously
-    /** it is coroutine, so you need to wait before you can destroy the publisher.
-     * Do not call close() or destructor while awaiting to close_graciously() 
-     * 
-     * @return task which can be co_awaited 
+     * @param x value to publish
+     * @return
      */
-    task<> close_graciously() {
-        std::unique_lock<std::mutex> _(_mx);
-        future<void> wt;
-        _graciously_close = wt.get_promise();        
-        after_publish(_,0);
-        if (_subs.empty() && _graciously_close) {
-            _graciously_close.set_value();
-            _graciously_close.release();
-        }
-        _.unlock();
-        co_await wt;        
+    template<typename X>
+    auto publish(X &&x) -> decltype(std::declval<queue>().push(std::forward<X>(x))) {
+        _q->push(std::forward<X>(x));
+    }
+    
+    ///Retrieve the queue object
+    auto get_queue() {
+        return _q;
     }
     
     
-    ///Destroys publisher - perform close()
+    ///Destructor marks the queue closed
+    /**
+     * When publisher is destroyed, the subscribers can still read rest of the queue.
+     * However, the queue is marked as closed, so when the subscriber processes all
+     * values, EOF is returned
+     */
     ~publisher() {
-        remove_all();
+        _q->close();
     }
+    
+    
+    ///Closes the queue before destruction
+    void close() {
+        _q->close();
+    }
+    
     
 protected:
     
+    std::shared_ptr<queue> _q;
+    
 
+    
+    
     friend class subscriber<T>;
-    
-    using subslist_t = std::vector<subscriber<T> *>;
-    
-    
-    std::mutex _mx;
-    std::deque<T> _q;
-    std::size_t _min_q = 1;
-    std::size_t _max_q = std::numeric_limits<std::size_t>::max();
-    std::size_t _msg_cntr = 0;
-    subslist_t _subs;
-    subslist_t _ntf;
-    promise<void> _graciously_close;
-    std::condition_variable *_exit_cond = nullptr;
-    
-    
-
-    void after_publish(std::unique_lock<std::mutex> &lk, std::size_t inc) {
-        
-        subslist_t ntf;
-        std::swap(_ntf,ntf);
-        ntf.clear();
-        std::size_t qlen = _min_q;
-        
-        for (subscriber<T> *r: _subs) {
-            std::size_t pos = r->get_pos_internal();
-            if (pos == _msg_cntr) {
-                ntf.push_back(r); 
-            } else {
-                auto lag = _msg_cntr - pos + 1;               
-                if (lag > _max_q) {                   
-                    ntf.push_back(r);    
-                } else {
-                    qlen = std::max(lag, qlen);
-                }
-            }
-        }
-        if (qlen < _q.size()) {
-            _q.resize(qlen);
-        }        
-        _msg_cntr+= inc;
-        lk.unlock();
-        for (subscriber<T> *x: ntf) {
-            x->notify();
-        }
-        lk.lock();
-        std::swap(_ntf,ntf);
-    }
-    
-    T get_value(const std::size_t &pos) {
-        std::lock_guard _(_mx);
-        std::size_t relpos = _msg_cntr - pos;
-        if (_exit_cond) throw no_more_values_exception();
-        if (relpos-1 >= _q.size()) {
-            if (_graciously_close) throw no_more_values_exception();
-            else throw no_longer_avaible_exception();
-        }
-        return _q.at(relpos-1);
-    }
-    
-    bool check_ready(const std::size_t &pos) {
-        std::lock_guard _(_mx);
-        return _graciously_close || _exit_cond || pos+1 != _msg_cntr;        
-    }
-    
-    bool advance_and_suspend(std::size_t &pos) {
-        std::lock_guard _(_mx);
-        pos++;        
-        return !(_graciously_close || _exit_cond || pos != _msg_cntr);
-    }
-    
-    void reg(subscriber<T> *s, std::size_t &pos) {
-        std::lock_guard _(_mx);
-        _subs.push_back(s);
-        pos = _msg_cntr-1;
-    }
-    
-    void unreg(subscriber<T> *s) {
-        std::lock_guard _(_mx);
-        _subs.erase(std::remove(_subs.begin(), _subs.end(), s), _subs.end());
-        if (_subs.empty()) {
-            if (_exit_cond) _exit_cond->notify_all();
-            if (_graciously_close) {
-                _graciously_close.set_value();
-                _graciously_close.release();
-            }
-        }
-    }
-    
-    void remove_all() {
-        subslist_t l;
-        if (_graciously_close) {
-            _graciously_close.set_value();
-            _graciously_close.release();
-        }
-        std::unique_lock lk(_mx);
-        std::condition_variable e;
-        _exit_cond = &e;
-        l = _subs;
-        lk.unlock();
-        for (subscriber<T> *s:l) {
-            s->close();
-        }
-        lk.lock();
-        e.wait(lk, [&]{return _subs.empty();});
-    }    
 };
 
 ///Subscriber, can subscribe to publisher
@@ -215,6 +317,9 @@ template<typename T>
 class subscriber {
 public:
     
+    using read_mode = typename publisher<T>::read_mode;
+    
+    using queue = typename publisher<T>::queue;
     ///construct subscriber
     /**
      * Subscribes and starts reading recent data
@@ -223,16 +328,16 @@ public:
      * 
      * 
      */
-    subscriber(publisher<T> &pub):_pub(pub) {
-        _pub.reg(this, _pos);
-    }
+    subscriber(publisher<T> &pub, subscribtion_type t = subscribtion_type::all_values)
+    :_q(pub.get_queue()),_pos(_q->subscribe(this)),_t(t) {}
     ///construct subscriber, specify starting position
     /**
      * @param pub publisher 
      * @param pos starting position
      */
-    subscriber(publisher<T> &pub, std::size_t pos):_pub(pub), _pos(pos) {
-        _pub.reg(this, pos);
+    subscriber(publisher<T> &pub, std::size_t pos, subscribtion_type t = subscribtion_type::all_values)
+    :_q(pub.get_queue()),_pos(pos),_t(t) {
+            _q->subscribe(this, _pos);
     }
     
     
@@ -244,17 +349,18 @@ public:
     
     ///Unsubscribes
     ~subscriber() {
-        std::lock_guard _(_mx);
-        if (!_closed) _pub.unreg(this);
+        _q->leave(this, _pos);
     }
     
+    
+
     ///awaits for next data
     /**
      * @return a published value
      * @exception no_longer_avaiable_exception subscriber wants to access a value, which has been outside of available queue window.
      * @exception no_more_values_exception publisher has been closed
      */
-    co_awaiter<subscriber> operator co_await() {
+    co_awaiter<subscriber, true> operator co_await() {
         return *this;
     }
 
@@ -266,71 +372,28 @@ public:
      * 
      * @return current position
      */
-    std::size_t get_position() const {
-        std::lock_guard _(_mx);
+    std::size_t position() const {
         return _pos;
     }
     
 protected:
-    publisher<T> &_pub;
+    std::shared_ptr<queue> _q;
     std::size_t _pos;
-    mutable std::mutex _mx;
-    abstract_awaiter<> *_awt = nullptr;
-    bool _closed = false;
+    subscribtion_type _t;
     
     friend class publisher<T>;
-    friend class co_awaiter<subscriber<T> >;
+    friend class co_awaiter<subscriber<T>,true >;
+
     bool is_ready() {
-        std::lock_guard _(_mx);
-        if (_closed) return true;
-        if (_pub.check_ready(_pos)) {
-            _pos++;
-            return true;
-        } else {
-            return false;
-        }
+        return _q->advance(this, _pos,_t);
     }
-    bool subscribe_awaiter(abstract_awaiter<> *awt) {
-        std::lock_guard _(_mx);
-        if (_closed) return false;
-        _awt = awt;
-        return _pub.advance_and_suspend(_pos);
+    bool subscribe_awaiter(abstract_awaiter<true> *awt) {
+        return _q->advance_suspend(this, _pos, awt);
     }
-    T get_result() {
-        std::lock_guard _(_mx);
-        if (_closed) throw no_more_values_exception();
-        return _pub.get_value(_pos);
+    std::optional<T> get_result() {
+        return _q->get_value(this, _pos,_t);
     }
     
-    std::size_t get_pos_internal() const {
-        return _pos;
-    }
-    
-    void notify() {
-        abstract_awaiter<> *x = nullptr;
-        {
-            std::lock_guard _(_mx);
-            std::swap(x, _awt);
-        }
-        if (x) x->resume();
-    }
-    
-    void close() {
-        abstract_awaiter<> *x = nullptr;
-        {
-            std::lock_guard _(_mx);
-            if (!_closed) {
-                _pub.unreg(this);
-            }
-            _closed = true;
-            std::swap(x, _awt);
-        }
-        if (x) x->resume();
-    }
-    
-    void check_finished(std::unique_lock<std::mutex> &lk) {
-        
-    }
 
 };
 

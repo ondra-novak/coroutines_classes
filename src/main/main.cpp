@@ -289,28 +289,32 @@ void test_reusable() {
 }
 
 cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
-    cocls::subscriber<int> src(pub);
-    try {
-        for(;;) {
-            int x = co_await src;
-            std::cout<<"(subscriber_1) value ." << x << std::endl;
-        } 
-    } catch (cocls::no_more_values_exception &) {
-        //exit now
+    cocls::subscriber<int> src(pub);    
+    for(;;) {
+        std::optional<int> x = co_await src;
+        if (!x.has_value()) break;
+        std::cout<<"(subscriber_1) value ." << *x << std::endl;
     }
 }
 
 cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
     cocls::subscriber<int> src(pub);
-    try {
-        for(;;) {
-            int x = co_await src;
-            co_await sch.sleep_for(std::chrono::milliseconds(100));
-            std::cout<<"(subscriber_2) value ..." << x << std::endl;
-        } 
-    } catch (cocls::no_more_values_exception &) {
-        //exit now
-    }
+    for(;;) {
+        std::optional<int> x = co_await src;
+        if (!x.has_value()) break;
+        std::cout<<"(subscriber_2) value ..." << *x << std::endl;
+        co_await sch.sleep_for(std::chrono::milliseconds(100));
+    } 
+}
+
+cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+    cocls::subscriber<int> src(pub, cocls::subscribtion_type::skip_to_recent);
+    for(;;) {
+        std::optional<int> x = co_await src;
+        if (!x.has_value()) break;
+        std::cout<<"(subscriber_3) value ..." << *x << std::endl;
+        co_await sch.sleep_for(std::chrono::milliseconds(100));
+    } 
 }
 
 void publisher_test() {
@@ -320,13 +324,15 @@ void publisher_test() {
     
     auto s1 = subscriber_fast(pub);
     auto s2 = subscriber_slow(pub, sch);;
+    auto s3 = subscriber_slow2(pub, sch);;
     for (int i = 0; i < 10; i++) {
         pub.publish(i);
         if (i == 5) std::this_thread::sleep_for(std::chrono::seconds(1));
-    }    
-    pub.close_graciously().join();
+    }
+    pub.close();
     s1.join();
     s2.join();
+    s3.join();
     
 }
 

@@ -51,10 +51,12 @@ public:
         while (!chain.compare_exchange_weak(_next, this, std::memory_order_relaxed));
     }
     static void resume_chain(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
-        abstract_awaiter *x = chain.exchange(nullptr);
-        while (x) {
-            auto y = x;
-            x = x->_next;
+        resume_chain_lk(chain.exchange(nullptr), skip);
+    }
+    static void resume_chain_lk(abstract_awaiter *chain, abstract_awaiter *skip) {
+        while (chain) {
+            auto y = chain;
+            chain = chain->_next;
             if (y != skip) y->resume();
         }
     }
