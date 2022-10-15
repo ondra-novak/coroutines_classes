@@ -4,11 +4,10 @@
 #pragma once
 #ifndef SRC_COCLASSES_SCHEDULER_H_
 #define SRC_COCLASSES_SCHEDULER_H_
+#include "old_generator.h"
 #include "task.h"
 
 #include "thread_pool.h"
-
-#include "generator.h"
 
 #include <chrono>
 #include <condition_variable>

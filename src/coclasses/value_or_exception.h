@@ -37,7 +37,17 @@ struct value_or_exception {
             return std::get<1>(_value);
         }
     }
-    
+
+    const T &get_value() const {
+        if (_value.index() ==0) {
+            std::exception_ptr p = std::get<0>(_value);
+            if (p == nullptr) throw value_not_ready_exception();
+            else std::rethrow_exception(p);
+        } else {
+            return std::get<1>(_value);
+        }
+    }
+
     bool is_ready() {
         return _value.index() == 1 || std::get<0>(_value) != nullptr;
     }

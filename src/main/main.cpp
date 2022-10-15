@@ -1,8 +1,8 @@
+#include <../coclasses/old_generator.h>
 #include "../../version.h"
 #include <coclasses/task.h>
 #include <coclasses/future.h>
 #include <coclasses/lazy.h>
-#include <coclasses/generator.h>
 #include <coclasses/mutex.h>
 #include <coclasses/queue.h>
 #include <coclasses/thread_pool.h>

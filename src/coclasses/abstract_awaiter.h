@@ -8,7 +8,7 @@
 #ifndef SRC_COCLASSES_ABSTRACT_AWAITER_H_
 #define SRC_COCLASSES_ABSTRACT_AWAITER_H_
 
-
+#include "resume_lock.h"
 #include <algorithm>
 #include <condition_variable>
 #include <coroutine> 

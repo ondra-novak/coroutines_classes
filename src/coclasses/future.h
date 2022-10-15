@@ -9,10 +9,13 @@
 #include "resume_lock.h"
 #include "exceptions.h"
 
-#include "sync_await.h"
 
 
 #include "value_or_exception.h"
+
+#include "abstract_awaiter.h"
+
+#include "poolalloc.h"
 
 #include <assert.h>
 #include <memory>
@@ -70,6 +73,15 @@ public:
      * @exception value_not_ready_exception when value is not ready
      */
     auto get() {
+        return _value.get_value();
+    }
+    ///get value
+    /**
+     * 
+     * @return value of the future
+     * @exception value_not_ready_exception when value is not ready
+     */
+    auto get() const {
         return _value.get_value();
     }
     
@@ -295,11 +307,11 @@ public:
     
     
     ///promise can be used as callback function
-    void operator()(T &&x) {
+    void operator()(T &&x) const {
         set_value(std::move(x));
     }
     ///promise can be used as callback function
-    void operator()(const T &x) {
+    void operator()(const T &x) const {
         set_value(x);
     }
 };
@@ -325,11 +337,11 @@ public:
      * @retval true success
      * @retval false already resolved 
      */
-    bool set_value() {
+    bool set_value() const {
         return _owner->set_value();
     }
     ///you can call promise as callback
-    void operator()() {
+    void operator()() const{
         set_value();
     }
 
