@@ -14,15 +14,15 @@ use namespace cocls;
 
 ## Types of supported tools?
 
-* **task<T>** 
-* **lazy<T>**
-* **generator<T>**
-* **future<T>**
+* **task\<T>** 
+* **lazy\<T>**
+* **generator\<T>**
+* **future\<T>**
 * **mutex**
-* **queue<T>**
+* **queue\<T>**
 * **thread_pool**
 * **scheduler**
-* **publisher<T>** - **subscriber<T>**
+* **publisher\<T>** - **subscriber\<T>**
 * **resume_lock framework**
 * **coroboard/pause/manual scheduling**
 * **sync_await**
@@ -33,21 +33,21 @@ use namespace cocls;
 * [Examples](src/examples) 
 
 
-## task<T>
+## task\<T>
 
 * awaitable (you can `co_await`)
 * joinable (function `.join()` )
 * copyable - sharing
 * movable
 * multi-await supported
-* task<void>, task<> 
+* task\<void>, task<> 
 * captures exceptions
 
-## lazy<T>
+## lazy\<T>
 
 * task which starts suspended and it is resumed  on the first `co_await`
 
-## generator<T>
+## generator\<T>
 
 * finite or infinte
 * awaitable (you can co_await)
@@ -56,16 +56,16 @@ use namespace cocls;
 * destroyable - you can destroy generator when it is suspended
 * you can request to call a callback when generator suspends on `co_yield`
 
-## future<T>
+## future\<T>
 
 * awaitable object (you can `co_await`)
 * allocated on stack/frame (no memory allocation)
-* future<T> is not copyable nor movable
-* satellite object `promise<T>` can be retrieved by `.get_promise()`
-* `promise<T>` is copyable and movable
-* use `promise<T>` to set value of the future
-* don't forget to destroy all instances of `promise<T>` to resume awaiting task
-* can be synchronously waiter (function `.wait()`)
+* future\<T> is not copyable nor movable
+* satellite object `promise\<T>` can be retrieved by `.get_promise()`
+* `promise\<T>` is copyable and movable
+* use `promise\<T>` to set value of the future
+* don't forget to destroy all instances of `promise\<T>` to resume awaiting task
+* can be synchronously waited (function `.wait()`)
 * you can create callback promise (function `.make_promise()`)
 
 ## mutex
@@ -77,7 +77,7 @@ use namespace cocls;
 * no memory allocation
 * lockfree
 
-## queue<T>
+## queue\<T>
 
 * awaitable (`co_await queue.pop()`)
 * watiable (`queue.pop().wait()`)
@@ -99,10 +99,10 @@ use namespace cocls;
 * single-threaded mode - it is running, when there is no coroutine to execute
 * custom clock, and clock's traits
 
-## publisher<T> - subscriber<T>
+## publisher\<T> - subscriber\<T>
 
 * publisher - function publish
-* subscriber - awaitable object -> returns `std::optional<T>`
+* subscriber - awaitable object -> returns `std::optional\<T>`
 * easy to use
 * shared queue, subscribers can read unprocessed data after the publisher is destroyed.
 
@@ -112,7 +112,7 @@ use namespace cocls;
 * in this case, coroutines are not resumed immediately. Resumption is done on next
 `co_await`
 * resume_lock framework is thread local feature
-* if you write your own awaiter you should use following function
+* if you write your own awaiter you should use following functions
     * instead `h.resume()` use `cocls::resume_lock::resume(h)`
     * for `await_suspend`, always return result of `cocls::resume_lock::await_suspend()`
     * this automatically uses *symmetric transfer*
@@ -153,7 +153,7 @@ co_await cocls::pause();
 ```
 scheduler<> sch;
 
-(sch.operator co_await()).wait()
+(sch.sleep_for(x).wait()
 ```
 
 
@@ -163,7 +163,7 @@ scheduler<> sch;
 * you can write own implementation, so you can receive signal instead resumption
 * you can call `subscribe_awaiter(abstract_awaiter<>)` on a co_awaiter<> (most of awaiters in this library), so instead of waiting in coroutine or synchronously, your awaiter will be called for `.resume()` when awaitable object is ready
 
-### co_awaiter<X,chain>
+### co_awaiter\<X,chain>
 
 * co_awaiter is awaitable object. The most primitives of this library uses this awaiter to implement co_await. It also supports
     * `.wait() - synchronous waiting
