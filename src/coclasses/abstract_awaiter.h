@@ -33,7 +33,13 @@ namespace cocls {
 template<bool chain = false>
 class abstract_awaiter {
 public:
+    ///called to resume coroutine
     virtual void resume() = 0;
+    ///called to retrieve coroutine handle for symmetric transfer
+    virtual std::coroutine_handle<> resume_handle() {
+        resume();
+        return resume_lock::await_suspend();
+    }
     virtual ~abstract_awaiter() = default;
 };
 
@@ -46,6 +52,10 @@ public:
     virtual ~abstract_awaiter() = default;
     
     virtual void resume() = 0;
+    virtual std::coroutine_handle<> resume_handle() {
+        resume();
+        return resume_lock::await_suspend();
+    }
 
     void subscribe(std::atomic<abstract_awaiter *> &chain) {
         while (!chain.compare_exchange_weak(_next, this, std::memory_order_relaxed));
@@ -77,20 +87,9 @@ public:
     
 protected:
     promise_type &_owner;
+
 };
 
-template<typename promise_type>
-class abstract_owned_awaiter<promise_type, true>: public abstract_awaiter<true> {
-public:
-
-    abstract_owned_awaiter(promise_type &owner):_owner(owner) {}
-    abstract_owned_awaiter(const abstract_owned_awaiter &)=default;
-    abstract_owned_awaiter &operator=(const abstract_owned_awaiter &)=delete;
-
-protected:
-    promise_type &_owner;
-    
-};
 
 
 ///Awaiter which can be awaited by co_await
@@ -124,6 +123,7 @@ public:
         return this->_owner.get_result();
     }
     
+    
     ///Wait synchronously
     /**
      * Blocks execution until awaiter is signaled
@@ -144,11 +144,20 @@ public:
         return this->_owner.subscribe_awaiter(awt);
     }
     
+#ifdef __CDT_PARSER__
+    //this helps to Eclipse CDT parser to recognize co_await conversion  
+    using ReturnValue = decltype(std::declval<co_awaiter<promise_type,chain> >().await_resume());
+
+    operator ReturnValue();
+#endif
     
 protected:
     std::coroutine_handle<> _h;
-    virtual void resume() {
+    virtual void resume() override {
         resume_lock::resume(_h);
+    }
+    virtual std::coroutine_handle<> resume_handle() override {
+        return _h;
     }
 };
 
@@ -172,11 +181,12 @@ protected:
     std::condition_variable _cond;
     bool _signal = false;
     
-    virtual void resume() {
+    virtual void resume() override {
         std::unique_lock _(_mx);
         _signal = true;
         _cond.notify_all();
-    }        
+    }
+
 };
 
 template<typename promise_type>
@@ -208,7 +218,7 @@ public:
     }
     
 protected:
-    virtual void resume() {
+    virtual void resume() override {
         _fn(callback_result<promise_type>(this->_owner));
     }
 };

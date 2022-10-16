@@ -373,6 +373,7 @@ public:
         _fn(*this);
         delete this;
     }
+
     virtual ~future_with_cb() = default;
     
 protected:

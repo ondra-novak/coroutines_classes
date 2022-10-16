@@ -199,8 +199,9 @@ public:
     struct yield_suspender {
         yield_suspender(abstract_awaiter<> *h): _h(h) {}
         bool await_ready() const noexcept {return false;}
-        void await_suspend(std::coroutine_handle<> ) const noexcept {
-            if (_h) _h->resume();
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const noexcept {
+            if (_h) return _h->resume_handle();
+            else return std::noop_coroutine();
         }
         void await_resume() const noexcept {};
 
@@ -346,6 +347,10 @@ public:
         assert(_state != State::running);
         assert(_state != State::running_promise_set);
         return std::move(get());
+        
+    }
+    
+    void return_void() {
         
     }
     
