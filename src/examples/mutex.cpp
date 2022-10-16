@@ -12,6 +12,7 @@ cocls::task<> test_task(cocls::scheduler<> &sch, cocls::mutex &mx, int &shared_v
     std::cout << "Shared var increased under mutex: " << shared_var << std::endl;
     co_await sch.sleep_for(std::chrono::milliseconds(100));
     std::cout << "Mutex released " << std::endl;
+    co_return;
 }
 
 int main(int, char **) {
@@ -23,7 +24,7 @@ int main(int, char **) {
     for (int i = 0; i < 5; i++) {
         tasks.push_back(test_task(sch, mx, shared_var));
     }
-    for (auto &x: tasks) x.join();
+    for (cocls::task<> &x: tasks) x.join();
     return 0;
 
 }

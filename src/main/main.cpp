@@ -228,8 +228,8 @@ cocls::task<> scheduler_test_task(cocls::scheduler<> &sch) {
     std::cout << "(scheduler_test_task) started "<< std::endl;
     auto gen = sch.interval(std::chrono::milliseconds(100));    
     auto n = co_await gen;
-    while (*n != 20) {
-        std::cout << "(scheduler_test_task) interval generator tick: " << *n << std::endl;
+    while (*n != 20) {        
+        std::cout << "(scheduler_test_task) interval generator tick: " << (*n) << std::endl;
         n = co_await gen;        
     }
     std::cout << "(scheduler_test_task) exiting "<< std::endl;

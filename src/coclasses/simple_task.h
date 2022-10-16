@@ -4,6 +4,8 @@
 
 
 #include "value_or_exception.h"
+
+#include <atomic>
 #include <coroutine>
 
 namespace cocls {
