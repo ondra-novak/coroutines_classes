@@ -103,11 +103,11 @@ public:
     class fork_awaiter: public awaiter {
     public:
         fork_awaiter(thread_pool &pool, Fn &&fn):awaiter(pool), _fn(std::forward<Fn>(fn)) {}
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
+        bool await_suspend(std::coroutine_handle<> h) noexcept {
             Fn fn (std::forward<Fn>(_fn));
-            std::coroutine_handle<> out = awaiter::await_suspend(h);            
+            bool b = awaiter::await_suspend(h);            
             fn();
-            return out;
+            return b;
         }
     protected:
         Fn _fn;

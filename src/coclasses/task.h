@@ -211,12 +211,40 @@ public:
         }
     }
 
-    task_initial_suspender initial_suspend()  noexcept {
+    ///handles final_suspend
+    class final_awaiter {
+    public:
+        final_awaiter(task_promise_base &prom): _owner(prom) {}        
+        
+        final_awaiter(const final_awaiter &prom) = default;
+        final_awaiter &operator=(const final_awaiter &prom) = delete;
+        
+        bool await_ready() noexcept {
+            return _owner._ref_count == 0;
+        }
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept {
+            return resume_ctl::await_suspend();
+        }
+        constexpr void await_resume() const noexcept {}        
+    protected:
+        task_promise_base &_owner;
+    };
+    
+    class initial_awaiter {
+    public:
+        static bool await_ready() noexcept {return false;}
+        static void await_suspend(std::coroutine_handle<> h) noexcept {
+            resume_ctl::resume(h); //this resumes coroutine if it is called from normal routine
+        }
+        static void await_resume() noexcept {}
+    };
+    
+    initial_awaiter initial_suspend()  noexcept {
         ++_ref_count;
-        return {};
-    }
-    task_final_suspender final_suspend() noexcept {
-        return task_final_suspender(--_ref_count == 0);
+        return {};}
+    final_awaiter final_suspend() noexcept {
+        --_ref_count;        
+        return *this;
     }
     
     void add_ref() {
@@ -230,6 +258,20 @@ public:
         }
     }
 
+    
+    template<typename X>
+    auto await_transform(X&& awt) noexcept
+        -> resume_ctl_awaiter<decltype(std::declval<X>().operator co_await())> {
+        return resume_ctl_awaiter<decltype(std::declval<X>().operator co_await())>(
+                awt.operator co_await()
+        );
+    }
+    
+    template<typename X>
+    auto await_transform(X&& awt) noexcept
+        -> decltype(awt.await_resume(),resume_ctl_awaiter<X>(std::forward<X>(awt))) {
+        return resume_ctl_awaiter<X>(std::forward<X>(awt));
+    }
 
     using AW = abstract_awaiter<true>;
     

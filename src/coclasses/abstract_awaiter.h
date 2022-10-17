@@ -39,7 +39,7 @@ public:
     ///called to retrieve coroutine handle for symmetric transfer
     virtual std::coroutine_handle<> resume_handle() {
         resume();
-        return resume_ctl::await_suspend();
+        return std::noop_coroutine();
     }
     virtual ~abstract_awaiter() = default;
 };
@@ -55,7 +55,7 @@ public:
     virtual void resume() = 0;
     virtual std::coroutine_handle<> resume_handle() {
         resume();
-        return resume_ctl::await_suspend();
+        return std::noop_coroutine();
     }
 
     void subscribe(std::atomic<abstract_awaiter *> &chain) {
@@ -111,13 +111,9 @@ public:
         return this->_owner.is_ready();
     }
     ///co_await related function
-    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+    bool await_suspend(std::coroutine_handle<> h) {
         _h = h; 
-        if (this->_owner.subscribe_awaiter(this)) {
-            return resume_ctl::await_suspend();
-        } else {
-            return h; 
-        }
+        return this->_owner.subscribe_awaiter(this);
     }
     ///co_await related function
     auto await_resume() {

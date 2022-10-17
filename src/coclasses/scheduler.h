@@ -91,14 +91,14 @@ public:
         bool await_ready() const {
             return _tp<Traits::now() || _owner._exit;
         }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+        bool await_suspend(std::coroutine_handle<> h) {
             std::lock_guard _(_owner._mx);
-            if (_owner._exit) return h;
+            if (_owner._exit) return false;
             _h = h;
             _owner._list.push({_tp,this});
             _owner._signal = true;
             _owner._sleeper.notify_one();
-            return resume_ctl::await_suspend();
+            return true;
         }
         
         void await_resume() const {

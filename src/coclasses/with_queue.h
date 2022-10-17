@@ -109,12 +109,12 @@ class current_queue {
 public:
     using promise_t = with_queue_promise<Coro, T>;
     static bool await_ready() noexcept {return false;}
-    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+    bool await_suspend(std::coroutine_handle<> h) {
         _h = std::coroutine_handle<promise_t>::from_address(h.address());
         auto &promise = _h.promise();
         _awaiter.emplace(std::move(promise._q.pop()));
         if (_awaiter->await_ready()) {
-            return h;
+            return false;
         }
         return _awaiter->await_suspend(h);
     }
