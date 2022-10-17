@@ -3,6 +3,7 @@
 #define SRC_COCLASSES_SRC_COCLASSES_DEBUG_H_
 #include <exception>
 #include <string>
+#include <vector>
 
 
 

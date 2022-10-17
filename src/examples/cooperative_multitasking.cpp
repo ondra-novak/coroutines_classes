@@ -10,16 +10,17 @@ cocls::task<> test_task(int id) {
 }
 
 
-void test_cooperative() {
-    cocls::coroboard([]{
+cocls::task<> test_cooperative() {
+    //cooperative mode need to be initialized in a coroutine.
+    //The cooperative execution starts once coroutine exits
        for (int i = 0; i < 5; i++) {
            test_task(i);
-       }     
-    });
+       }
+    co_return;
 }
 
 
 int main(int, char **) {
-    test_cooperative();
+    test_cooperative().join();
     
 }

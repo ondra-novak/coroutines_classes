@@ -6,7 +6,6 @@
 #define SRC_COCLASSES_FUTURE_H_
 
 #include "common.h"
-#include "resume_lock.h"
 #include "exceptions.h"
 
 
@@ -16,6 +15,7 @@
 #include "abstract_awaiter.h"
 
 #include "poolalloc.h"
+#include "resume_ctl.h"
 
 #include <assert.h>
 #include <memory>

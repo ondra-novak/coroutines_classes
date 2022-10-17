@@ -8,10 +8,10 @@
 
 #include "common.h" 
 #include "exceptions.h"
-#include "resume_lock.h"
 #include "debug.h"
 #include "abstract_awaiter.h"
 #include "poolalloc.h"
+#include "resume_ctl.h"
 
 #include "value_or_exception.h"
 #include <atomic>
@@ -211,31 +211,12 @@ public:
         }
     }
 
-    ///handles final_suspend
-    class final_awaiter {
-    public:
-        final_awaiter(task_promise_base &prom): _owner(prom) {}        
-        
-        final_awaiter(const final_awaiter &prom) = default;
-        final_awaiter &operator=(const final_awaiter &prom) = delete;
-        
-        bool await_ready() noexcept {
-            return _owner._ref_count == 0;
-        }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept {
-            return resume_lock::await_suspend();
-        }
-        constexpr void await_resume() const noexcept {}        
-    protected:
-        task_promise_base &_owner;
-    };
-    
-    std::suspend_never initial_suspend()  noexcept {
+    task_initial_suspender initial_suspend()  noexcept {
         ++_ref_count;
-        return {};}
-    final_awaiter final_suspend() noexcept {
-        --_ref_count;        
-        return *this;
+        return {};
+    }
+    task_final_suspender final_suspend() noexcept {
+        return task_final_suspender(--_ref_count == 0);
     }
     
     void add_ref() {

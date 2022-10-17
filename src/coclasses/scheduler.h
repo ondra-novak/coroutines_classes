@@ -98,7 +98,7 @@ public:
             _owner._list.push({_tp,this});
             _owner._signal = true;
             _owner._sleeper.notify_one();
-            return resume_lock::await_suspend();
+            return resume_ctl::await_suspend();
         }
         
         void await_resume() const {
@@ -107,7 +107,7 @@ public:
         
         void resume(bool canceled) {
             _canceled = canceled;
-            resume_lock::resume(_h);
+            resume_ctl::resume(_h);
         }
         bool is(coro_id id) {
             return _h.address() == id;
@@ -345,9 +345,7 @@ protected:
             do {
                 awaiter *aw = get_expired();
                 if (aw) {
-                    coroboard([&]{
-                        aw->resume(false);
-                    });
+                    aw->resume(false);                    ;
                 } else {                
                     wait();
                 }            

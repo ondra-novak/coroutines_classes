@@ -183,7 +183,7 @@ int test_mutex() {
 }
 
 void test_pause() {
-    cocls::coroboard([]{
+    ([]()->cocls::task<>{
        for (int i = 0; i < 5; i++) {
            ([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {
@@ -193,7 +193,8 @@ void test_pause() {
               std::cout << "Finished coroutine " << i << std::endl;
            })(i);
        }     
-    });
+       co_return;
+    })().join();
 }
 
 

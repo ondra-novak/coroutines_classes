@@ -8,10 +8,11 @@
 #ifndef SRC_COCLASSES_THREAD_POOL_H_
 #define SRC_COCLASSES_THREAD_POOL_H_
 #include "common.h"
-#include "resume_lock.h"
 #include "exceptions.h"
 
 #include "abstract_awaiter.h"
+#include "resume_ctl.h"
+
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -62,9 +63,7 @@ public:
             auto h = _queue.front();
             _queue.pop();
             lk.unlock();
-            coroboard([&]{
-                h->resume();
-            });
+            h->resume();
             lk.lock();
         }
     }

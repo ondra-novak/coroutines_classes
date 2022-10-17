@@ -8,7 +8,8 @@
 #include "common.h"
 #include "abstract_awaiter.h"
 #include "exceptions.h"
-#include "resume_lock.h"
+#include "resume_ctl.h"
+
 #include <coroutine>
 
 #include <mutex>

@@ -7,8 +7,8 @@
 #define SRC_COCLASSES_MUTEX_H_
 
 #include "common.h"
-#include "resume_lock.h"
 #include "abstract_awaiter.h"
+#include "resume_ctl.h"
 
 #include <cassert>
 #include <coroutine>

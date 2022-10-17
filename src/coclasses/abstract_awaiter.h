@@ -8,7 +8,8 @@
 #ifndef SRC_COCLASSES_ABSTRACT_AWAITER_H_
 #define SRC_COCLASSES_ABSTRACT_AWAITER_H_
 
-#include "resume_lock.h"
+#include "resume_ctl.h"
+
 #include <algorithm>
 #include <condition_variable>
 #include <coroutine> 
@@ -26,7 +27,7 @@ namespace cocls {
  * 
  * bool is_ready(); - return true, if result is ready
  * bool subscribe_awaiter(abstract_awaiter *); - return true, if set, false if resolved
- * auto get_result(); - return result
+ * auto get_result(coroutines); - return result
  * 
  */
 
@@ -38,7 +39,7 @@ public:
     ///called to retrieve coroutine handle for symmetric transfer
     virtual std::coroutine_handle<> resume_handle() {
         resume();
-        return resume_lock::await_suspend();
+        return resume_ctl::await_suspend();
     }
     virtual ~abstract_awaiter() = default;
 };
@@ -54,7 +55,7 @@ public:
     virtual void resume() = 0;
     virtual std::coroutine_handle<> resume_handle() {
         resume();
-        return resume_lock::await_suspend();
+        return resume_ctl::await_suspend();
     }
 
     void subscribe(std::atomic<abstract_awaiter *> &chain) {
@@ -113,7 +114,7 @@ public:
     std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
         _h = h; 
         if (this->_owner.subscribe_awaiter(this)) {
-            return resume_lock::await_suspend();
+            return resume_ctl::await_suspend();
         } else {
             return h; 
         }
@@ -154,7 +155,7 @@ public:
 protected:
     std::coroutine_handle<> _h;
     virtual void resume() override {
-        resume_lock::resume(_h);
+        resume_ctl::resume(_h);
     }
     virtual std::coroutine_handle<> resume_handle() override {
         return _h;
