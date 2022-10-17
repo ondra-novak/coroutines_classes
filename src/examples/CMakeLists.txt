@@ -24,4 +24,5 @@ add_executable (fork fork.cpp)
 add_executable (queue queue.cpp)
 add_executable (with_queue with_queue.cpp)
 add_executable (publisher_subscriber publisher_subscriber.cpp)
+add_executable (cancelable_timer cancelable_timer.cpp)
 

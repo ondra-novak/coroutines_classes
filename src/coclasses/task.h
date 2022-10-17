@@ -119,7 +119,7 @@ public:
     
     
     ///Retrieve unique coroutine identifier
-    coro_id get_id() {
+    coro_id get_id() const {
         return std::coroutine_handle<promise_type>::from_promise(*_promise).address();
     }
     
