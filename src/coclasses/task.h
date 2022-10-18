@@ -8,8 +8,8 @@
 
 #include "common.h" 
 #include "exceptions.h"
-#include "debug.h"
 #include "abstract_awaiter.h"
+#include "debug.h"
 #include "poolalloc.h"
 #include "resume_ctl.h"
 

@@ -119,6 +119,7 @@ public:
     }
 
 protected:
+    friend class pause_awaiter; 
     static resume_ctl &instance() {
         static thread_local resume_ctl inst;
         return inst;
@@ -138,7 +139,7 @@ protected:
         _q.push(h);
         return await_suspend_impl();
     }
-
+    
     void resume_frame(std::coroutine_handle<> h) noexcept {
         _in_coroutine = true;
         h.resume();
@@ -146,7 +147,7 @@ protected:
             h = _q.front();
             _q.pop();         
             h.resume();
-        }
+        }        
         _in_coroutine = false;        
     }
     
@@ -164,6 +165,18 @@ protected:
             resume_frame(h);
         }
     }
+    
+    void resume_on_pause() {
+        if (!_q.empty()) {
+                bool s = _in_coroutine;
+                _in_coroutine = true;                
+                auto h = _q.front();
+                _q.pop();         
+                h.resume();
+                _in_coroutine = s;
+        }        
+        
+    }
 
 
 protected:
@@ -173,11 +186,22 @@ protected:
 
 class pause_awaiter {
 public:
+    pause_awaiter() = default;
+    pause_awaiter(pause_awaiter &&other):_did_await(other._did_await) {other._did_await = true;}
     static bool await_ready() noexcept {return false;}
     static std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept{
         return resume_ctl::await_suspend(h);
     }
-    static void await_resume() noexcept {}
+    void await_resume() noexcept {
+        _did_await = true;
+    }
+    ~pause_awaiter() {
+        if (!_did_await) {
+            resume_ctl::instance().resume_on_pause();
+        }
+    }
+protected:
+    bool _did_await = false;
 };
 
 
@@ -226,6 +250,12 @@ public:
  * do_something_other();
  * co_await t2;                 //finally join with t2
  * @return
+ * 
+ * The function can be called without co_await. In this case, operation
+ * is implemented as recursion.
+ 
+ * 
+ * 
  */
 inline pause_awaiter pause() {
     return {};

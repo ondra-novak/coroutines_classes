@@ -18,13 +18,21 @@
 
 namespace cocls {
 
+
+///Reports unhandled exceptions in tasks.
+/**
+ * If the exception is not retrieves, debug reporter is called and prints the exception at 
+ * console or into std error. This is enabled in debug mode. In release mode, no output is
+ * genrated. However, you can write own reporter, and register it as global object, which will
+ * report such situation in both debug and release mode
+ */
 class debug_reporter {
 public:
     
     virtual ~debug_reporter() = default;
 
-    static void demangle_type(const std::type_info &type, std::string &msg) {
 #ifndef NDEBUG
+    static void demangle_type(const std::type_info &type, std::string &msg) {
 #ifdef _WIN32
         msg.append(type.name());
 #else
@@ -33,15 +41,24 @@ public:
         msg.append(demangled_name);
         free(demangled_name);
 #endif
-#else
-        msg.append(type.name());
-#endif
-        }
+    }
 
-    virtual void report_exception(std::exception_ptr ptr, const std::type_info &task_type) {
+    static void output_debug(std::string &&msg) {
+#ifdef _WIN32
+        OutputDebugStringA(msg.c_str());        
+        msg.append("\r\n");
+#else
+        msg.append("\n");
+        ::write(2, msg.data(), msg.size());
+#endif
+    }
+
+#endif
+
+    virtual void report_exception(std::exception_ptr ptr, const std::type_info &task_type) noexcept {
 #ifndef NDEBUG
         std::string msg;
-        msg.append("cocls: unhandled exception in coroutine: ");
+        msg.append("cocls: unhandled exception in a coroutine: ");
         demangle_type(task_type, msg);
         msg.append(" - ");
         try {
@@ -53,45 +70,18 @@ public:
             msg.append("<non-standard exception>");            
         }
         output_debug(std::move(msg));
+#endif
     }
 
-    static void output_debug(std::string &&msg) {
-#ifdef _WIN32
-        OutputDebugStringA(msg.c_str());        
-        msg.append("\r\n");
-#else
-        msg.append("\n");
-        ::write(2, msg.data(), msg.size());
-#endif
-#endif
-    }
-    virtual void reusable_alloc_size(std::size_t sz, const std::type_info &task_type, const std::vector<const std::type_info *> &args) {
-#ifndef NDEBUG
-        std::string msg;
-        msg.append("II coro-static alloc: ");
-        msg.append(std::to_string(sz));
-        msg.append(" bytes - ");
-        demangle_type(task_type, msg);
-        msg.append(" - (");
-        bool sep = false;
-        for (const std::type_info *c: args) {
-            if (sep) msg.append(", "); else sep = true;
-            demangle_type(*c, msg);
-        }
-        msg.append(")");
-        output_debug(std::move(msg));
-#endif
-    }
     
+    ///change debug's reporter instance
     static void set_instance(debug_reporter *inst) {
         get_instance_ptr() = inst;
     }
+    ///get current instance of debug reporter
     static debug_reporter &get_instance() {
         return *get_instance_ptr();
     }
-    
-    
-    
     
 protected:
     

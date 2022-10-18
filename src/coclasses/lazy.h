@@ -74,6 +74,7 @@ public:
     void mark_canceled() {
         auto prom = static_cast<lazy_promise<T> *>(this->_promise);
         prom->cancel();
+        start();
     }
 
     auto join() {

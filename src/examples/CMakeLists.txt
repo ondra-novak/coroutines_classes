@@ -26,4 +26,8 @@ add_executable (with_queue with_queue.cpp)
 add_executable (publisher_subscriber publisher_subscriber.cpp)
 add_executable (cancelable_timer cancelable_timer.cpp)
 add_executable (cancelable_timer_lazy cancelable_timer_lazy.cpp)
+add_executable (cancelable_task cancelable_task.cpp)
+add_executable (goroutine1 goroutine1.cpp)
+add_executable (pause pause.cpp)
+
 
