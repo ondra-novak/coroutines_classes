@@ -117,6 +117,7 @@ protected:
             _q.push(h);
             return;
         }
+        _in_coroutine = true;
         h.resume();
         while (!_q.empty()) {
             h = _q.front();
