@@ -18,8 +18,12 @@ template<typename T>
 struct value_or_exception {
     
     template<typename X>
-    void set_value(X &&val) {
-        _value.template emplace<T>(std::forward<X>(val));
+    void set_value(X &&val) noexcept {
+        try {
+            _value.template emplace<T>(std::forward<X>(val));
+        } catch (...) {
+            unhandled_exception();
+        }
     }
     
     void unhandled_exception() {

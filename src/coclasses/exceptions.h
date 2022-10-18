@@ -33,7 +33,6 @@ public:
     }
     
 };
-
 ///Requested value is no longer available
 class no_longer_avaible_exception: public std::exception {
 public:

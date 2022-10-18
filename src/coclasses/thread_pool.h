@@ -12,6 +12,7 @@
 
 #include "abstract_awaiter.h"
 #include "resume_ctl.h"
+#include "lazy.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -130,6 +131,47 @@ public:
         return *this;
     }
 
+    template<typename T>
+    bool start(lazy<T> t) {
+        
+        class awaiter: public abstract_owned_awaiter<thread_pool> {
+        public:
+            awaiter(thread_pool &owner, lazy<T> t, std::coroutine_handle<> h)
+                :abstract_owned_awaiter<thread_pool>(owner)
+                ,_t(t), _h(h) {}
+            void resume_canceled() noexcept{
+                _t.mark_canceled();
+                resume_ctl::resume(_h);
+                delete this;            
+            }
+
+            virtual void resume() noexcept override {
+                if (_owner.is_stopped()) _t.mark_canceled();
+                resume_ctl::resume(_h);
+                delete this;
+            }
+            virtual std::coroutine_handle<> resume_handle() noexcept override {
+                if (_owner.is_stopped()) _t.mark_canceled();
+                auto out = _h;
+                delete this;
+                return _h;
+            }
+        protected:
+            lazy<T> _t;
+            std::coroutine_handle<> _h;
+            
+        };
+        
+        std::coroutine_handle<> h = t.get_start_handle();
+        if (h == nullptr) return false;
+        awaiter *aw = new awaiter(*this, t, h);
+        bool ok = subscribe_awaiter(aw);
+        if (!ok) {
+            aw->resume_canceled();
+        }
+        return true;
+    }
+    
     /*
      * BUG - GCC 10.3-12.2+ - do not inline lambda to this function
      * 

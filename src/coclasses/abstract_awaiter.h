@@ -52,8 +52,8 @@ public:
     abstract_awaiter &operator=(const abstract_awaiter &)=delete;
     virtual ~abstract_awaiter() = default;
     
-    virtual void resume() = 0;
-    virtual std::coroutine_handle<> resume_handle() {
+    virtual void resume() noexcept = 0;
+    virtual std::coroutine_handle<> resume_handle() noexcept {
         resume();
         return std::noop_coroutine();
     }
@@ -150,10 +150,10 @@ public:
     
 protected:
     std::coroutine_handle<> _h;
-    virtual void resume() override {
+    virtual void resume() noexcept override  {
         resume_ctl::resume(_h);
     }
-    virtual std::coroutine_handle<> resume_handle() override {
+    virtual std::coroutine_handle<> resume_handle() noexcept  override {
         return _h;
     }
 };
@@ -178,7 +178,7 @@ protected:
     std::condition_variable _cond;
     bool _signal = false;
     
-    virtual void resume() override {
+    virtual void resume() noexcept  override {
         std::unique_lock _(_mx);
         _signal = true;
         _cond.notify_all();
