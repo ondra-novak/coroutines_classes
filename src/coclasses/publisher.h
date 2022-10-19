@@ -32,7 +32,7 @@ enum class subscribtion_type {
 };
 
 
-template<typename T>
+template<typename T, typename Resumption_Policy = queued_resumption_policy>
 class subscriber;
 
 
@@ -308,12 +308,11 @@ protected:
     
 
     
-    
-    friend class subscriber<T>;
+    template<typename,typename> friend class subscriber;
 };
 
 ///Subscriber, can subscribe to publisher
-template<typename T>
+template<typename T, typename Resumption_Policy>
 class subscriber {
 public:
     
@@ -340,9 +339,26 @@ public:
             _q->subscribe(this, _pos);
     }
     
-    
-    ///can't be copied
-    subscriber(const subscriber &) = delete;
+    subscriber(Resumption_Policy policy, publisher<T> &pub, subscribtion_type t = subscribtion_type::all_values)
+    :_policy(policy), _q(pub.get_queue()),_pos(_q->subscribe(this)),_t(t) {}
+
+
+    subscriber(Resumption_Policy policy,publisher<T> &pub, std::size_t pos, subscribtion_type t = subscribtion_type::all_values)
+    :_policy(policy), _q(pub.get_queue()),_pos(pos),_t(t) {
+            _q->subscribe(this, _pos);
+    }
+
+
+    ///Subscriber can be copied
+    /**
+     * By copying subscriber, the copy is automatically subscribed from the position equals to
+     * position of source subscriber
+     *
+     * @param other source subscriber
+     */
+    subscriber(const subscriber &other):_policy(other._policy),_q(other._q),_pos(other._pos), _t(other._t){
+        _q->subscribe(this, _pos);
+    }
     ///can't be assigned
     subscriber &operator=(const subscriber &) = delete;
     
@@ -360,8 +376,8 @@ public:
      * @exception no_longer_avaiable_exception subscriber wants to access a value, which has been outside of available queue window.
      * @exception no_more_values_exception publisher has been closed
      */
-    co_awaiter<subscriber, true> operator co_await() {
-        return *this;
+    co_awaiter<subscriber, Resumption_Policy, true> operator co_await() {
+        return co_awaiter<subscriber, Resumption_Policy, true>(_policy,*this);
     }
 
     ///Retrieves current position
@@ -377,12 +393,13 @@ public:
     }
     
 protected:
+    Resumption_Policy _policy;
     std::shared_ptr<queue> _q;
     std::size_t _pos;
     subscribtion_type _t;
     
     friend class publisher<T>;
-    friend class co_awaiter<subscriber<T>,true >;
+    friend class co_awaiter_base<subscriber<T>, true >;
 
     bool is_ready() {
         return _q->advance(this, _pos,_t);

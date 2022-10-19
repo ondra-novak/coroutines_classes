@@ -5,7 +5,7 @@ cocls::task<> test_task(int id) {
     for (int j = 0; j < 10; j++) {
         for (int i = 0; i < id; i++) std::cout << "\t";
         std::cout << j << std::endl;        
-        co_await cocls::pause();
+        co_await cocls::pause<>();
     }     
 }
 

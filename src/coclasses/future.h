@@ -124,7 +124,7 @@ protected:
     friend class promise_base<T>;
     friend class promise<T>;
     friend class abstract_owned_awaiter<future<T> >;
-    friend class co_awaiter<future<T> >;
+    friend class co_awaiter_base<future<T> >;
     friend class blocking_awaiter<future<T> >;
     
     void unhandled_exception() {
@@ -369,7 +369,7 @@ public:
     future_with_cb(Fn &&fn):_fn(std::forward<Fn>(fn)) {
         this->_awaiter = this;
     }
-    virtual void resume() override {
+    virtual void resume() noexcept override {
         _fn(*this);
         delete this;
     }

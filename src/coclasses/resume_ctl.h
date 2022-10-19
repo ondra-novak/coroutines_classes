@@ -29,6 +29,8 @@ class resume_ctl_awaiter;
 class resume_ctl {
 public:
 
+    static thread_local resume_ctl instance;
+
     ///Retrieve first ready coroutine to be resumed in an awaiter function await_suspend()
     /**
      * Call this function in awaiter::await_suspend(), returned value must be returned from that function.
@@ -37,7 +39,7 @@ public:
      * @note useful in awaiter::await_suspend
      */
     [[nodiscard]] static  std::coroutine_handle<> await_suspend() {
-        return instance().await_suspend_impl();
+        return instance.await_suspend_impl();
     }
 
     ///Enqueue specified coroutine to the queue a retrieve other coroutine from the queue
@@ -48,7 +50,7 @@ public:
      * @note useful in awaiter::await_suspend
      */
     [[nodiscard]] static std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
-        return instance().await_suspend_impl(h);
+        return instance.await_suspend_impl(h);
     }
 
     ///Retrieves information, whether current code is running inside of coroutine
@@ -64,7 +66,7 @@ public:
      * If you want to use this feature, you need to use resume() / resume_now()
      */
     static bool in_coroutine() {
-        return instance()._in_coroutine;
+        return instance._in_coroutine;
     }
     
     ///Resume specified coroutine or prepare it for resumption
@@ -73,8 +75,8 @@ public:
      * If the code is called from normal code, the specified coroutine si resumed immediately
      *
      * */
-    static void resume(std::coroutine_handle<> h) noexcept {
-        return instance().resume_impl(h);
+    static void resume_default(std::coroutine_handle<> h) noexcept {
+        return instance.resume_impl(h);
     }
     ///Resumes specified coroutine forcedly, regardless on, whether current code is in coroutine or not
     /**
@@ -85,7 +87,7 @@ public:
      * @param h handle to resume
      */
     static void resume_now(std::coroutine_handle<> h) noexcept {
-        return instance().resume_now_impl(h);
+        return instance.resume_now_impl(h);
     }
 
     ///Wraps any awaiter's await_suspend function by function which can communicate with resume_ctl
@@ -120,10 +122,6 @@ public:
 
 protected:
     friend class pause_awaiter; 
-    static resume_ctl &instance() {
-        static thread_local resume_ctl inst;
-        return inst;
-    }
 
     std::coroutine_handle<> await_suspend_impl() {
         if (_q.empty()) {
@@ -184,25 +182,27 @@ protected:
     bool _in_coroutine = false;
 };
 
-class pause_awaiter {
-public:
-    pause_awaiter() = default;
-    pause_awaiter(pause_awaiter &&other):_did_await(other._did_await) {other._did_await = true;}
-    static bool await_ready() noexcept {return false;}
-    static std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept{
-        return resume_ctl::await_suspend(h);
-    }
-    void await_resume() noexcept {
-        _did_await = true;
-    }
-    ~pause_awaiter() {
-        if (!_did_await) {
-            resume_ctl::instance().resume_on_pause();
-        }
-    }
-protected:
-    bool _did_await = false;
+struct queued_resumption_policy {
+    static void resume(std::coroutine_handle<> h) noexcept {resume_ctl::instance.resume_default(h);}
 };
+
+
+inline thread_local resume_ctl resume_ctl::instance;
+
+template<typename policy = queued_resumption_policy>
+class pause: private policy {
+public:
+    template<typename ... Args>
+
+    explicit pause(Args && ... args):policy(std::forward<Args>(args)...) {}
+    static bool await_ready() noexcept {return false;}
+    void await_suspend(std::coroutine_handle<> h) noexcept {
+        policy::resume(h);
+    }
+    static void await_resume() noexcept {}
+
+};
+
 
 
 template<typename Awt>
@@ -238,28 +238,6 @@ public:
 };
 
 
-
-///Pause current coroutine in favor to other coroutine ready to run
-/**
- * For example if you want to start a coroutine in other coroutine without waiting for its result, but you
- * need to be ensured, that coroutine stopped on the first co_await, you can co_await pause()
- *
- * @code
- * task<> t2 = run_task2(args); //<t2 starts suspended
- * co_await pause();            //give to t2 chance to run to reach first co_await
- * do_something_other();
- * co_await t2;                 //finally join with t2
- * @return
- * 
- * The function can be called without co_await. In this case, operation
- * is implemented as recursion.
- 
- * 
- * 
- */
-inline pause_awaiter pause() {
-    return {};
-}
 
 template<typename Fn>
 class manual_resume_awaiter {

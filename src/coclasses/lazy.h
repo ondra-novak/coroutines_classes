@@ -9,33 +9,43 @@
 
 namespace cocls {
 
-template<typename T = void>
+template<typename T = void, typename Policy = queued_resumption_policy>
 class lazy_promise;
 
 ///Lazy coroutine is coroutine, which is executed on first await
 /**
  * @tparam T type of result
  */
-template<typename T>
-class lazy: public task<T> {
+template<typename T = void, typename Policy = queued_resumption_policy>
+class lazy: public task<T, Policy> {
 public:
-    using promise_type = lazy_promise<T>;
+    using promise_type = lazy_promise<T, Policy>;
 
     lazy() {};
-    lazy(promise_type *p):task<T>(p) {}
+    lazy(promise_type *p):task<T, Policy>(p) {}
 
     ///co_await the result
-    co_awaiter<task_promise<T>,true> operator co_await() {
+    co_awaiter<task_promise<T, Policy>,Policy,true> operator co_await() {
         start();
-        return co_awaiter<task_promise<T>, true >(*(this->_promise));
+        return co_awaiter<task_promise<T, Policy>,Policy, true >(*(this->_promise));
     }
 
     ///start coroutine now.
     void start() {
         auto prom = static_cast<lazy_promise<T> *>(this->_promise);
         if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
+            Policy p;
             auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
-            resume_ctl::resume(h);
+            p.resume(h);
+        }
+    }
+
+    template<typename resumption_policy>
+    void start(resumption_policy policy) {
+        auto prom = static_cast<lazy_promise<T> *>(this->_promise);
+        if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
+            auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
+            policy.resume(h);
         }
     }
 
@@ -79,13 +89,26 @@ public:
 
     auto join() {
         start();
-        return task<T>::join();
+        return task<T, Policy>::join();
+    }
+
+    template<typename awaiter_resumption_policy>
+    auto join (awaiter_resumption_policy policy) {
+        start();
+        return task<T, Policy>::join(policy);
+    }
+
+    template<typename awaiter_resumption_policy, typename start_resumption_policy>
+    auto join (awaiter_resumption_policy policy, start_resumption_policy start_policy) {
+        start(start_policy);
+        return task<T, Policy>::join(policy);
     }
 
 };
 
 
-template<typename T> class lazy_promise: public task_promise<T>         
+template<typename T, typename Policy>
+class lazy_promise: public task_promise<T, Policy>
 {
 public:
     lazy_promise():_started(false) {}
@@ -104,7 +127,7 @@ public:
     };
     
     initial_awaiter initial_suspend() noexcept {
-        task_promise<T>::initial_suspend();
+        task_promise<T, Policy>::initial_suspend();
         return {this};
     }
     

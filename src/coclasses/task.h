@@ -39,23 +39,23 @@ namespace cocls {
  * at the time. Once the result is available, all waiting coroutines
  * are resumed
  */
-template<typename T = void> class task;
+template<typename T = void, typename Policy = queued_resumption_policy> class task;
 
 ///Coroutine promise object - part of coroutine frame
 /** This object is never used directly, but it is essential object to support coroutines
  * 
  */
-template<typename T> class task_promise;
+template<typename T, typename Policy> class task_promise;
 
 
-template<typename T> class task{
+template<typename T, typename Policy> class task{
 public:
-    using promise_type = task_promise<T>;
+    using promise_type = task_promise<T, Policy>;
 
     ///You can create empty task, which can be initialized later by assign
     task():_promise(nullptr) {}
     ///task is internaly constructed from pointer to a promise  
-    task(task_promise<T> *promise): _promise(promise) {
+    task(promise_type *promise): _promise(promise) {
         _promise->add_ref();
     }
     ///destruction of task decreases reference
@@ -95,8 +95,10 @@ public:
      * 
      * awaiting the task causes suspend of current coroutine until
      * the awaited task is finished
+     *
+     * coroutine's resumption policy is used
      */
-    co_awaiter<task_promise<T>,true> operator co_await() {
+    co_awaiter<promise_type, Policy, true> operator co_await() {
         return *_promise;
     }
     
@@ -112,11 +114,28 @@ public:
         return _promise->is_ready();
     }
 
+    ///Join the task synchronously, returns value
     auto join() {
-        blocking_awaiter<task_promise<T>, true> aw(*_promise);
+        blocking_awaiter<promise_type, true> aw(*_promise);
         return aw.wait();
     }
     
+    ///Join the task asynchronously with specified resumption policy
+    /**
+     * @param policy instance of resumption policy
+     * @return awaiter
+     *
+     * @code
+     *   //resume this coroutine in specified thread pool once the task is ready
+     * int result = co_await task.join(thread_pool_resumption_policy(pool));
+     *
+     *
+     */
+    template<typename resumption_policy>
+    co_awaiter<promise_type, resumption_policy, true> join(resumption_policy policy) {
+        return co_awaiter<promise_type, resumption_policy, true>(*_promise, std::forward<resumption_policy>(policy));
+    }
+
     
     ///Retrieve unique coroutine identifier
     coro_id get_id() const {
@@ -129,13 +148,13 @@ public:
     }
     
 protected:
-    task_promise<T> *_promise;
+    promise_type *_promise;
     
     
-    task_promise<T> *get_promise() const {return _promise;}
+    promise_type *get_promise() const {return _promise;}
 };
 
-
+/*
 
 
 template<typename Owner> class abstract_task_awaiter {
@@ -194,8 +213,9 @@ template<typename Impl> class task_coroutine_base {
 public:
     
 };
+*/
 
-template<typename T> 
+template<typename T, typename Policy>
 class task_promise_base: public coro_promise_base  {
 public:
 
@@ -234,7 +254,8 @@ public:
     public:
         static bool await_ready() noexcept {return false;}
         static void await_suspend(std::coroutine_handle<> h) noexcept {
-            resume_ctl::resume(h); //this resumes coroutine if it is called from normal routine
+            Policy p;
+            p.resume(h);
         }
         static void await_resume() noexcept {}
     };
@@ -252,8 +273,8 @@ public:
     }
     void release_ref() {
         if (--_ref_count == 0) {
-            task_promise<T> &me = static_cast<task_promise<T>  &>(*this);
-            auto h = std::coroutine_handle<task_promise<T> >::from_promise(me);
+            task_promise<T, Policy> &me = static_cast<task_promise<T, Policy>  &>(*this);
+            auto h = std::coroutine_handle<task_promise<T, Policy> >::from_promise(me);
             h.destroy();
         }
     }
@@ -319,14 +340,14 @@ public:
     std::atomic<unsigned int> _ref_count;
 };
 
-template<typename T> 
-class task_promise: public task_promise_base<T> {
+template<typename T, typename Policy>
+class task_promise: public task_promise_base<T, Policy> {
 public:
-    using AW = typename task_promise_base<T>::AW;
+    using AW = typename task_promise_base<T, Policy>::AW;
     template<typename X>
     auto return_value(X &&val)->decltype(std::declval<value_or_exception<T> >().set_value(val)) {
         this->_value.set_value(std::forward<X>(val));
-        this->_ready = task_promise_base<T>::State::ready;
+        this->_ready = task_promise_base<T, Policy>::State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     task<T> get_return_object() {
@@ -334,13 +355,13 @@ public:
     }
 };
 
-template<> 
-class task_promise<void>: public task_promise_base<void> {
+template<typename Policy>
+class task_promise<void, Policy>: public task_promise_base<void, Policy> {
 public:
-    using AW = typename task_promise_base<void>::AW;
+    using AW = typename task_promise_base<void, Policy>::AW;
     auto return_void() {
         this->_value.set_value();
-        this->_ready = State::ready;
+        this->_ready = task_promise_base<void, Policy>::State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     task<void> get_return_object() {

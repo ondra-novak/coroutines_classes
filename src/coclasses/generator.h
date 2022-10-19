@@ -65,13 +65,17 @@ public:
     };
 
     template<typename X>
-    class awaiter_t : public co_awaiter<X> {
+    class awaiter_t : public co_awaiter_base<X> {
     public:
-        using co_awaiter<X>::co_awaiter;
+        using co_awaiter_base<X>::co_awaiter_base;
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             this->_h = h;
             this->_owner.subscribe_awaiter(this);            
             return this->_owner.get_handle();
+        }
+    private:
+        virtual void resume() noexcept override {
+            this->_h.resume();
         }
     };
     
@@ -115,7 +119,7 @@ public:
         }
         
         friend class awaiter_t<next_res>;
-        friend class co_awaiter<next_res>;
+        friend class co_awaiter_base<next_res>;
         
     };
 

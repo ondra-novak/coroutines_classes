@@ -116,7 +116,7 @@ public:
         
         virtual void resume(bool canceled) noexcept override {
             _canceled = canceled;
-            resume_ctl::resume(_h);
+            queued_resumption_policy::resume(_h);
         }
         virtual bool is(coro_id id) const noexcept override {
             return _h.address() == id;
@@ -135,7 +135,7 @@ public:
         lazy_starter(lazy<T> task, std::coroutine_handle<> h):_task(task),_h(h) {}
         virtual void resume(bool canceled) noexcept override {
             if (canceled) _task.mark_canceled();
-            resume_ctl::resume(_h);
+            queued_resumption_policy::resume(_h);
             delete this;
         }
         virtual bool is(coro_id id) const noexcept override {
@@ -202,7 +202,7 @@ public:
         if (_exit) [[unlikely]] {
             _.unlock();
             task.mark_canceled();
-            resume_ctl::resume(h);
+            queued_resumption_policy::resume(h);
             return true;
         }
         _list.push({tp,new lazy_starter<T>(task, h)});

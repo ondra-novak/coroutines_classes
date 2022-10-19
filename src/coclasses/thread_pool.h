@@ -131,8 +131,8 @@ public:
         return *this;
     }
 
-    template<typename T>
-    bool start(lazy<T> t) {
+    template<typename T, typename _P>
+    bool start(lazy<T,_P> t) {
         
         class awaiter: public abstract_owned_awaiter<thread_pool> {
         public:
@@ -141,24 +141,25 @@ public:
                 ,_t(t), _h(h) {}
             void resume_canceled() noexcept{
                 _t.mark_canceled();
-                resume_ctl::resume(_h);
+                _policy.resume(_h);
                 delete this;            
             }
 
             virtual void resume() noexcept override {
                 if (_owner.is_stopped()) _t.mark_canceled();
-                resume_ctl::resume(_h);
+                _policy.resume(_h);
                 delete this;
             }
             virtual std::coroutine_handle<> resume_handle() noexcept override {
                 if (_owner.is_stopped()) _t.mark_canceled();
                 auto out = _h;
                 delete this;
-                return _h;
+                return out;
             }
         protected:
             lazy<T> _t;
             std::coroutine_handle<> _h;
+            _P _policy;
             
         };
         
@@ -261,7 +262,7 @@ protected:
         return c;
     }
     
-    friend class co_awaiter<thread_pool>;
+    friend class co_awaiter_base<thread_pool>;
     bool is_ready() noexcept {
         return _exit;
     }

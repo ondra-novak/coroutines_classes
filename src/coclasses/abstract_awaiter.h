@@ -31,33 +31,31 @@ namespace cocls {
  * 
  */
 
-template<bool chain = false>
-class abstract_awaiter {
+class abstract_awaiter_base {
 public:
+
     ///called to resume coroutine
-    virtual void resume() = 0;
+    virtual void resume() noexcept = 0;
+
     ///called to retrieve coroutine handle for symmetric transfer
     virtual std::coroutine_handle<> resume_handle() {
         resume();
         return std::noop_coroutine();
     }
-    virtual ~abstract_awaiter() = default;
+    virtual ~abstract_awaiter_base() = default;
+};
+
+template<bool chain = false>
+class abstract_awaiter: public abstract_awaiter_base {
 };
 
 template<>
-class abstract_awaiter<true> {
+class abstract_awaiter<true>: public abstract_awaiter_base {
 public:
-    abstract_awaiter()=default;
+    abstract_awaiter() = default;
     abstract_awaiter(const abstract_awaiter &)=default;
     abstract_awaiter &operator=(const abstract_awaiter &)=delete;
-    virtual ~abstract_awaiter() = default;
     
-    virtual void resume() noexcept = 0;
-    virtual std::coroutine_handle<> resume_handle() noexcept {
-        resume();
-        return std::noop_coroutine();
-    }
-
     void subscribe(std::atomic<abstract_awaiter *> &chain) {
         while (!chain.compare_exchange_weak(_next, this, std::memory_order_relaxed));
     }
@@ -72,14 +70,14 @@ public:
         }
     }
 
-    
-    abstract_awaiter<true> *_next = nullptr;
+    abstract_awaiter *_next = nullptr;
 protected:
 };
 
 template<typename promise_type, bool chain = false>
 class abstract_owned_awaiter: public abstract_awaiter<chain> {
 public:
+    abstract_owned_awaiter()  =default;
     abstract_owned_awaiter(promise_type &owner):_owner(owner) {}
     abstract_owned_awaiter(const abstract_owned_awaiter  &) = default;
     abstract_owned_awaiter &operator=(const abstract_owned_awaiter &) = delete;
@@ -92,20 +90,11 @@ protected:
 };
 
 
-
-///Awaiter which can be awaited by co_await
-/**
- * In most of cases, this object is returned by co_await on various primitives
- * @tparam promise_type type of promise
- * @tparam chain set true if the awaiter can be chained, otherwise false
- */
 template<typename promise_type, bool chain = false>
-class co_awaiter: public abstract_owned_awaiter<promise_type, chain> {
+class co_awaiter_base: public abstract_owned_awaiter<promise_type, chain> {
 public:
-    
-    
-    co_awaiter(promise_type &owner):abstract_owned_awaiter<promise_type, chain>(owner) {}
-    
+    using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
+
     ///co_await related function
     bool await_ready() {
         return this->_owner.is_ready();
@@ -119,7 +108,6 @@ public:
     auto await_resume() {
         return this->_owner.get_result();
     }
-    
     
     ///Wait synchronously
     /**
@@ -143,25 +131,44 @@ public:
     
 #ifdef __CDT_PARSER__
     //this helps to Eclipse CDT parser to recognize co_await conversion  
-    using ReturnValue = decltype(std::declval<co_awaiter<promise_type,chain> >().await_resume());
+    using ReturnValue = decltype(std::declval<co_awaiter_base<promise_type,chain> >().await_resume());
 
     operator ReturnValue();
 #endif
-    
 protected:
     std::coroutine_handle<> _h;
-    virtual void resume() noexcept override  {
-        resume_ctl::resume(_h);
-    }
+
     virtual std::coroutine_handle<> resume_handle() noexcept  override {
         return _h;
+    }
+
+};
+
+///Awaiter which can be awaited by co_await
+/**
+ * In most of cases, this object is returned by co_await on various primitives
+ * @tparam promise_type type of promise
+ * @tparam policy resume policy
+ * @tparam chain set true if the awaiter can be chained, otherwise false
+ */
+template<typename promise_type, typename policy = queued_resumption_policy, bool chain = false>
+class co_awaiter: public co_awaiter_base<promise_type, chain>, private policy {
+public:
+
+    co_awaiter(promise_type &owner):co_awaiter_base<promise_type, chain>(owner) {}
+    co_awaiter(policy p, promise_type &owner)
+            :co_awaiter_base<promise_type, chain>(owner)
+            ,policy(std::forward<policy>(p)) {}
+
+    virtual void resume() noexcept override  {
+        policy::resume(this->_h);
     }
 };
 
 template<typename promise_type, bool chain = false>
 class blocking_awaiter: public abstract_owned_awaiter<promise_type, chain> {
 public:
-    blocking_awaiter(promise_type &owner):abstract_owned_awaiter<promise_type, chain>(owner) {}
+    using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
     
     auto wait() {
         _signal = this->_owner.is_ready();
@@ -221,7 +228,7 @@ protected:
 };
 
 template<typename promise_type, bool chain>
-inline auto co_awaiter<promise_type, chain>::wait() {
+inline auto co_awaiter_base<promise_type, chain>::wait() {
     blocking_awaiter<promise_type, chain> x(this->_owner);
     return x.wait();
 }
