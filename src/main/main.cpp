@@ -14,6 +14,7 @@
 #include <coclasses/publisher.h>
 #include <coclasses/sync_await.h>
 #include <coclasses/cancelable.h>
+#include <coclasses/queued_resumption_policy.h>
 #include <array>
 #include <iostream>
 #include <cassert>

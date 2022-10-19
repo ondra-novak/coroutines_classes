@@ -11,7 +11,7 @@
 #include "abstract_awaiter.h"
 #include "debug.h"
 #include "poolalloc.h"
-#include "resume_ctl.h"
+#include "resumption_policy.h"
 
 #include "value_or_exception.h"
 #include <atomic>
@@ -19,6 +19,7 @@
 #include <coroutine>
 #include <future>
 #include <optional>
+
 
 
 namespace cocls {
@@ -242,9 +243,7 @@ public:
         bool await_ready() noexcept {
             return _owner._ref_count == 0;
         }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept {
-            return resume_ctl::await_suspend();
-        }
+        static void await_suspend(std::coroutine_handle<>) noexcept {}
         constexpr void await_resume() const noexcept {}        
     protected:
         task_promise_base &_owner;
@@ -279,7 +278,7 @@ public:
         }
     }
 
-    
+    /*
     template<typename X>
     auto await_transform(X&& awt) noexcept
         -> resume_ctl_awaiter<decltype(std::declval<X>().operator co_await())> {
@@ -293,7 +292,7 @@ public:
         -> decltype(awt.await_resume(),resume_ctl_awaiter<X>(std::forward<X>(awt))) {
         return resume_ctl_awaiter<X>(std::forward<X>(awt));
     }
-
+*/
     using AW = abstract_awaiter<true>;
     
     enum class State {

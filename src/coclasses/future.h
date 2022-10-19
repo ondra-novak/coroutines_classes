@@ -15,7 +15,7 @@
 #include "abstract_awaiter.h"
 
 #include "poolalloc.h"
-#include "resume_ctl.h"
+#include "resumption_policy.h"
 
 #include <assert.h>
 #include <memory>

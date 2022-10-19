@@ -11,7 +11,7 @@
 #include "exceptions.h"
 
 #include "abstract_awaiter.h"
-#include "resume_ctl.h"
+#include "resumption_policy.h"
 #include "lazy.h"
 
 #include <condition_variable>

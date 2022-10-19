@@ -8,7 +8,8 @@
 #ifndef SRC_COCLASSES_ABSTRACT_AWAITER_H_
 #define SRC_COCLASSES_ABSTRACT_AWAITER_H_
 
-#include "resume_ctl.h"
+#include "resumption_policy.h"
+#include "queued_resumption_policy.h"
 
 #include <algorithm>
 #include <condition_variable>

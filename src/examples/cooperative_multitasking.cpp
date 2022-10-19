@@ -1,5 +1,6 @@
 #include <iostream>
 #include <coclasses/task.h>
+#include <coclasses/pause.h>
 
 cocls::task<> test_task(int id) {
     for (int j = 0; j < 10; j++) {

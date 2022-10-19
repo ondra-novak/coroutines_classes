@@ -182,26 +182,8 @@ protected:
     bool _in_coroutine = false;
 };
 
-struct queued_resumption_policy {
-    static void resume(std::coroutine_handle<> h) noexcept {resume_ctl::instance.resume_default(h);}
-};
-
 
 inline thread_local resume_ctl resume_ctl::instance;
-
-template<typename policy = queued_resumption_policy>
-class pause: private policy {
-public:
-    template<typename ... Args>
-
-    explicit pause(Args && ... args):policy(std::forward<Args>(args)...) {}
-    static bool await_ready() noexcept {return false;}
-    void await_suspend(std::coroutine_handle<> h) noexcept {
-        policy::resume(h);
-    }
-    static void await_resume() noexcept {}
-
-};
 
 
 

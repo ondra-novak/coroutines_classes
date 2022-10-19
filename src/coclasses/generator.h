@@ -259,7 +259,7 @@ public:
         auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
         if (_state.load(std::memory_order_relaxed) == State::done) return false;
         subscribe_awaiter(nullptr);
-        resume_ctl::resume_now(h);
+        h.resume();
         if (_state.load(std::memory_order_relaxed) == State::running) {
             future<State> f;
             State chk = State::running;
