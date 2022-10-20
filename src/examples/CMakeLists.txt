@@ -28,6 +28,7 @@ add_executable (cancelable_timer cancelable_timer.cpp)
 add_executable (cancelable_timer_lazy cancelable_timer_lazy.cpp)
 add_executable (cancelable_task cancelable_task.cpp)
 add_executable (goroutine1 goroutine1.cpp)
-add_executable (pause pause.cpp)
+add_executable (parallel_resumption_policy parallel_resumption_policy.cpp)
+add_executable (thread_pool_reumption_policy thread_pool_reumption_policy.cpp)
 
 

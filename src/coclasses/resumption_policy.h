@@ -13,7 +13,7 @@ namespace cocls {
 
 
 ///Resumption of a coroutine is made recursive by calling resume on current stack frame
-struct recursive_resumption_policy {
+struct recursive_resumption_policy {    
     static void resume(std::coroutine_handle<> h) noexcept {h.resume();}
 };
 
@@ -27,6 +27,8 @@ struct parallel_resumption_policy;
 ///Resumption of a coroutine is executed in a thread pool - the instance to the thread pool is passed as an argument
 struct thread_pool_resumption_policy;
 
+
+template<typename> using default_resumption_policy = queued_resumption_policy; 
 
 }
 

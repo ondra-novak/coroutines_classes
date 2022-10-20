@@ -4,7 +4,7 @@
 #include <coclasses/mutex.h>
 #include <coclasses/scheduler.h>
 
-cocls::task<> test_task(cocls::scheduler<> &sch, cocls::mutex<> &mx, int &shared_var) {
+cocls::task<> test_task(cocls::scheduler<> &sch, cocls::mutex &mx, int &shared_var) {
     co_await sch.pause();
     auto lk = co_await mx.lock();
     std::cout << "Mutex acquired" << std::endl;
@@ -16,7 +16,7 @@ cocls::task<> test_task(cocls::scheduler<> &sch, cocls::mutex<> &mx, int &shared
 }
 
 int main(int, char **) {
-    cocls::mutex<> mx;
+    cocls::mutex mx;
     cocls::thread_pool pool(5);
     cocls::scheduler<> sch(pool);
     int shared_var = 0;

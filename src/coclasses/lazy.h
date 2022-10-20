@@ -9,14 +9,15 @@
 
 namespace cocls {
 
-template<typename T = void, typename Policy = queued_resumption_policy>
+template<typename T = void, typename Policy = void>
 class lazy_promise;
-
+template<typename T = void, typename Policy = void>
+class lazy;
 ///Lazy coroutine is coroutine, which is executed on first await
 /**
  * @tparam T type of result
  */
-template<typename T = void, typename Policy = queued_resumption_policy>
+template<typename T, typename Policy>
 class lazy: public task<T, Policy> {
 public:
     using promise_type = lazy_promise<T, Policy>;
@@ -25,9 +26,9 @@ public:
     lazy(promise_type *p):task<T, Policy>(p) {}
 
     ///co_await the result
-    co_awaiter<task_promise<T, Policy>,Policy,true> operator co_await() {
+    auto operator co_await() {
         start();
-        return co_awaiter<task_promise<T, Policy>,Policy, true >(*(this->_promise));
+        return task<T, Policy>::operator co_await();
     }
 
     ///start coroutine now.
@@ -106,6 +107,11 @@ public:
 
 };
 
+template<typename T>
+class lazy<T, void>: public lazy<T, default_resumption_policy<void> > {
+public:
+    using lazy<T, default_resumption_policy<void> >::lazy;
+};
 
 template<typename T, typename Policy>
 class lazy_promise: public task_promise<T, Policy>
@@ -142,7 +148,8 @@ protected:
     std::atomic<bool> _started;
     bool _canceled = false;
 
-    friend class lazy<T>;
+    template<typename, typename> friend class lazy;
+    
 };;
 
 

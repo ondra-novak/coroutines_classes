@@ -64,18 +64,28 @@ public:
         bool _end;
     };
 
-    template<typename X>
+    
+    template<typename X, typename P = recursive_resumption_policy>
     class awaiter_t : public co_awaiter_base<X> {
     public:
+        awaiter_t(X &x):co_awaiter_base<X>(x) {}
+        awaiter_t(P p, X &x):co_awaiter_base<X>(x),_p(p) {}
         using co_awaiter_base<X>::co_awaiter_base;
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             this->_h = h;
             this->_owner.subscribe_awaiter(this);            
             return this->_owner.get_handle();
         }
+        
+        template<typename _P2>
+        awaiter_t<X, _P2> set_resumption_policy(_P2 p) {
+            return awaiter_t<X, _P2>(p,this->_owner);
+        }
+        
     private:
-        virtual void resume() noexcept override {
-            this->_h.resume();
+        P _p;
+        virtual void resume() noexcept override {            
+            _p.resume(this->_h);            
         }
     };
     
@@ -118,7 +128,7 @@ public:
             return std::coroutine_handle<promise_type>::from_promise(*_owner._promise);
         }
         
-        friend class awaiter_t<next_res>;
+        template<class,class> friend class awaiter_t;
         friend class co_awaiter_base<next_res>;
         
     };

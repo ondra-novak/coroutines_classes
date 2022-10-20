@@ -40,12 +40,11 @@ namespace cocls {
  * int value = co_await q;
  * @endcode
  */
-template<typename T, typename Resumption_Policy = queued_resumption_policy>
+template<typename T>
 class queue {
 public:
     ///construct empty queue
     queue() = default;
-    queue(Resumption_Policy policy):_policy(policy) {}
     ~queue();
     ///Queue can't be copied
     queue(const queue &) = delete;
@@ -97,8 +96,8 @@ public:
      * int val2 = q.pop().wait();
      * @endcode
      */
-    co_awaiter<queue, Resumption_Policy> pop() {
-        return {_policy,*this};
+    co_awaiter<queue, void> pop() {
+        return *this;
     }
     
     
@@ -137,7 +136,6 @@ protected:
     
     friend class co_awaiter_base<queue>;
     friend class blocking_awaiter<queue>;
-    Resumption_Policy _policy;
     ///lock protects internal
     std::mutex _mx;
     ///queue itself
@@ -168,8 +166,9 @@ protected:
 };
 
 
-template<typename T, typename P>
-inline void queue<T, P>::push(T &&x) {
+
+template<typename T>
+inline void queue<T>::push(T &&x) {
     std::unique_lock<std::mutex> lk(_mx);
     //push to queue under lock
     _queue.push(std::move(x));
@@ -177,8 +176,8 @@ inline void queue<T, P>::push(T &&x) {
     resume_awaiter(lk);
 }
 
-template<typename T, typename P>
-inline void queue<T, P>::push(const T &x) {
+template<typename T>
+inline void queue<T>::push(const T &x) {
     std::unique_lock<std::mutex> lk(_mx);
     //push to queue under lock
     _queue.push(x);
@@ -187,22 +186,22 @@ inline void queue<T, P>::push(const T &x) {
 }
 
 
-template<typename T, typename P>
-inline bool queue<T, P>::empty() {
+template<typename T>
+inline bool queue<T>::empty() {
     std::unique_lock lk(_mx);
     return empty_lk();
 }
 
-template<typename T, typename P>
-inline std::size_t queue<T,P>::size() {
+template<typename T>
+inline std::size_t queue<T>::size() {
     std::unique_lock lk(_mx);
     return size_lk();
 }
 
 
 
-template<typename T, typename P>
-inline queue<T,P>::~queue() {
+template<typename T>
+inline queue<T>::~queue() {
     _exit = true;
     while (!_awaiters.empty()) {
         auto x = _awaiters.front();        
@@ -211,8 +210,8 @@ inline queue<T,P>::~queue() {
     }
 }
 
-template<typename T, typename P>
-inline void cocls::queue<T,P>::resume_awaiter(std::unique_lock<std::mutex> &lk) {
+template<typename T>
+inline void cocls::queue<T>::resume_awaiter(std::unique_lock<std::mutex> &lk) {
     if (_awaiters.empty()) return;
     auto h = _awaiters.front();
     _awaiters.pop();

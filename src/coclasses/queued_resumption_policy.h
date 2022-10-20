@@ -5,6 +5,8 @@
 #include <coroutine>
 #include <queue>
 
+#include "resumption_policy.h"
+
 
 namespace cocls {
 
@@ -45,8 +47,11 @@ inline thread_local queued_resumption_control queued_resumption_control::instanc
 }
 
 struct queued_resumption_policy {
-    void resume(std::coroutine_handle<> h) {
+    static void resume(std::coroutine_handle<> h) {
         _details::queued_resumption_control::instance.resume(h);
+    }
+    static void flush_queue() {
+        _details::queued_resumption_control::instance.flush_queue();
     }
 };
 

@@ -4,6 +4,7 @@
 #define SRC_COCLASSES_PARALLEL_RESUMPTION_POLICY_H_
 
 #include <coroutine>
+#include "queued_resumption_policy.h"
 
 namespace cocls {
 
@@ -12,7 +13,7 @@ namespace cocls {
 struct parallel_resumption_policy {
     void resume(std::coroutine_handle<> h) {
         std::thread thr([h]{
-            h.resume();
+            queued_resumption_policy::resume(h);
         });
         thr.detach();
     }

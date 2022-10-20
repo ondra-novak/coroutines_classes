@@ -10,6 +10,9 @@
 #include "thread_pool.h"
 
 #include "lazy.h"
+
+#include "queued_resumption_policy.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <coroutine>
@@ -300,8 +303,8 @@ public:
      * 
      * @note canceled coroutine receives exception await_canceled_exception
      */
-    template<typename T>
-    bool cancel(const task<T> &task_) {
+    template<typename T, typename P>
+    bool cancel(const task<T, P> &task_) {
         return cancel(task_.get_id());
     }
     ///cancel waiting generator

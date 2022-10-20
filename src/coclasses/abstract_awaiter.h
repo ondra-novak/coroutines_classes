@@ -90,6 +90,8 @@ protected:
 
 };
 
+template<typename promise_type, typename policy = void, bool chain = false>
+class co_awaiter;
 
 template<typename promise_type, bool chain = false>
 class co_awaiter_base: public abstract_owned_awaiter<promise_type, chain> {
@@ -130,6 +132,9 @@ public:
         return this->_owner.subscribe_awaiter(awt);
     }
     
+    
+    
+    
 #ifdef __CDT_PARSER__
     //this helps to Eclipse CDT parser to recognize co_await conversion  
     using ReturnValue = decltype(std::declval<co_awaiter_base<promise_type,chain> >().await_resume());
@@ -152,7 +157,7 @@ protected:
  * @tparam policy resume policy
  * @tparam chain set true if the awaiter can be chained, otherwise false
  */
-template<typename promise_type, typename policy = queued_resumption_policy, bool chain = false>
+template<typename promise_type, typename policy , bool chain>
 class co_awaiter: public co_awaiter_base<promise_type, chain>, private policy {
 public:
 
@@ -160,11 +165,28 @@ public:
     co_awaiter(policy p, promise_type &owner)
             :co_awaiter_base<promise_type, chain>(owner)
             ,policy(std::forward<policy>(p)) {}
-
+    
+    
     virtual void resume() noexcept override  {
         policy::resume(this->_h);
     }
+    ///Allows to change resumption policy.
+    /** This member is called by a task, when await_transform, to supply
+     * own policy
+     *
+     * @param policy resumption policy
+     * @return
+     */
+    template<typename _Policy>
+    co_awaiter<promise_type, _Policy, chain> set_resumption_policy(_Policy p); 
+
 };
+
+template<typename promise_type, bool chain>
+class co_awaiter<promise_type, void, chain>: public co_awaiter<promise_type, default_resumption_policy<void>, chain> {
+public:
+    using co_awaiter<promise_type, default_resumption_policy<void>, chain>::co_awaiter;
+};;
 
 template<typename promise_type, bool chain = false>
 class blocking_awaiter: public abstract_owned_awaiter<promise_type, chain> {
@@ -234,7 +256,13 @@ inline auto co_awaiter_base<promise_type, chain>::wait() {
     return x.wait();
 }
 
+
+template<typename promise_type, typename Policy, bool chain>
+template<typename _Policy>
+inline co_awaiter<promise_type, _Policy, chain> co_awaiter<
+            promise_type, Policy, chain>::set_resumption_policy(_Policy p) {
+    return co_awaiter<promise_type,Policy, chain>(std::forward<Policy>(p), this->_owner); 
 }
 
-
+}
 #endif /* SRC_COCLASSES_ABSTRACT_AWAITER_H_ */

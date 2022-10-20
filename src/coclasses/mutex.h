@@ -8,7 +8,6 @@
 
 #include "common.h"
 #include "abstract_awaiter.h"
-#include "resume_ctl.h"
 
 #include <cassert>
 #include <coroutine>
@@ -41,7 +40,6 @@ namespace cocls {
  * 
  */
 
-template<typename Resumption_Policy = queued_resumption_policy>
 class mutex {
 protected:    
     class ownership_deleter {
@@ -57,7 +55,7 @@ protected:
 public:
 
 
-    using co_awaiter = ::cocls::co_awaiter<mutex,Resumption_Policy, true>;
+    using co_awaiter = ::cocls::co_awaiter<mutex,void, true>;
     using blocking_awaiter = ::cocls::blocking_awaiter<mutex, true>;
     using abstract_awaiter = ::cocls::abstract_awaiter<true>; 
     class null_awaiter: public abstract_awaiter {
@@ -70,7 +68,6 @@ public:
      * Mutex can't be copied or moved
      */
     mutex() {}
-    mutex(Resumption_Policy policy):_policy(policy) {}
     mutex(const mutex &) = delete;
     mutex &operator=(const mutex &) = delete;
     ~mutex() {
@@ -117,7 +114,7 @@ public:
      * @note function must be called with co_await. You can also use wait()
      * to obtain ownership outside of coroutine
      */
-    co_awaiter lock() {return co_awaiter(_policy, *this);}
+    co_awaiter lock() {return co_awaiter(*this);}
     
     
     
@@ -137,7 +134,6 @@ protected:
     friend class ::cocls::co_awaiter_base<mutex, true>;
     
     
-    Resumption_Policy _policy;
     std::atomic<abstract_awaiter *> _requests = nullptr;
     abstract_awaiter *_queue = nullptr;
     null_awaiter _locked;

@@ -83,7 +83,15 @@ public:
             std::swap(tmp, _threads);
             std::swap(q, _queue);
         }
-        for (auto &t: tmp) t.join();
+        auto me = std::this_thread::get_id();
+        for (std::thread &t: tmp) {
+            if (t.get_id() == me) {
+                t.detach(); 
+            }
+            else {
+                t.join();
+            }
+        }
         while (!q.empty()) {
             auto n = std::move(q.front());
             q.pop();
@@ -99,7 +107,7 @@ public:
         stop();
     }
     
-    using awaiter = co_awaiter<thread_pool>;
+    using awaiter = co_awaiter<thread_pool, queued_resumption_policy>;
     template<typename Fn>
     class fork_awaiter: public awaiter {
     public:
@@ -112,6 +120,8 @@ public:
         }
     protected:
         Fn _fn;
+    private:
+        using awaiter::set_resumption_policy;
     };
     
     
@@ -130,7 +140,24 @@ public:
     awaiter operator co_await() {
         return *this;
     }
+    
+    ///start a anonymous awaiter - called from thread_pool_resumption_policy 
+    /**
+     * @param aw awaiter to start in thread pool
+     */
+    void start(abstract_awaiter<> *aw) {
+        bool ok = subscribe_awaiter(aw);
+        if (!ok) {
+            aw->resume();
+        }        
+    }
 
+    ///start a lazy task in the thread pool
+    /**
+     * @param t task to start
+     * @retval true started
+     * @retval false can't be started, already running or already scheduled
+     */
     template<typename T, typename _P>
     bool start(lazy<T,_P> t) {
         
@@ -277,8 +304,47 @@ protected:
         return true;
     }
 
+};
 
-
+///Thread pool policy need shared thread pool (std::shared_ptr<thread_pool>)
+/**
+ * Because the task cannot initialize its resumption policy, it is not started until
+ * the policy is initialized. Use task<>::initialize_policy(shared_ptr<thread_pool>).
+ * Once the policy is initialized, the task is started
+ *  
+ * 
+ */
+struct thread_pool_resumption_policy {
+    
+    class resumer: public abstract_awaiter<> {
+    public:
+        std::shared_ptr<thread_pool> _cur_pool = nullptr;
+        std::coroutine_handle<> _h;
+        virtual void resume() noexcept override{
+            queued_resumption_policy::resume(_h);
+        }
+        void set_handle(std::coroutine_handle<> h) {
+            _h = h;
+            if (_cur_pool != nullptr) _cur_pool->start(this);
+        }
+        void set_pool(std::shared_ptr<thread_pool> pool) {
+            bool start = _cur_pool == nullptr;
+            _cur_pool = pool;
+            if (start) [[likely]] {
+                _cur_pool->start(this);
+            }
+        }
+    };
+    
+    resumer _resumer;
+    
+        
+    void resume(std::coroutine_handle<> h) {
+        _resumer.set_handle(h);
+    }
+    void initialize_policy(std::shared_ptr<thread_pool> pool) {
+        _resumer.set_pool(pool);
+    }
 };
 
 

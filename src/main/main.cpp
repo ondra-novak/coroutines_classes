@@ -15,6 +15,7 @@
 #include <coclasses/sync_await.h>
 #include <coclasses/cancelable.h>
 #include <coclasses/queued_resumption_policy.h>
+#include <coclasses/pause.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -153,11 +154,11 @@ int test_mutex() {
 
     int shared_var = 0;
     std::default_random_engine rnd(0);
-    cocls::mutex<> mx;
+    cocls::mutex mx;
     cocls::thread_pool pool(4);
     std::vector<cocls::task<> > tasks;
     for (int i = 0; i < 20; i++) {
-        auto t =([&](int &shr, cocls::mutex<> &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
+        auto t =([&](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
             co_await pool;
             std::cout << "Coroutine start:" << idx << std::endl;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -190,7 +191,7 @@ void test_pause() {
            ([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {
                   std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
-                  co_await cocls::pause();
+                  co_await cocls::pause<>();
               } 
               std::cout << "Finished coroutine " << i << std::endl;
            })(i);
