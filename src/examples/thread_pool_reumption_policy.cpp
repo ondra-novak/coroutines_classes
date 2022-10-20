@@ -31,7 +31,7 @@ cocls::lazy<void> event_task() {
 }
 
 
-cocls::task<void, cocls::thread_pool_resumption_policy> print_thread_task(int i, cocls::task<void> stopper) {
+cocls::task<void, cocls::resumption_policy::thread_pool> print_thread_task(int i, cocls::task<void> stopper) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100*i));
     std::cout << "Task "<< i << " thread " << std::this_thread::get_id() << std::endl;
     co_await stopper;

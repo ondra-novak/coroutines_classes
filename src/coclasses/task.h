@@ -109,7 +109,7 @@ public:
      * the awaited task is finished
      *     
      */
-    co_awaiter<promise_type_base, Policy, true> operator co_await() {
+    co_awaiter<promise_type_base, void, true> operator co_await() {
         return *_promise;
     }
     
@@ -154,17 +154,31 @@ public:
         return std::coroutine_handle<promise_type_base>::from_promise(*_promise).address();
     }
     
-    
+   
+    ///Determines whether object contains a valid task
     bool valid() const {
         return _promise!=nullptr;
     }
     
     
-    template<typename _Policy>
-    operator task<T, _Policy>() {
-        return task<T, _Policy>(_promise);
+    ///Allows to convert this object to object with unspecified policy
+    /**
+     * This helps to work with task<> objects, where policy has no meaning
+     * 
+     * Calling initialize_policy() after conversion is UB
+     */ 
+    operator task<T>() {
+        return task<T>(_promise);
     }
 
+    ///Initializes resumption policy
+    /**
+     * For resumption policies with arguments, this allows to pass arguments to
+     * the policy associated with the task. Such policies can't execute the task
+     * until the policy is initialized. 
+     * 
+     * @param args arguments passed to the policy
+     */
     template<typename ... Args>
     void initialize_policy(Args && ... args) {
         static_cast<promise_type *>(_promise)->initialize_policy(std::forward<Args>(args)...);
@@ -242,21 +256,6 @@ public:
         }
     }
 
-    /*
-    template<typename X>
-    auto await_transform(X&& awt) noexcept
-        -> resume_ctl_awaiter<decltype(std::declval<X>().operator co_await())> {
-        return resume_ctl_awaiter<decltype(std::declval<X>().operator co_await())>(
-                awt.operator co_await()
-        );
-    }
-    
-    template<typename X>
-    auto await_transform(X&& awt) noexcept
-        -> decltype(awt.await_resume(),resume_ctl_awaiter<X>(std::forward<X>(awt))) {
-        return resume_ctl_awaiter<X>(std::forward<X>(awt));
-    }
-*/
     using AW = abstract_awaiter<true>;
     
     enum class State {
@@ -290,9 +289,6 @@ public:
         }
         return _value.get_value();
     }
-    
-   
-    
     
     void unhandled_exception() {
         _value.unhandled_exception();
@@ -344,11 +340,11 @@ public:
         _policy.initialize_policy(std::forward<Args>(args)...);
     }
 
-    Policy _policy;
+    [[no_unique_address]]  Policy _policy;
 };
 
 template<typename T>
-class task_promise_with_policy<T, void>: public task_promise_with_policy<T, default_resumption_policy<void> > {
+class task_promise_with_policy<T, void>: public task_promise_with_policy<T, resumption_policy::unspecified<void> > {
 };
 
 template<typename T, typename Policy>

@@ -306,6 +306,12 @@ protected:
 
 };
 
+using shared_thread_pool = std::shared_ptr<thread_pool>;
+
+namespace resumption_policy {
+
+
+
 ///Thread pool policy need shared thread pool (std::shared_ptr<thread_pool>)
 /**
  * Because the task cannot initialize its resumption policy, it is not started until
@@ -314,20 +320,22 @@ protected:
  *  
  * 
  */
-struct thread_pool_resumption_policy {
+struct thread_pool {
+    
+    thread_pool() = default;
     
     class resumer: public abstract_awaiter<> {
     public:
-        std::shared_ptr<thread_pool> _cur_pool = nullptr;
+        shared_thread_pool _cur_pool = nullptr;
         std::coroutine_handle<> _h;
         virtual void resume() noexcept override{
-            queued_resumption_policy::resume(_h);
+            queued::resume(_h);
         }
         void set_handle(std::coroutine_handle<> h) {
             _h = h;
             if (_cur_pool != nullptr) _cur_pool->start(this);
         }
-        void set_pool(std::shared_ptr<thread_pool> pool) {
+        void set_pool(shared_thread_pool pool) {
             bool start = _cur_pool == nullptr;
             _cur_pool = pool;
             if (start) [[likely]] {
@@ -342,11 +350,15 @@ struct thread_pool_resumption_policy {
     void resume(std::coroutine_handle<> h) {
         _resumer.set_handle(h);
     }
-    void initialize_policy(std::shared_ptr<thread_pool> pool) {
+    void initialize_policy(shared_thread_pool pool) {
         _resumer.set_pool(pool);
     }
+    
+    thread_pool(const shared_thread_pool &pool) {
+        initialize_policy(pool);
+    }
 };
-
+}
 
 }
 

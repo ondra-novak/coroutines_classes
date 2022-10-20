@@ -23,7 +23,7 @@ public:
     barrier(unsigned int count):_count(count) {}
     
     
-    using awaiter = co_awaiter<barrier,queued_resumption_policy,true>;
+    using awaiter = co_awaiter<barrier,resumption_policy::unspecified<void>,true>;
 
     ///await the barrier
     awaiter operator co_await() {

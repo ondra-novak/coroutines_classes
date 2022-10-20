@@ -46,15 +46,34 @@ inline thread_local queued_resumption_control queued_resumption_control::instanc
 
 }
 
-struct queued_resumption_policy {
+
+namespace resumption_policy {
+
+///Implements queue on the current thread. If the coroutine is resumed, it is put into queue and resumed after current coroutine is suspended
+/**
+ * the rules are - on the first resume, the coroutine is resumed immediately. 
+ * Nested resumes are put into queue and resumed after current coroutine is suspended or
+ * finished
+ * 
+ * A task started under this policy is executed immediately when started from normal
+ * function, but it is queued and postponed when started from a coroutine.
+ * 
+ * This resumption policy is recommended and it is default when resumption policy
+ * is unspecified
+ * 
+ */
+struct queued {
+    ///resume in queue
     static void resume(std::coroutine_handle<> h) {
         _details::queued_resumption_control::instance.resume(h);
     }
+    ///flush queue, executing all queued coroutines now
     static void flush_queue() {
         _details::queued_resumption_control::instance.flush_queue();
     }
 };
 
+}
 }
 
 

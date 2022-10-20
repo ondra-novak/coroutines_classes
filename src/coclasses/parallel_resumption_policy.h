@@ -9,15 +9,18 @@
 namespace cocls {
 
 
+namespace resumption_policy {
 ///Parallel resumption policy - creates a thread and resumes the coroutine in it
-struct parallel_resumption_policy {
-    void resume(std::coroutine_handle<> h) {
-        std::thread thr([h]{
-            queued_resumption_policy::resume(h);
-        });
-        thr.detach();
-    }
-};
+    struct parallel {
+        void resume(std::coroutine_handle<> h) {
+            std::thread thr([h]{
+                resumption_policy::queued::resume(h);
+            });
+            thr.detach();
+        }
+        
+    };
+}
 
 
 }

@@ -18,10 +18,9 @@ namespace cocls {
 
 
 struct sync_await_tag{
-    using sync_await_storage = static_storage_t<16*sizeof(void *)>;
 
     template<typename Expr>
-    static no_alloc<task<std::remove_reference_t<decltype(std::declval<Expr>().await_resume())> >, sync_await_storage> sync_await_coro(sync_await_storage &, Expr &expr) {
+    static task<std::remove_reference_t<decltype(std::declval<Expr>().await_resume())>, recursive_resumption_policy>  sync_await_coro(Expr &expr) {
         co_return co_await expr;    
     }
 
@@ -34,9 +33,8 @@ struct sync_await_tag{
     template<typename Expr> 
     auto operator,(Expr &&expr) -> std::remove_reference_t<decltype(expr.await_resume())> {
 
-        sync_await_storage stor;
         
-        return sync_await_coro(stor, expr).join();
+        return sync_await_coro(expr).join();
     }
 
     

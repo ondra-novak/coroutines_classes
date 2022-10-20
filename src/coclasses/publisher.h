@@ -32,7 +32,7 @@ enum class subscribtion_type {
 };
 
 
-template<typename T, typename Resumption_Policy = queued_resumption_policy>
+template<typename T, typename Resumption_Policy = resumption_policy::unspecified<void> >
 class subscriber;
 
 

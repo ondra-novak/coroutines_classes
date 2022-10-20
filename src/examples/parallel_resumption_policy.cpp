@@ -5,7 +5,7 @@
 
 
 
-cocls::task<void, cocls::parallel_resumption_policy> print_thread_task(int i) {
+cocls::task<void, cocls::resumption_policy::parallel> print_thread_task(int i) {
     std::this_thread::sleep_for(std::chrono::seconds(i));
     std::cout << "Task "<< i << " thread " << std::this_thread::get_id() << std::endl;    
     co_return;

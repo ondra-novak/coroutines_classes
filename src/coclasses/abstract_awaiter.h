@@ -188,13 +188,13 @@ public:
     template<typename _Policy>
     co_awaiter<promise_type, _Policy, chain> set_resumption_policy(_Policy p); 
 protected:
-    policy _p;
+    [[no_unique_address]] policy _p;
 };
 
 template<typename promise_type, bool chain>
-class co_awaiter<promise_type, void, chain>: public co_awaiter<promise_type, default_resumption_policy<void>, chain> {
+class co_awaiter<promise_type, void, chain>: public co_awaiter<promise_type, resumption_policy::unspecified<void>, chain> {
 public:
-    using co_awaiter<promise_type, default_resumption_policy<void>, chain>::co_awaiter;
+    using co_awaiter<promise_type, resumption_policy::unspecified<void>, chain>::co_awaiter;
 };;
 
 template<typename promise_type, bool chain = false>

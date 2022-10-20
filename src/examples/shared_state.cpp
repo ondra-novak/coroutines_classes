@@ -23,7 +23,7 @@ struct my_state {
     std::vector<int> _regs; 
 };
 
-cocls::task<void, cocls::thread_pool_resumption_policy> print_thread_task(int i, cocls::shared_state<my_state> st) {
+cocls::task<void, cocls::resumption_policy::thread_pool> print_thread_task(int i, cocls::shared_state<my_state> st) {
     //simulates work
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     //lock shared state

@@ -108,9 +108,9 @@ public:
 };
 
 template<typename T>
-class lazy<T, void>: public lazy<T, default_resumption_policy<void> > {
+class lazy<T, void>: public lazy<T, resumption_policy::unspecified<void> > {
 public:
-    using lazy<T, default_resumption_policy<void> >::lazy;
+    using lazy<T, resumption_policy::unspecified<void> >::lazy;
 };
 
 template<typename T, typename Policy>

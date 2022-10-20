@@ -17,7 +17,7 @@ namespace cocls {
  * (starts new thread)
  *
  */
-template<typename policy = queued_resumption_policy>
+template<typename policy = resumption_policy::queued >
 class pause: private policy {
 public:
     template<typename ... Args>
