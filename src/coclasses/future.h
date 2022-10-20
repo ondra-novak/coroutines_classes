@@ -62,7 +62,7 @@ public:
     /**
      * @return the value of the future
      */
-    auto wait() {
+    decltype(auto) wait() {
         return blocking_awaiter<future<T> >(*static_cast<future<T> *>(this)).wait();
     }
     
@@ -72,7 +72,7 @@ public:
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
-    auto get() {
+    decltype(auto) get() {
         return _value.get_value();
     }
     ///get value
@@ -81,7 +81,7 @@ public:
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
-    auto get() const {
+    decltype(auto) get() const {
         return _value.get_value();
     }
     
@@ -116,7 +116,7 @@ protected:
         return  (--_pcount > 0 || !_value.is_ready());
     }
     
-    auto get_result() {
+    decltype(auto) get_result() {
         return _value.get_value();
     }
     

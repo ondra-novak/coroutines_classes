@@ -88,19 +88,19 @@ public:
         start();
     }
 
-    auto join() {
+    decltype(auto) join() {
         start();
         return task<T, Policy>::join();
     }
 
     template<typename awaiter_resumption_policy>
-    auto join (awaiter_resumption_policy policy) {
+    decltype(auto) join (awaiter_resumption_policy policy) {
         start();
         return task<T, Policy>::join(policy);
     }
 
     template<typename awaiter_resumption_policy, typename start_resumption_policy>
-    auto join (awaiter_resumption_policy policy, start_resumption_policy start_policy) {
+    decltype(auto) join (awaiter_resumption_policy policy, start_resumption_policy start_policy) {
         start(start_policy);
         return task<T, Policy>::join(policy);
     }

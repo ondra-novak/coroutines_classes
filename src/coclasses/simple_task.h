@@ -68,7 +68,7 @@ public:
             return true;
         }
     }
-    auto await_resume() {
+    decltype(auto) await_resume() {
         return _h.promise()._val.get_value();
     }
 

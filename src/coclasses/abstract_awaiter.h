@@ -60,15 +60,24 @@ public:
     void subscribe(std::atomic<abstract_awaiter *> &chain) {
         while (!chain.compare_exchange_weak(_next, this, std::memory_order_relaxed));
     }
-    static void resume_chain(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
-        resume_chain_lk(chain.exchange(nullptr), skip);
+    ///releases chain atomicaly
+    /** 
+     * @param chain holds chain
+     * @param skip awaiter to be skipped
+     * @return count of released awaiters (including skipped)
+     */
+    static std::size_t resume_chain(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
+        return resume_chain_lk(chain.exchange(nullptr), skip);
     }
-    static void resume_chain_lk(abstract_awaiter *chain, abstract_awaiter *skip) {
+    static std::size_t resume_chain_lk(abstract_awaiter *chain, abstract_awaiter *skip) {
+        std::size_t n = 0;
         while (chain) {
             auto y = chain;
             chain = chain->_next;
             if (y != skip) y->resume();
+            n++;
         }
+        return n;
     }
 
     abstract_awaiter *_next = nullptr;
@@ -77,8 +86,7 @@ protected:
 
 template<typename promise_type, bool chain = false>
 class abstract_owned_awaiter: public abstract_awaiter<chain> {
-public:
-    abstract_owned_awaiter()  =default;
+public:    
     abstract_owned_awaiter(promise_type &owner):_owner(owner) {}
     abstract_owned_awaiter(const abstract_owned_awaiter  &) = default;
     abstract_owned_awaiter &operator=(const abstract_owned_awaiter &) = delete;
@@ -108,7 +116,7 @@ public:
         return this->_owner.subscribe_awaiter(this);
     }
     ///co_await related function
-    auto await_resume() {
+    decltype(auto) await_resume(){
         return this->_owner.get_result();
     }
     
@@ -117,7 +125,7 @@ public:
      * Blocks execution until awaiter is signaled
      * @return result of awaited operation
      */
-    auto wait();
+    decltype(auto) wait();
     
     
     ///Subscribe custom awaiter
@@ -158,17 +166,17 @@ protected:
  * @tparam chain set true if the awaiter can be chained, otherwise false
  */
 template<typename promise_type, typename policy , bool chain>
-class co_awaiter: public co_awaiter_base<promise_type, chain>, private policy {
+class co_awaiter: public co_awaiter_base<promise_type, chain> {
 public:
 
     co_awaiter(promise_type &owner):co_awaiter_base<promise_type, chain>(owner) {}
     co_awaiter(policy p, promise_type &owner)
             :co_awaiter_base<promise_type, chain>(owner)
-            ,policy(std::forward<policy>(p)) {}
+            ,_p(std::forward<policy>(p)) {}
     
     
     virtual void resume() noexcept override  {
-        policy::resume(this->_h);
+        _p.resume(this->_h);
     }
     ///Allows to change resumption policy.
     /** This member is called by a task, when await_transform, to supply
@@ -179,7 +187,8 @@ public:
      */
     template<typename _Policy>
     co_awaiter<promise_type, _Policy, chain> set_resumption_policy(_Policy p); 
-
+protected:
+    policy _p;
 };
 
 template<typename promise_type, bool chain>
@@ -193,7 +202,7 @@ class blocking_awaiter: public abstract_owned_awaiter<promise_type, chain> {
 public:
     using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
     
-    auto wait() {
+    decltype(auto) wait() {
         _signal = this->_owner.is_ready();
         if (!_signal && this->_owner.subscribe_awaiter(this)) {
             std::unique_lock _(_mx);
@@ -223,7 +232,7 @@ public:
     callback_result(const callback_result &owner) = default;
     callback_result &operator=(const callback_result &owner) = delete;
     
-    auto operator()() {
+    decltype(auto) operator()() {
         return _owner.get_result();
     }
 protected:
@@ -251,7 +260,7 @@ protected:
 };
 
 template<typename promise_type, bool chain>
-inline auto co_awaiter_base<promise_type, chain>::wait() {
+inline decltype(auto) co_awaiter_base<promise_type, chain>::wait() {
     blocking_awaiter<promise_type, chain> x(this->_owner);
     return x.wait();
 }
@@ -261,7 +270,7 @@ template<typename promise_type, typename Policy, bool chain>
 template<typename _Policy>
 inline co_awaiter<promise_type, _Policy, chain> co_awaiter<
             promise_type, Policy, chain>::set_resumption_policy(_Policy p) {
-    return co_awaiter<promise_type,Policy, chain>(std::forward<Policy>(p), this->_owner); 
+    return co_awaiter<promise_type,_Policy, chain>(std::forward<_Policy>(p), this->_owner); 
 }
 
 }

@@ -26,6 +26,24 @@ namespace cocls {
      */
     using coro_id = const void *;
 
+    
+    
+    template<typename T>
+    struct auto_type_t {
+        using result_t = T;
+    };
+    template<typename T>
+    struct auto_type_t<T &> {
+        using result_t = T&;
+    };
+    template<typename T>
+    struct auto_type_t<T &&> {
+        using result_t = T&&;
+    };
+    template<>
+    struct auto_type_t<void> {
+        using result_t = void;
+    };
 }
 
 

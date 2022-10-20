@@ -127,7 +127,7 @@ public:
     }
 
     ///Join the task synchronously, returns value
-    auto join() {
+    decltype(auto) join() {
         blocking_awaiter<promise_type_base, true> aw(*_promise);
         return aw.wait();
     }
@@ -283,7 +283,7 @@ public:
         }
     }
     
-    auto get_result() {
+    decltype(auto) get_result() {
         State s = State::ready;
         if (!_ready.compare_exchange_strong(s, State::processed)) {
             if (s == State::not_ready) throw value_not_ready_exception();
@@ -309,11 +309,11 @@ class task_promise_with_policy: public task_promise_base<T> {
 public:
 
     template<typename Awt>
-    auto await_transform(Awt&& awt) noexcept {
+    decltype(auto) await_transform(Awt&& awt) noexcept {
         if constexpr (_details::has_co_await<Awt>::value) {
             return await_transform(awt.operator co_await());
         } else if constexpr (_details::has_set_resumption_policy<Awt, Policy>::value) {
-            return awt.set_resumption_policy(Policy());
+            return awt.set_resumption_policy(_policy);
         } else {
             return std::forward<Awt>(awt);
         }

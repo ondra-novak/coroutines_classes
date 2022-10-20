@@ -107,7 +107,7 @@ public:
         stop();
     }
     
-    using awaiter = co_awaiter<thread_pool, queued_resumption_policy>;
+    using awaiter = co_awaiter<thread_pool>;
     template<typename Fn>
     class fork_awaiter: public awaiter {
     public:

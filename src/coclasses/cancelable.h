@@ -64,7 +64,7 @@ public:
         struct uncaughtable_exception {};
 
         template<typename X>
-        auto await_transform(X&& awt)  {
+        decltype(auto) await_transform(X&& awt)  {
              if (_canceled.load(std::memory_order_acquire)) throw uncaughtable_exception();
              else {
                  if constexpr (_details::has_await_transform<super &, X>::value) {
