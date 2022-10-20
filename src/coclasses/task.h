@@ -27,6 +27,16 @@ namespace cocls {
 
 
 
+
+
+///Coroutine promise object - part of coroutine frame
+/** This object is never used directly, but it is essential object to support coroutines
+ * 
+ */
+template<typename T, typename Policy> class task_promise;
+
+template<typename T> class task_promise_base;
+
 ///Task object, it is returned from the coroutine
 /**
  * @code
@@ -43,24 +53,17 @@ namespace cocls {
  * 
  * @tparam Policy specifies resumption policy for this coroutine. This policy
  * is used for initial resuption and for all co_await when the awaiter supports
- * function set_resumption_policy(). 
+ * function resumption_policy::_awaiter_concept::set_resumption_policy(). 
  * 
  * If void specified, then default_resumption_policy is used. You can specialize
  * this template to void to change own default_resumption_polici
- */
-template<typename T = void, typename Policy = void> class task;
-
-///Coroutine promise object - part of coroutine frame
-/** This object is never used directly, but it is essential object to support coroutines
  * 
+ * @see resumption_policy
  */
-template<typename T, typename Policy> class task_promise;
-
-template<typename T> class task_promise_base;
-
-
-template<typename T, typename Policy> class task{
+template<typename T = void, typename Policy = void> 
+class task {
 public:
+    
     using promise_type = task_promise<T, Policy>;
     using promise_type_base = task_promise_base<T>;
 
@@ -140,7 +143,7 @@ public:
      * @code
      *   //resume this coroutine in specified thread pool once the task is ready
      * int result = co_await task.join(thread_pool_resumption_policy(pool));
-     *
+     *@endcode
      *
      */
     template<typename resumption_policy>

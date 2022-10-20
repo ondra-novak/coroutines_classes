@@ -400,6 +400,7 @@ public:
 };
 
 
+/**@{*/
 ///Makes callback promise
 /**
  * Callback promise cause execution of the callback when promise is resolved.,
@@ -427,19 +428,13 @@ promise<T> make_promise(Fn &&fn) {
     return f->get_promise();
 }
 
-///Makes callback promise
-/** 
- * @copydoc make_promise
- * 
- * @param storage specify storage where the internal object will be allocated
- */
 
 template<typename T, typename Fn, typename Storage>
 promise<T> make_promise(Fn &&fn, Storage &storage) {
     auto f = new(storage) future_with_cb_no_alloc<T, Storage, Fn>(std::forward<Fn>(fn));
     return f->get_promise();
 }
-
+/**@}*/
 
 }
 #endif /* SRC_COCLASSES_FUTURE_H_ */

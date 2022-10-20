@@ -1,3 +1,5 @@
+/** @file debug.h */
+
 #pragma once
 #ifndef SRC_COCLASSES_SRC_COCLASSES_DEBUG_H_
 #define SRC_COCLASSES_SRC_COCLASSES_DEBUG_H_

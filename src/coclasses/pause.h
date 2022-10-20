@@ -1,3 +1,4 @@
+/** @file pause.h */
 #pragma once
 #ifndef SRC_COCLASSES_PAUSE_H_
 #define SRC_COCLASSES_PAUSE_H_

@@ -16,7 +16,7 @@
 namespace cocls {
 
 
-
+///subscription type
 enum class subscribtion_type {
     ///read all values, no skipping, if the subscriber is left behind, it is dropped
     /** default mode, subscriber receives all published values */
@@ -32,7 +32,7 @@ enum class subscribtion_type {
 };
 
 
-template<typename T, typename Resumption_Policy = resumption_policy::unspecified<void> >
+template<typename T>
 class subscriber;
 
 
@@ -308,11 +308,14 @@ protected:
     
 
     
-    template<typename,typename> friend class subscriber;
+    template<typename> friend class subscriber;
 };
 
 ///Subscriber, can subscribe to publisher
-template<typename T, typename Resumption_Policy>
+/**
+ * @tparam T type of data to be exchanged
+ */
+template<typename T>
 class subscriber {
 public:
     
@@ -324,7 +327,7 @@ public:
      * Subscribes and starts reading recent data
      * 
      * @param pub publisher
-     * 
+     * @param t type of subscription
      * 
      */
     subscriber(publisher<T> &pub, subscribtion_type t = subscribtion_type::all_values)
@@ -333,22 +336,14 @@ public:
     /**
      * @param pub publisher 
      * @param pos starting position
+     * @param t type of subscription
      */
     subscriber(publisher<T> &pub, std::size_t pos, subscribtion_type t = subscribtion_type::all_values)
     :_q(pub.get_queue()),_pos(pos),_t(t) {
             _q->subscribe(this, _pos);
     }
     
-    subscriber(Resumption_Policy policy, publisher<T> &pub, subscribtion_type t = subscribtion_type::all_values)
-    :_policy(policy), _q(pub.get_queue()),_pos(_q->subscribe(this)),_t(t) {}
-
-
-    subscriber(Resumption_Policy policy,publisher<T> &pub, std::size_t pos, subscribtion_type t = subscribtion_type::all_values)
-    :_policy(policy), _q(pub.get_queue()),_pos(pos),_t(t) {
-            _q->subscribe(this, _pos);
-    }
-
-
+    
     ///Subscriber can be copied
     /**
      * By copying subscriber, the copy is automatically subscribed from the position equals to
@@ -356,7 +351,7 @@ public:
      *
      * @param other source subscriber
      */
-    subscriber(const subscriber &other):_policy(other._policy),_q(other._q),_pos(other._pos), _t(other._t){
+    subscriber(const subscriber &other):_q(other._q),_pos(other._pos), _t(other._t){
         _q->subscribe(this, _pos);
     }
     ///can't be assigned
@@ -376,8 +371,8 @@ public:
      * @exception no_longer_avaiable_exception subscriber wants to access a value, which has been outside of available queue window.
      * @exception no_more_values_exception publisher has been closed
      */
-    co_awaiter<subscriber, Resumption_Policy, true> operator co_await() {
-        return co_awaiter<subscriber, Resumption_Policy, true>(_policy,*this);
+    co_awaiter<subscriber, void, true> operator co_await() {
+        return co_awaiter<subscriber, void, true>(*this);
     }
 
     ///Retrieves current position
@@ -393,7 +388,6 @@ public:
     }
     
 protected:
-    Resumption_Policy _policy;
     std::shared_ptr<queue> _q;
     std::size_t _pos;
     subscribtion_type _t;

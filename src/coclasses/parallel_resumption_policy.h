@@ -1,3 +1,4 @@
+/** @file parallel_resumption_policy.h */
 #pragma once
 
 #ifndef SRC_COCLASSES_PARALLEL_RESUMPTION_POLICY_H_

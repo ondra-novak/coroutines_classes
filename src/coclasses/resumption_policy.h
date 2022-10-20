@@ -22,8 +22,11 @@
 
 namespace cocls {
 
+///definition of various resumption policies
+namespace resumption_policy {
+
 ///Resumption policy concept - template to create resumption policy
-struct resumption_policy_concept {
+struct _policy_concept {
     ///mandatory - handles resumption
     void resume(std::coroutine_handle<> h);
     ///optional - allows to initialize the polici on a task
@@ -40,7 +43,7 @@ struct resumption_policy_concept {
 
 
 ///Awaiter concept to work with resumption policy
-struct awaiter_concept {
+struct _awaiter_concept {
     
     ///await ready standard implementation
     bool await_ready();
@@ -72,8 +75,6 @@ struct recursive_resumption_policy {
 
 
 
-///definition of various resumption policies
-namespace resumption_policy {
     ///Resumption of a coroutine is made recursive by calling resume on current stack frame
     /**
      * When coroutine is resumed, resumption is executed on current stack. 

@@ -1,9 +1,4 @@
-/*
- * abstract_awaiter.h
- *
- *  Created on: 7. 10. 2022
- *      Author: ondra
- */
+/** @file abstract_awaiter.h */
 
 #ifndef SRC_COCLASSES_ABSTRACT_AWAITER_H_
 #define SRC_COCLASSES_ABSTRACT_AWAITER_H_
@@ -182,7 +177,7 @@ public:
     /** This member is called by a task, when await_transform, to supply
      * own policy
      *
-     * @param policy resumption policy
+     * @param p resumption policy
      * @return
      */
     template<typename _Policy>

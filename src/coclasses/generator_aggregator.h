@@ -1,10 +1,4 @@
-/*
- * generator_aggregator.h
- *
- *  Created on: 15. 10. 2022
- *      Author: ondra
- */
-
+/** @file generator_aggregator.h */
 #ifndef SRC_COCLASSES_GENERATOR_AGGREGATOR_H_
 #define SRC_COCLASSES_GENERATOR_AGGREGATOR_H_
 #include "generator.h"

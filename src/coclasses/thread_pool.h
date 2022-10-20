@@ -350,6 +350,14 @@ struct thread_pool {
     void resume(std::coroutine_handle<> h) {
         _resumer.set_handle(h);
     }
+    ///Initializes policy
+    /**
+     * @param pool shared thread pool
+     * 
+     * called from task<>::initialize_policy();
+     * 
+     * 
+     */
     void initialize_policy(shared_thread_pool pool) {
         _resumer.set_pool(pool);
     }

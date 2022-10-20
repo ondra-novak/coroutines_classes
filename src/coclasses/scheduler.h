@@ -189,7 +189,7 @@ public:
 
     ///Start a specified lazy task at given time point
     /**
-     * @param task lazy task to be started
+     * @param t lazy task to be started
      * @param tp time point, when the task will be started
      * @retval true, task si scheduled
      * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
@@ -198,17 +198,17 @@ public:
      * exception await_canceled_exception() is propagated to all awaiters
      */
     template<typename T>
-    bool start_at(lazy<T> task, const time_point &tp) {
-        std::coroutine_handle<> h = task.get_start_handle();
+    bool start_at(lazy<T> t, const time_point &tp) {
+        std::coroutine_handle<> h = t.get_start_handle();
         if (h == nullptr) [[unlikely]] return false;
         std::unique_lock _(_mx);
         if (_exit) [[unlikely]] {
             _.unlock();
-            task.mark_canceled();
+            t.mark_canceled();
             resumption_policy::queued::resume(h);
             return true;
         }
-        _list.push({tp,new lazy_starter<T>(task, h)});
+        _list.push({tp,new lazy_starter<T>(t, h)});
         _signal = true;
         _sleeper.notify_one();        
         return true;        
@@ -216,7 +216,7 @@ public:
     
     ///Start a specified lazy task after given duration
     /**
-     * @param task lazy task to be started
+     * @param t lazy task to be started
      * @param dur duration after the task will be started
      * @retval true, task si scheduled
      * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
@@ -225,21 +225,21 @@ public:
      * 
      */
     template<typename T, typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
-    bool start_after(lazy<T> task, const Dur &dur) {
-        return start_at(task, Traits::from_duration(dur));
+    bool start_after(lazy<T> t, const Dur &dur) {
+        return start_at(t, Traits::from_duration(dur));
     }
     
     ///Start a specified task now
     /**
      * Main benefit if this function is to start a task inside of scheduler's thread(pool). 
      * 
-     * @param task lazy task to be started
+     * @param t lazy task to be started
      * @retval true, task si scheduled
      * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
      */
     template<typename T>
-    bool start_now(lazy<T> task) {
-        return start_at(task, Traits::now());
+    bool start_now(lazy<T> t) {
+        return start_at(t, Traits::now());
     }
     
     ///Pause current coroutine and return execution to the scheduler
@@ -297,7 +297,7 @@ public:
 
     ///cancel waiting task
     /**
-     * @param task task to cancel
+     * @param task_ task to cancel
      * @retval true coroutine canceled
      * @retval false coroutine is not scheduled at tbis time
      * 
@@ -309,7 +309,7 @@ public:
     }
     ///cancel waiting generator
     /**
-     * @param generator generator to cancel
+     * @param generator_ generator to cancel
      * @retval true coroutine canceled
      * @retval false coroutine is not scheduled at tbis time
      * 

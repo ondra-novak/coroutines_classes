@@ -1,3 +1,5 @@
+/** @file barrier.h */
+
 #pragma once
 #ifndef SRC_COCLASSES_BARRIER_H_
 #define SRC_COCLASSES_BARRIER_H_

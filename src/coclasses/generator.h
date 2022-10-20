@@ -1,3 +1,4 @@
+/** @file generator.h */
 #pragma once
 #ifndef SRC_COCLASSES_GENERATOR_H_
 #define SRC_COCLASSES_GENERATOR_H_
@@ -65,7 +66,7 @@ public:
     };
 
     
-    template<typename X, typename P = recursive_resumption_policy>
+    template<typename X, typename P = resumption_policy::immediate>
     class awaiter_t : public co_awaiter_base<X> {
     public:
         awaiter_t(X &x):co_awaiter_base<X>(x) {}

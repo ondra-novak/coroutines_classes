@@ -1,3 +1,5 @@
+/** @file cancelable.h */
+
 #pragma once
 #ifndef SRC_COCLASSES_CANCELABLE_TASK_H_
 #define SRC_COCLASSES_CANCELABLE_TASK_H_
