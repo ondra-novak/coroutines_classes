@@ -5,8 +5,8 @@
 #ifndef SRC_COCLASSES_QUEUE_H_
 #define SRC_COCLASSES_QUEUE_H_
 
+#include "awaiter.h"
 #include "common.h"
-#include "abstract_awaiter.h"
 #include "exceptions.h"
 #include "resumption_policy.h"
 #include "queued_resumption_policy.h"

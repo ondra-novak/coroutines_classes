@@ -1,7 +1,7 @@
-/** @file abstract_awaiter.h */
+/** @file awaiter.h */
 
-#ifndef SRC_COCLASSES_ABSTRACT_AWAITER_H_
-#define SRC_COCLASSES_ABSTRACT_AWAITER_H_
+#ifndef SRC_COCLASSES_AWAITER_H_
+#define SRC_COCLASSES_AWAITER_H_
 
 #include "resumption_policy.h"
 #include "queued_resumption_policy.h"
@@ -244,4 +244,4 @@ inline decltype(auto) co_awaiter<promise_type, chain>::wait() {
 
 
 }
-#endif /* SRC_COCLASSES_ABSTRACT_AWAITER_H_ */
+#endif /* SRC_COCLASSES_AWAITER_H_ */

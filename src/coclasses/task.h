@@ -6,9 +6,9 @@
 #ifndef SRC_COCLASSES_TASK_H_
 #define SRC_COCLASSES_TASK_H_
 
+#include "awaiter.h"
 #include "common.h" 
 #include "exceptions.h"
-#include "abstract_awaiter.h"
 #include "debug.h"
 #include "poolalloc.h"
 #include "resumption_policy.h"

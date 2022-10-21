@@ -92,11 +92,15 @@ struct _awaiter_concept {
      * to enforce his policy. Result of the function is awaiter with given policy. Then
      * the awaiter must respect that resumption policy
      * 
+     * @param _this instance of this type or derived type. This allows to make wrapping awaiter
+     * with top-most derived class
+     * 
      * @param p resumption policy
+     * 
      * @return new awaiter which respects given resumption policy
      */
-    template<typename Policy>
-    auto set_resumption_policy(Policy p);
+    template<typename _This, typename Policy>
+    static auto set_resumption_policy(_This _this,Policy p);
     
 };
 

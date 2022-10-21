@@ -6,9 +6,8 @@
 #ifndef SRC_COCLASSES_MUTEX_H_
 #define SRC_COCLASSES_MUTEX_H_
 
+#include "awaiter.h"
 #include "common.h"
-#include "abstract_awaiter.h"
-
 #include <cassert>
 #include <coroutine>
 #include <memory>

@@ -1,4 +1,5 @@
 #include "../../version.h"
+#include <coclasses/awaiter.h>
 #include <coclasses/generator.h>
 #include <coclasses/generator_aggregator.h>
 #include <coclasses/task.h>
@@ -9,7 +10,6 @@
 #include <coclasses/thread_pool.h>
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
-#include <coclasses/abstract_awaiter.h>
 #include <coclasses/no_alloc.h>
 #include <coclasses/publisher.h>
 #include <coclasses/sync_await.h>

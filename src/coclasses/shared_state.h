@@ -1,8 +1,7 @@
 #pragma once
 #ifndef SRC_COCLASSES_SHARED_STATE_H_
 #define SRC_COCLASSES_SHARED_STATE_H_
-#include "abstract_awaiter.h"
-
+#include "awaiter.h"
 #include "mutex.h"
 
 #include "exceptions.h"

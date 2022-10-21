@@ -4,8 +4,7 @@
 #pragma once
 #ifndef SRC_COCLASSES_DISPATCHER_H_
 #define SRC_COCLASSES_DISPATCHER_H_
-#include "abstract_awaiter.h"
-
+#include "awaiter.h"
 #include "lazy.h"
 
 #include "no_alloc.h"

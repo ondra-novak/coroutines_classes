@@ -7,10 +7,10 @@
 #pragma once
 #ifndef SRC_COCLASSES_THREAD_POOL_H_
 #define SRC_COCLASSES_THREAD_POOL_H_
+#include "awaiter.h"
 #include "common.h"
 #include "exceptions.h"
 
-#include "abstract_awaiter.h"
 #include "resumption_policy.h"
 #include "lazy.h"
 

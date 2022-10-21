@@ -5,14 +5,13 @@
 #ifndef SRC_COCLASSES_FUTURE_H_
 #define SRC_COCLASSES_FUTURE_H_
 
+#include "awaiter.h"
 #include "common.h"
 #include "exceptions.h"
 
 
 
 #include "value_or_exception.h"
-
-#include "abstract_awaiter.h"
 
 #include "poolalloc.h"
 #include "resumption_policy.h"

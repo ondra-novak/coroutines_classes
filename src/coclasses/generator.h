@@ -2,8 +2,8 @@
 #pragma once
 #ifndef SRC_COCLASSES_GENERATOR_H_
 #define SRC_COCLASSES_GENERATOR_H_
+#include "awaiter.h"
 #include "common.h"
-#include "abstract_awaiter.h"
 #include "poolalloc.h"
 #include "future.h"
 #include "no_alloc.h"

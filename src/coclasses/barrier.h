@@ -3,8 +3,7 @@
 #pragma once
 #ifndef SRC_COCLASSES_BARRIER_H_
 #define SRC_COCLASSES_BARRIER_H_
-#include "abstract_awaiter.h"
-
+#include "awaiter.h"
 #include "common.h"
 #include <atomic>
 #include <cassert>
