@@ -55,7 +55,7 @@ protected:
 public:
 
 
-    using co_awaiter = ::cocls::co_awaiter<mutex,void, true>;
+    using co_awaiter = ::cocls::co_awaiter<mutex,true>;
     using blocking_awaiter = ::cocls::blocking_awaiter<mutex, true>;
     using abstract_awaiter = ::cocls::abstract_awaiter<true>; 
     class null_awaiter: public abstract_awaiter {
@@ -131,7 +131,7 @@ public:
 protected:
     
     friend class ::cocls::blocking_awaiter<mutex, true>;
-    friend class ::cocls::co_awaiter_base<mutex, true>;
+    friend class ::cocls::co_awaiter<mutex, true>;
     
     
     std::atomic<abstract_awaiter *> _requests = nullptr;

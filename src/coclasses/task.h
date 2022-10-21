@@ -112,7 +112,7 @@ public:
      * the awaited task is finished
      *     
      */
-    co_awaiter<promise_type_base, void, true> operator co_await() {
+    co_awaiter<promise_type_base, true> operator co_await() {
         return *_promise;
     }
     
@@ -147,8 +147,8 @@ public:
      *
      */
     template<typename resumption_policy>
-    co_awaiter<promise_type, resumption_policy, true> join(resumption_policy policy) {
-        return co_awaiter<promise_type, resumption_policy, true>(*_promise, std::forward<resumption_policy>(policy));
+    decltype(auto) join(resumption_policy &&policy) {
+        return co_awaiter<promise_type, true>::set_resumption_policy(operator co_await(), std::forward<resumption_policy>(policy)); 
     }
 
     
@@ -194,21 +194,6 @@ protected:
     promise_type_base *get_promise() const {return _promise;}
 };
 
-namespace _details {
-    
-    template<typename X>
-    auto test_has_co_await(X &&x) -> decltype(x.operator co_await());
-    std::monostate test_has_co_await(...);
-    template<typename X> 
-    using has_co_await = std::negation<std::is_same<std::monostate, decltype(test_has_co_await(std::declval<X>()))> >;
-
-    template<typename X, typename Y>
-    auto test_has_set_resumption_policy(X &&x, Y &&y) -> decltype(x.set_resumption_policy(std::forward<Y>(y)));
-    std::monostate test_has_set_resumption_policy(...);
-    template<typename X, typename Y> 
-    using has_set_resumption_policy = std::negation<std::is_same<std::monostate, decltype(test_has_set_resumption_policy(std::declval<X>(), std::declval<Y>()))> >;
-
-}
 
 
 template<typename T>
@@ -220,7 +205,7 @@ public:
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
     ~task_promise_base() {
-        if (_ready == State::ready) {
+        if (_state == State::ready) {
             std::exception_ptr e = _value.get_exception();
             if (e) debug_reporter::get_instance()
                     .report_exception(e, typeid(task<T>));
@@ -268,11 +253,11 @@ public:
     };
     
     value_or_exception<T> _value;
-    std::atomic<State> _ready;
+    std::atomic<State> _state = State::not_ready;
     std::atomic<AW *> _awaiter_chain;
     
     bool is_ready() const {
-        return _ready != State::not_ready;
+        return _state != State::not_ready;
     }
     
     bool subscribe_awaiter(AW *aw) {
@@ -287,7 +272,7 @@ public:
     
     decltype(auto) get_result() {
         State s = State::ready;
-        if (!_ready.compare_exchange_strong(s, State::processed)) {
+        if (!_state.compare_exchange_strong(s, State::processed)) {
             if (s == State::not_ready) throw value_not_ready_exception();
         }
         return _value.get_value();
@@ -295,7 +280,7 @@ public:
     
     void unhandled_exception() {
         _value.unhandled_exception();
-        this->_ready = State::ready;
+        this->_state = State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     
@@ -309,10 +294,10 @@ public:
 
     template<typename Awt>
     decltype(auto) await_transform(Awt&& awt) noexcept {
-        if constexpr (_details::has_co_await<Awt>::value) {
+        if constexpr (has_co_await<Awt>::value) {
             return await_transform(awt.operator co_await());
-        } else if constexpr (_details::has_set_resumption_policy<Awt, Policy>::value) {
-            return awt.set_resumption_policy(_policy);
+        } else if constexpr (has_set_resumption_policy<Awt, Policy>::value) {
+            return awt.set_resumption_policy(std::forward<Awt>(awt), _policy);
         } else {
             return std::forward<Awt>(awt);
         }
@@ -325,7 +310,7 @@ public:
         initial_awaiter &operator=(const initial_awaiter &) = delete;
         
         static bool await_ready() noexcept {return false;}
-        void await_suspend(std::coroutine_handle<> h) noexcept {
+        void await_suspend(std::coroutine_handle<> h) {
             _p.resume(h);
         }
         static void await_resume() noexcept {}
@@ -357,7 +342,7 @@ public:
     template<typename X>
     auto return_value(X &&val)->decltype(std::declval<value_or_exception<T> >().set_value(val)) {
         this->_value.set_value(std::forward<X>(val));
-        this->_ready = task_promise_base<T>::State::ready;
+        this->_state = task_promise_base<T>::State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     task<T, Policy> get_return_object() {
@@ -371,7 +356,7 @@ public:
     using AW = typename task_promise_with_policy<void, Policy>::AW;
     auto return_void() {
         this->_value.set_value();
-        this->_ready = task_promise_base<void>::State::ready;
+        this->_state= task_promise_base<void>::State::ready;
         AW::resume_chain(this->_awaiter_chain, nullptr);
     }
     task<void, Policy> get_return_object() {

@@ -96,7 +96,7 @@ public:
      * int val2 = q.pop().wait();
      * @endcode
      */
-    co_awaiter<queue, void> pop() {
+    co_awaiter<queue> pop() {
         return *this;
     }
     
@@ -134,7 +134,7 @@ protected:
     }
 
     
-    friend class co_awaiter_base<queue>;
+    friend class co_awaiter<queue>;
     friend class blocking_awaiter<queue>;
     ///lock protects internal
     std::mutex _mx;

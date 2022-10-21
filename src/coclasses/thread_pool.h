@@ -289,7 +289,7 @@ protected:
         return c;
     }
     
-    friend class co_awaiter_base<thread_pool>;
+    friend class co_awaiter<thread_pool>;
     bool is_ready() noexcept {
         return _exit;
     }

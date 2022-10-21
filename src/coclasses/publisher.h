@@ -371,8 +371,8 @@ public:
      * @exception no_longer_avaiable_exception subscriber wants to access a value, which has been outside of available queue window.
      * @exception no_more_values_exception publisher has been closed
      */
-    co_awaiter<subscriber, void, true> operator co_await() {
-        return co_awaiter<subscriber, void, true>(*this);
+    co_awaiter<subscriber,  true> operator co_await() {
+        return co_awaiter<subscriber, true>(*this);
     }
 
     ///Retrieves current position
@@ -393,7 +393,7 @@ protected:
     subscribtion_type _t;
     
     friend class publisher<T>;
-    friend class co_awaiter_base<subscriber<T>, true >;
+    friend class co_awaiter<subscriber<T>, true >;
 
     bool is_ready() {
         return _q->advance(this, _pos,_t);

@@ -25,7 +25,7 @@ public:
     barrier(unsigned int count):_count(count) {}
     
     
-    using awaiter = co_awaiter<barrier,resumption_policy::unspecified<void>,true>;
+    using awaiter = co_awaiter<barrier,true>;
 
     ///await the barrier
     awaiter operator co_await() {
@@ -42,7 +42,7 @@ public:
     
 protected:
     
-    friend class co_awaiter_base<barrier, true>;
+    friend class co_awaiter<barrier, true>;
     unsigned int _count;
     std::atomic<abstract_awaiter<true> *> _waiting = nullptr;
     

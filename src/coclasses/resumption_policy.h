@@ -18,9 +18,43 @@
  */
 #ifndef SRC_COCLASSES_RESUMPTION_POLICY_H_
 #define SRC_COCLASSES_RESUMPTION_POLICY_H_
+#include "common.h"
+
 #include <coroutine>
+#include <variant>
 
 namespace cocls {
+
+namespace _details {
+    
+    template<typename X>
+    auto test_has_co_await(X &&x) -> decltype(x.operator co_await());
+    std::monostate test_has_co_await(...);
+
+    template<typename X, typename Y>
+    auto test_has_set_resumption_policy(X &&x, Y &&y) -> decltype(x.set_resumption_policy(std::forward<X>(x),std::forward<Y>(y)));
+    std::monostate test_has_set_resumption_policy(...);
+
+}
+
+///Determines whether specified awaiter object has operator co_await()
+/**
+ * @tparam X awaiter to test
+ * @return value contains true, if the awaiter has such operator, or false if not
+ */
+template<typename X> 
+using has_co_await = std::negation<std::is_same<std::monostate, decltype(_details::test_has_co_await(std::declval<X>()))> >;
+
+///Determines whether specified awaiter object has set_resumption_policy() function
+/**
+ * @tparam X awaiter to test
+ * @tparam Y policy object
+ * @return value contains true, if there is such function, or false if not
+ */
+template<typename X, typename Y> 
+using has_set_resumption_policy = std::negation<std::is_same<std::monostate, decltype(_details::test_has_set_resumption_policy(std::declval<X>(), std::declval<Y>()))> >;
+
+
 
 ///definition of various resumption policies
 namespace resumption_policy {

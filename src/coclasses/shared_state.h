@@ -133,7 +133,7 @@ public:
     }
 
     ///await on state
-    co_awaiter<shared_state,void,true> operator co_await() {
+    co_awaiter<shared_state,true> operator co_await() {
         return *this;
     }
     
@@ -156,7 +156,7 @@ protected:
     
     shared_state (_details::shared_state<T> *ptr):_ptr(ptr) {_ptr->add_ref();}
     
-    friend class co_awaiter_base<shared_state, true>;
+    friend class co_awaiter<shared_state, true>;
     
     bool is_ready() {        
         return _ptr == nullptr;    //can't be ready immediately unless it is nullptr

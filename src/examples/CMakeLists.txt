@@ -33,5 +33,8 @@ add_executable (thread_pool_reumption_policy thread_pool_reumption_policy.cpp)
 add_executable (barrier barrier.cpp)
 add_executable (shared_state shared_state.cpp)
 add_executable (pause pause.cpp)
+add_executable (dispatcher dispatcher.cpp)
+add_executable (dispatcher_failed_resume dispatcher_failed_resume.cpp)
+
 
 
