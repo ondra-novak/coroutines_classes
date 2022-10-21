@@ -35,9 +35,8 @@ public:
     void start() {
         auto prom = static_cast<lazy_promise<T> *>(this->_promise);
         if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
-            Policy p;
             auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
-            p.resume(h);
+            prom->_policy.resume(h);
         }
     }
 

@@ -29,12 +29,13 @@ add_executable (cancelable_timer_lazy cancelable_timer_lazy.cpp)
 add_executable (cancelable_task cancelable_task.cpp)
 add_executable (goroutine1 goroutine1.cpp)
 add_executable (parallel_resumption_policy parallel_resumption_policy.cpp)
-add_executable (thread_pool_reumption_policy thread_pool_reumption_policy.cpp)
+add_executable (thread_pool_resumption_policy thread_pool_resumption_policy.cpp)
 add_executable (barrier barrier.cpp)
 add_executable (shared_state shared_state.cpp)
 add_executable (pause pause.cpp)
 add_executable (dispatcher dispatcher.cpp)
 add_executable (dispatcher_failed_resume dispatcher_failed_resume.cpp)
+add_executable (multi_source_future multi_source_future.cpp)
 
 
 

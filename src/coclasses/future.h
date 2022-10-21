@@ -249,18 +249,8 @@ public:
     }
 
     ///capture current exception
-    /**
-     * @note need to be in catch handler
-     * @retval true exception captured
-     * @retval false exception was not captured, there is no exception or future is already resolved
-     */
-    bool unhandled_exception() const {
-        auto exp = std::current_exception();
-        if (exp) {
-            return this->_owner->set_exception(std::current_exception());
-        } else {
-            return false;
-        }
+    void unhandled_exception() const {
+        this->_owner->unhandled_exception();
     }
 
     
@@ -435,5 +425,84 @@ promise<T> make_promise(Fn &&fn, Storage &storage) {
 }
 /**@}*/
 
+
+///Future object, which can be resolved from multiple sources - first source resolves future, others are ignored
+/**
+ * 
+ * @tparam T
+ */
+template<typename T>
+class multi_source_future {
+public:
+        
+    multi_source_future();
+    multi_source_future(multi_source_future &&) = default;
+    multi_source_future(const multi_source_future &) = delete;
+    multi_source_future &operator=(const multi_source_future &) = delete;
+    multi_source_future &operator=(multi_source_future &&) = delete;
+    
+    ///await for result - only one awaiter is allowed
+    co_awaiter<future<T> > operator co_await();
+
+    ///wait synchronously, return result
+    decltype(auto) wait() {
+        return operator co_await().wait();
+    }
+
+    ///Retrieve promise object
+    /**
+     * @note Object can be copied or moved, but it still belongs to one
+     * source. If you need to get promise for two sources, you need to call this function
+     * twice.
+     * 
+     * Setting value is MT safe if it set for different source simultaneously. It is not
+     * MT safe to set value to promises from single source.  
+     * 
+     * @return
+     */
+    promise<T> get_promise();
+ 
+protected:
+    
+    struct storage {
+        future<T> _fut;
+        std::atomic<bool> _loading;        
+    };
+    
+    
+    using storage_p = std::shared_ptr<storage>;
+    storage_p _ptr;
+    
+};
+
+
+
+template<typename T>
+inline multi_source_future<T>::multi_source_future()
+:_ptr(std::make_shared<storage>())
+{
 }
+
+template<typename T>
+inline co_awaiter<future<T> > multi_source_future<T>::operator co_await() {
+    return _ptr->_fut.operator co_await();
+}
+
+template<typename T>
+inline promise<T> multi_source_future<T>::get_promise() {
+    return make_promise<T>([ptr = this->_ptr](future<T> &f){
+        if (ptr->_loading.exchange(true) == false) {
+            promise<T> p = ptr->_fut.get_promise();
+            try {
+                p.set_value(std::move(f.get()));
+            } catch (...) {
+                p.unhandled_exception();
+            }
+        }
+    });
+}
+
+}
+
 #endif /* SRC_COCLASSES_FUTURE_H_ */
+

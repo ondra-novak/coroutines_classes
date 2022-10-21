@@ -77,9 +77,9 @@ public:
             return this->_owner.get_handle();
         }
         
-    private:
+    protected:
         virtual void resume() noexcept override {            
-            this->_h.resume();
+            resumption_policy::unspecified<void>::resume(this->_h);
         }
     };
     

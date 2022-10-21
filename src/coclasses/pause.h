@@ -6,6 +6,9 @@
 
 namespace cocls {
 
+template<typename policy = void>
+class pause;
+
 ///Awaitable object, which pauses and resumes the coroutine under different resumption policy
 /**
  * @tparam policy resumption policy class.
@@ -18,7 +21,8 @@ namespace cocls {
  * (starts new thread)
  *
  */
-template<typename policy = resumption_policy::queued >
+
+template<typename policy>
 class pause: private policy {
 public:
     template<typename ... Args>
@@ -30,6 +34,17 @@ public:
     }
     static void await_resume() noexcept {}
 
+};
+
+template<>
+class pause<void> {
+public:
+    
+    template<typename policy>
+    static decltype(auto) set_resumption_policy(pause<void>, policy &&p) {
+        return pause<typename std::remove_reference<policy>::type>(std::forward<policy>(p));
+    }
+    
 };
 
 

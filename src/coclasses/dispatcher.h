@@ -19,7 +19,10 @@ namespace cocls {
 namespace resumption_policy {    
     struct dispatcher;
 }
-
+///Exception: 
+/**
+ * Thrown when you call dispatcher::await before dispatcher is initialized 
+ */
 class no_thread_dispatcher_is_initialized_exception: public std::exception {
 public:
     const char *what() const noexcept override {
@@ -27,6 +30,12 @@ public:
     }
 };
 
+
+///Exception:
+/**
+ * Thrown, when coroutine is being suspended on dispatcher's thread, which is no longer exists 
+ * (has already ended)
+ */
 class home_thread_already_ended_exception: public await_canceled_exception {
 public:
     const char *what() const noexcept override {
@@ -54,7 +63,10 @@ class dispatcher {
 public:
     
     
-    
+    ///Initialized dispatcher in current thread
+    /**
+     * Futher calling this function doesn nothing. You can't deinitialize the dispatcher
+     */
     static void init() {
         if (instance != nullptr) [[unlikely]] return;
         instance = std::make_shared<dispatcher>();
@@ -75,6 +87,8 @@ public:
      *  
      * @param awt an expression which results to an awaiter to be awaiter
      * @return return value of the expression
+     * @exception no_thread_dispatcher_is_initialized_exception you must explicitly call 
+     *   dispatcher::init();
      */
     template<typename Awt>
     static decltype(auto) await(Awt &&awt) {
