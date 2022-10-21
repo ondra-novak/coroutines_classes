@@ -281,7 +281,7 @@ public:
     void next_cb(Fn &&fn) {        
           auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
           if (_state.load(std::memory_order_relaxed) == State::done) {
-              fn(false);
+              fn({});
               return;
           }
           subscribe_awaiter(nullptr);
