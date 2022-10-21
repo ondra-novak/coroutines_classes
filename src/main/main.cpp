@@ -1,4 +1,5 @@
 #include "../../version.h"
+#include <coclasses/awaiter.h>
 #include <coclasses/generator.h>
 #include <coclasses/generator_aggregator.h>
 #include <coclasses/task.h>
@@ -9,10 +10,12 @@
 #include <coclasses/thread_pool.h>
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
-#include <coclasses/abstract_awaiter.h>
 #include <coclasses/no_alloc.h>
 #include <coclasses/publisher.h>
 #include <coclasses/sync_await.h>
+#include <coclasses/cancelable.h>
+#include <coclasses/queued_resumption_policy.h>
+#include <coclasses/pause.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -99,7 +102,7 @@ cocls::generator<int> co_async_fib(int count, int delay = 100) {
 }
 
 cocls::task<void> co_fib_reader()  {
-    std::cout<< "async gen - co_await: ";
+    std::cout<< "async gen - co_await: "  << std::flush;
     auto g = co_async_fib(15);
     while (co_await g.next()) {
         std::cout << g.value() << " " ;
@@ -107,7 +110,7 @@ cocls::task<void> co_fib_reader()  {
     std::cout<< std::endl;
 }
 cocls::task<void> co_fib2_reader()  {
-    std::cout<< "sync gen - co_await;";
+    std::cout<< "sync gen - co_await;"  << std::flush;
     auto g = co_fib2(15);
     while (co_await g.next()) {
         std::cout << g.value() << " " ;
@@ -115,7 +118,7 @@ cocls::task<void> co_fib2_reader()  {
     std::cout<< std::endl;
 }
 cocls::task<void> co_fib3_reader()  {
-    std::cout<< "sync gen - resume in coroutine: ";
+    std::cout<< "sync gen - resume in coroutine: "  << std::flush;
     auto g = co_fib2(15);
     while (g.next()) {
         std::cout << g.value() << " " ;
@@ -183,17 +186,18 @@ int test_mutex() {
 }
 
 void test_pause() {
-    cocls::coroboard([]{
+    ([]()->cocls::task<>{
        for (int i = 0; i < 5; i++) {
            ([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {
                   std::cout << "Running coroutine " << i << " cycle " << j << std::endl;
-                  co_await cocls::pause();
+                  co_await cocls::pause<>();
               } 
               std::cout << "Finished coroutine " << i << std::endl;
            })(i);
        }     
-    });
+       co_return;
+    })().join();
 }
 
 
@@ -358,7 +362,7 @@ int main(int argc, char **argv) {
     publisher_test();
     
     auto fib = co_fib();
-    std::cout<< "infinite gen: ";    
+    std::cout<< "infinite gen: " << std::flush;    
     for (int i = 0; i < 15; i++) {
         auto iter = fib.begin();
         if (iter != fib.end()) {
@@ -368,14 +372,14 @@ int main(int argc, char **argv) {
     std::cout<< std::endl;
 
     auto fib2 = co_fib2(15);
-    std::cout<< "finite gen - range for: ";
+    std::cout<< "finite gen - range for: "  << std::flush;
     for (int &i: fib2) {
         std::cout << i << " ";
     }
     std::cout<< std::endl;
 
     auto fib3 = co_fib2(15);
-    std::cout<< "finite gen - next/read: ";
+    std::cout<< "finite gen - next/read: "  << std::flush;
     while (fib3.next()) {
         std::cout << fib3.value() << " ";
     }
@@ -385,7 +389,7 @@ int main(int argc, char **argv) {
 
 
     auto fib4 = co_async_fib(15);
-    std::cout<< "async gen2 - next/read (sync): ";
+    std::cout<< "async gen2 - next/read (sync): "  << std::flush;
     while (fib4.next()) {
         std::cout << fib4.value() << " ";
     }

@@ -5,9 +5,13 @@
 #ifndef SRC_COCLASSES_SCHEDULER_H_
 #define SRC_COCLASSES_SCHEDULER_H_
 #include "generator.h"
-#include "task.h"
+#include "lazy.h"
 
 #include "thread_pool.h"
+
+#include "lazy.h"
+
+#include "queued_resumption_policy.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -79,10 +83,18 @@ public:
     }
     
         
+
+    class sch_abstract_awaiter {
+    public:
+        virtual ~sch_abstract_awaiter() = default;
+        virtual void resume(bool canceled) noexcept  = 0;
+        virtual bool is(coro_id id) const noexcept = 0;
+        
+    };
     
 
     ///awaiter
-    class awaiter {
+    class awaiter: public sch_abstract_awaiter {
     public:
         awaiter(scheduler &owner, time_point tp):_owner(owner),_tp(tp) {}
         awaiter(const awaiter &) = default;
@@ -91,25 +103,25 @@ public:
         bool await_ready() const {
             return _tp<Traits::now() || _owner._exit;
         }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+        bool await_suspend(std::coroutine_handle<> h) {
             std::lock_guard _(_owner._mx);
-            if (_owner._exit) return h;
+            if (_owner._exit) return false;
             _h = h;
             _owner._list.push({_tp,this});
             _owner._signal = true;
             _owner._sleeper.notify_one();
-            return resume_lock::await_suspend();
+            return true;
         }
         
         void await_resume() const {
             if (_canceled) throw await_canceled_exception();
         }
         
-        void resume(bool canceled) {
+        virtual void resume(bool canceled) noexcept override {
             _canceled = canceled;
-            resume_lock::resume(_h);
+            resumption_policy::queued::resume(_h);
         }
-        bool is(coro_id id) {
+        virtual bool is(coro_id id) const noexcept override {
             return _h.address() == id;
         }
         
@@ -118,6 +130,24 @@ public:
         time_point _tp;
         std::coroutine_handle<> _h;
         bool _canceled = false;
+    };
+    
+    template<typename T>
+    class lazy_starter: public sch_abstract_awaiter, public coro_promise_base {
+    public:
+        lazy_starter(lazy<T> task, std::coroutine_handle<> h):_task(task),_h(h) {}
+        virtual void resume(bool canceled) noexcept override {
+            if (canceled) _task.mark_canceled();
+            resumption_policy::queued::resume(_h);
+            delete this;
+        }
+        virtual bool is(coro_id id) const noexcept override {
+            return _h.address() == id;
+        }
+    protected:
+        lazy<T> _task;
+        std::coroutine_handle<> _h;
+        
     };
  
     ///suspend coroutine until given time_point
@@ -156,7 +186,61 @@ public:
     awaiter sleep_for(const Dur &dur) {
         return awaiter(*this, Traits::from_duration(dur));
     }
+
+    ///Start a specified lazy task at given time point
+    /**
+     * @param t lazy task to be started
+     * @param tp time point, when the task will be started
+     * @retval true, task si scheduled
+     * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
+     * 
+     * @note lazy task can be canceled. If this happens, the task is never started and
+     * exception await_canceled_exception() is propagated to all awaiters
+     */
+    template<typename T>
+    bool start_at(lazy<T> t, const time_point &tp) {
+        std::coroutine_handle<> h = t.get_start_handle();
+        if (h == nullptr) [[unlikely]] return false;
+        std::unique_lock _(_mx);
+        if (_exit) [[unlikely]] {
+            _.unlock();
+            t.mark_canceled();
+            resumption_policy::queued::resume(h);
+            return true;
+        }
+        _list.push({tp,new lazy_starter<T>(t, h)});
+        _signal = true;
+        _sleeper.notify_one();        
+        return true;        
+    }
     
+    ///Start a specified lazy task after given duration
+    /**
+     * @param t lazy task to be started
+     * @param dur duration after the task will be started
+     * @retval true, task si scheduled
+     * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
+     * @note lazy task can be canceled. If this happens, the task is never started and
+     * exception await_canceled_exception() is propagated to all awaiters
+     * 
+     */
+    template<typename T, typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
+    bool start_after(lazy<T> t, const Dur &dur) {
+        return start_at(t, Traits::from_duration(dur));
+    }
+    
+    ///Start a specified task now
+    /**
+     * Main benefit if this function is to start a task inside of scheduler's thread(pool). 
+     * 
+     * @param t lazy task to be started
+     * @retval true, task si scheduled
+     * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
+     */
+    template<typename T>
+    bool start_now(lazy<T> t) {
+        return start_at(t, Traits::now());
+    }
     
     ///Pause current coroutine and return execution to the scheduler
     /**This can be useful in single thread scheduler, if the current
@@ -213,19 +297,19 @@ public:
 
     ///cancel waiting task
     /**
-     * @param task task to cancel
+     * @param task_ task to cancel
      * @retval true coroutine canceled
      * @retval false coroutine is not scheduled at tbis time
      * 
      * @note canceled coroutine receives exception await_canceled_exception
      */
-    template<typename T>
-    bool cancel(const task<T> &task_) {
+    template<typename T, typename P>
+    bool cancel(const task<T, P> &task_) {
         return cancel(task_.get_id());
     }
     ///cancel waiting generator
     /**
-     * @param generator generator to cancel
+     * @param generator_ generator to cancel
      * @retval true coroutine canceled
      * @retval false coroutine is not scheduled at tbis time
      * 
@@ -264,7 +348,7 @@ protected:
     
     struct sch_item_t {
         time_point tp;
-        awaiter *aw;
+        sch_abstract_awaiter *aw;
         bool operator<(const sch_item_t &a) const {return tp < a.tp;} 
         bool operator>(const sch_item_t &a) const {return tp > a.tp;} 
         bool operator<=(const sch_item_t &a) const {return tp <= a.tp;} 
@@ -276,7 +360,6 @@ protected:
     using sch_list_t = std::priority_queue<sch_item_t,  std::vector<sch_item_t>, std::greater<sch_item_t> >;
 
     sch_list_t _list;    
-    std::vector<std::coroutine_handle<> > _canceled;
     std::mutex _mx;
     typename Traits::sleeper _sleeper;
     bool _exit = false;
@@ -287,7 +370,7 @@ protected:
     task<> worker(thread_pool &pool) {
         try {
             do {
-                awaiter *aw = get_expired();
+                sch_abstract_awaiter *aw = get_expired();
                 if (aw) {
                     co_await pool.fork([aw]{
                         aw->resume(false);
@@ -302,12 +385,12 @@ protected:
         }
     }
     
-    awaiter *get_expired() {
+    sch_abstract_awaiter *get_expired() {
         std::lock_guard _(_mx);
         if (_list.empty()) return nullptr;
         auto t = Traits::now();
         if (_list.top().tp < t) {
-            awaiter *aw = _list.top().aw;
+            sch_abstract_awaiter *aw = _list.top().aw;
             _list.pop();
             return aw;
         }
@@ -331,7 +414,7 @@ protected:
         class exit_signal: public abstract_awaiter<true> {
         public:
             exit_signal(scheduler *sch):_sch(sch) {}
-            virtual void resume() override {
+            virtual void resume() noexcept override {
                 std::lock_guard _(_sch->_mx);
                 _sch->_exit = true;
                 _sch->_sleeper.notify_all();
@@ -343,11 +426,9 @@ protected:
         auto join_awaiter = join_task.operator co_await();
         if (join_awaiter.subscribe_awaiter(&s)) {
             do {
-                awaiter *aw = get_expired();
+                sch_abstract_awaiter *aw = get_expired();
                 if (aw) {
-                    coroboard([&]{
-                        aw->resume(false);
-                    });
+                    aw->resume(false);                    ;
                 } else {                
                     wait();
                 }            
@@ -400,7 +481,7 @@ inline bool scheduler<Clock, Traits>::cancel(coro_id id) {
     std::swap(oldls, _list);    
     while (!oldls.empty()) {
         if (oldls.top().aw->is(id)) {
-            awaiter *aw = oldls.top().aw;
+            sch_abstract_awaiter *aw = oldls.top().aw;
             oldls.pop();
             while (!oldls.empty()) {
                 _list.push(std::move(oldls.top()));

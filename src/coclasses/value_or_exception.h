@@ -15,47 +15,83 @@ namespace cocls {
  * @tparam T
  */
 template<typename T>
-struct value_or_exception {
+class value_or_exception {
+public:
     
+    ///Set value
+    /**    
+     * @param val value to set
+     */
     template<typename X>
-    void set_value(X &&val) {
-        _value.template emplace<T>(std::forward<X>(val));
+    void set_value(X &&val) noexcept {
+        try {
+            _value.template emplace<T>(std::forward<X>(val));
+        } catch (...) {
+            unhandled_exception();
+        }
     }
     
+    ///Capture unhandled exception
     void unhandled_exception() {
         _value.template emplace<std::exception_ptr>(std::current_exception());
     }
-        
-    std::variant<std::exception_ptr, T> _value;
     
+    ///Get value as reference (can be moved out)
+    /**
+     * @return stored value. Function can throw an exception, if exception is stored
+     */
     T &get_value() {
         if (_value.index() ==0) {
             std::exception_ptr p = std::get<0>(_value);
             if (p == nullptr) throw value_not_ready_exception();
             else std::rethrow_exception(p);
         } else {
-            return std::get<1>(_value);
+            return get_value_int();
         }
     }
+    
 
+    ///Get value as const reference
+    /**
+     * @return stored value. Function can throw an exception, if exception is stored
+     */
     const T &get_value() const {
         if (_value.index() ==0) {
             std::exception_ptr p = std::get<0>(_value);
             if (p == nullptr) throw value_not_ready_exception();
             else std::rethrow_exception(p);
         } else {
-            return std::get<1>(_value);
+            return get_value_int();
         }
     }
 
+    ///Returns true, if there is a value or exception
+    /**
+     * @retval true result is ready
+     * @retval false result is not ready yet 
+     */
     bool is_ready() {
         return _value.index() == 1 || std::get<0>(_value) != nullptr;
     }
-    std::exception_ptr get_exception() const {
+    ///Retrieve exception if is there
+    /**
+     * @return returns exception or nullptr
+     */
+    std::exception_ptr get_exception() const noexcept {
         if (_value.index() != 0) return nullptr;
         else return std::get<0>(_value); 
     }
+protected:
     
+    T &get_value_int() noexcept {
+        return std::get<1>(_value);
+    }
+    const T &get_value_int() const noexcept {
+        return std::get<1>(_value);
+    }
+    
+    std::variant<std::exception_ptr, T> _value;
+
 };
 
 template<>

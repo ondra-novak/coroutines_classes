@@ -108,13 +108,14 @@ template<typename Coro ,typename T>
 class current_queue {
 public:
     using promise_t = with_queue_promise<Coro, T>;
+    using awaiter_t = decltype(std::declval<queue<T> >().pop());
     static bool await_ready() noexcept {return false;}
-    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+    bool await_suspend(std::coroutine_handle<> h) {
         _h = std::coroutine_handle<promise_t>::from_address(h.address());
         auto &promise = _h.promise();
         _awaiter.emplace(std::move(promise._q.pop()));
         if (_awaiter->await_ready()) {
-            return h;
+            return false;
         }
         return _awaiter->await_suspend(h);
     }
@@ -123,7 +124,7 @@ public:
     }
 protected:
     std::coroutine_handle<promise_t> _h;
-    std::optional<co_awaiter<queue<T> >> _awaiter;
+    std::optional<awaiter_t> _awaiter;
 };
 
 template<typename Coro ,typename T>

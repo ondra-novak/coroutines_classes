@@ -6,10 +6,8 @@
 #ifndef SRC_COCLASSES_MUTEX_H_
 #define SRC_COCLASSES_MUTEX_H_
 
+#include "awaiter.h"
 #include "common.h"
-#include "resume_lock.h"
-#include "abstract_awaiter.h"
-
 #include <cassert>
 #include <coroutine>
 #include <memory>
@@ -40,6 +38,7 @@ namespace cocls {
  * 
  * 
  */
+
 class mutex {
 protected:    
     class ownership_deleter {
@@ -55,11 +54,11 @@ protected:
 public:
 
 
-    using co_awaiter = ::cocls::co_awaiter<mutex, true>;
+    using co_awaiter = ::cocls::co_awaiter<mutex,true>;
     using blocking_awaiter = ::cocls::blocking_awaiter<mutex, true>;
     using abstract_awaiter = ::cocls::abstract_awaiter<true>; 
     class null_awaiter: public abstract_awaiter {
-        virtual void resume() override {}
+        virtual void resume()  noexcept override {}
        
     };
 
@@ -148,7 +147,7 @@ protected:
                 if (_queue) {   //some items are in queue, so release 
                     auto *a = _queue;   //pick first item
                     _queue = _queue->_next;  //remove it from the queue
-                    a->resume(); //resume this item - so now, ownership is transfered
+                    a->resume();
                 } else { //no items in queue?
                     //assume, no requests
                     abstract_awaiter *n = &_locked;

@@ -7,11 +7,13 @@
 #pragma once
 #ifndef SRC_COCLASSES_THREAD_POOL_H_
 #define SRC_COCLASSES_THREAD_POOL_H_
+#include "awaiter.h"
 #include "common.h"
-#include "resume_lock.h"
 #include "exceptions.h"
 
-#include "abstract_awaiter.h"
+#include "resumption_policy.h"
+#include "lazy.h"
+
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -62,9 +64,7 @@ public:
             auto h = _queue.front();
             _queue.pop();
             lk.unlock();
-            coroboard([&]{
-                h->resume();
-            });
+            h->resume();
             lk.lock();
         }
     }
@@ -83,7 +83,15 @@ public:
             std::swap(tmp, _threads);
             std::swap(q, _queue);
         }
-        for (auto &t: tmp) t.join();
+        auto me = std::this_thread::get_id();
+        for (std::thread &t: tmp) {
+            if (t.get_id() == me) {
+                t.detach(); 
+            }
+            else {
+                t.join();
+            }
+        }
         while (!q.empty()) {
             auto n = std::move(q.front());
             q.pop();
@@ -104,14 +112,16 @@ public:
     class fork_awaiter: public awaiter {
     public:
         fork_awaiter(thread_pool &pool, Fn &&fn):awaiter(pool), _fn(std::forward<Fn>(fn)) {}
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
+        bool await_suspend(std::coroutine_handle<> h) noexcept {
             Fn fn (std::forward<Fn>(_fn));
-            std::coroutine_handle<> out = awaiter::await_suspend(h);            
+            bool b = awaiter::await_suspend(h);            
             fn();
-            return out;
+            return b;
         }
     protected:
         Fn _fn;
+    private:
+        using awaiter::set_resumption_policy;
     };
     
     
@@ -130,7 +140,66 @@ public:
     awaiter operator co_await() {
         return *this;
     }
+    
+    ///start a anonymous awaiter - called from thread_pool_resumption_policy 
+    /**
+     * @param aw awaiter to start in thread pool
+     */
+    void start(abstract_awaiter<> *aw) {
+        bool ok = subscribe_awaiter(aw);
+        if (!ok) {
+            aw->resume();
+        }        
+    }
 
+    ///start a lazy task in the thread pool
+    /**
+     * @param t task to start
+     * @retval true started
+     * @retval false can't be started, already running or already scheduled
+     */
+    template<typename T, typename _P>
+    bool start(lazy<T,_P> t) {
+        
+        class awaiter: public abstract_owned_awaiter<thread_pool> {
+        public:
+            awaiter(thread_pool &owner, lazy<T> t, std::coroutine_handle<> h)
+                :abstract_owned_awaiter<thread_pool>(owner)
+                ,_t(t), _h(h) {}
+            void resume_canceled() noexcept{
+                _t.mark_canceled();
+                _policy.resume(_h);
+                delete this;            
+            }
+
+            virtual void resume() noexcept override {
+                if (_owner.is_stopped()) _t.mark_canceled();
+                _policy.resume(_h);
+                delete this;
+            }
+            virtual std::coroutine_handle<> resume_handle() noexcept override {
+                if (_owner.is_stopped()) _t.mark_canceled();
+                auto out = _h;
+                delete this;
+                return out;
+            }
+        protected:
+            lazy<T> _t;
+            std::coroutine_handle<> _h;
+            _P _policy;
+            
+        };
+        
+        std::coroutine_handle<> h = t.get_start_handle();
+        if (h == nullptr) return false;
+        awaiter *aw = new awaiter(*this, t, h);
+        bool ok = subscribe_awaiter(aw);
+        if (!ok) {
+            aw->resume_canceled();
+        }
+        return true;
+    }
+    
     /*
      * BUG - GCC 10.3-12.2+ - do not inline lambda to this function
      * 
@@ -235,10 +304,69 @@ protected:
         return true;
     }
 
-
-
 };
 
+using shared_thread_pool = std::shared_ptr<thread_pool>;
+
+namespace resumption_policy {
+
+
+
+///Thread pool policy need shared thread pool (std::shared_ptr<thread_pool>)
+/**
+ * Because the task cannot initialize its resumption policy, it is not started until
+ * the policy is initialized. Use task<>::initialize_policy(shared_ptr<thread_pool>).
+ * Once the policy is initialized, the task is started
+ *  
+ * 
+ */
+struct thread_pool {
+    
+    thread_pool() = default;
+    
+    class resumer: public abstract_awaiter<> {
+    public:
+        shared_thread_pool _cur_pool = nullptr;
+        std::coroutine_handle<> _h;
+        virtual void resume() noexcept override{
+            queued::resume(_h);
+        }
+        void set_handle(std::coroutine_handle<> h) {
+            _h = h;
+            if (_cur_pool != nullptr) _cur_pool->start(this);
+        }
+        void set_pool(shared_thread_pool pool) {
+            bool start = _cur_pool == nullptr;
+            _cur_pool = pool;
+            if (start) [[likely]] {
+                _cur_pool->start(this);
+            }
+        }
+    };
+    
+    resumer _resumer;
+    
+        
+    void resume(std::coroutine_handle<> h) {
+        _resumer.set_handle(h);
+    }
+    ///Initializes policy
+    /**
+     * @param pool shared thread pool
+     * 
+     * called from task<>::initialize_policy();
+     * 
+     * 
+     */
+    void initialize_policy(shared_thread_pool pool) {
+        _resumer.set_pool(pool);
+    }
+    
+    thread_pool(const shared_thread_pool &pool) {
+        initialize_policy(pool);
+    }
+};
+}
 
 }
 

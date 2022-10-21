@@ -16,7 +16,7 @@
 namespace cocls {
 
 
-
+///subscription type
 enum class subscribtion_type {
     ///read all values, no skipping, if the subscriber is left behind, it is dropped
     /** default mode, subscriber receives all published values */
@@ -308,11 +308,13 @@ protected:
     
 
     
-    
-    friend class subscriber<T>;
+    template<typename> friend class subscriber;
 };
 
 ///Subscriber, can subscribe to publisher
+/**
+ * @tparam T type of data to be exchanged
+ */
 template<typename T>
 class subscriber {
 public:
@@ -325,7 +327,7 @@ public:
      * Subscribes and starts reading recent data
      * 
      * @param pub publisher
-     * 
+     * @param t type of subscription
      * 
      */
     subscriber(publisher<T> &pub, subscribtion_type t = subscribtion_type::all_values)
@@ -334,6 +336,7 @@ public:
     /**
      * @param pub publisher 
      * @param pos starting position
+     * @param t type of subscription
      */
     subscriber(publisher<T> &pub, std::size_t pos, subscribtion_type t = subscribtion_type::all_values)
     :_q(pub.get_queue()),_pos(pos),_t(t) {
@@ -341,8 +344,16 @@ public:
     }
     
     
-    ///can't be copied
-    subscriber(const subscriber &) = delete;
+    ///Subscriber can be copied
+    /**
+     * By copying subscriber, the copy is automatically subscribed from the position equals to
+     * position of source subscriber
+     *
+     * @param other source subscriber
+     */
+    subscriber(const subscriber &other):_q(other._q),_pos(other._pos), _t(other._t){
+        _q->subscribe(this, _pos);
+    }
     ///can't be assigned
     subscriber &operator=(const subscriber &) = delete;
     
@@ -360,8 +371,8 @@ public:
      * @exception no_longer_avaiable_exception subscriber wants to access a value, which has been outside of available queue window.
      * @exception no_more_values_exception publisher has been closed
      */
-    co_awaiter<subscriber, true> operator co_await() {
-        return *this;
+    co_awaiter<subscriber,  true> operator co_await() {
+        return co_awaiter<subscriber, true>(*this);
     }
 
     ///Retrieves current position
@@ -382,7 +393,7 @@ protected:
     subscribtion_type _t;
     
     friend class publisher<T>;
-    friend class co_awaiter<subscriber<T>,true >;
+    friend class co_awaiter<subscriber<T>, true >;
 
     bool is_ready() {
         return _q->advance(this, _pos,_t);

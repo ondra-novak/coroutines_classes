@@ -1,8 +1,9 @@
+/** @file generator.h */
 #pragma once
 #ifndef SRC_COCLASSES_GENERATOR_H_
 #define SRC_COCLASSES_GENERATOR_H_
+#include "awaiter.h"
 #include "common.h"
-#include "abstract_awaiter.h"
 #include "poolalloc.h"
 #include "future.h"
 #include "no_alloc.h"
@@ -64,14 +65,21 @@ public:
         bool _end;
     };
 
+    
     template<typename X>
     class awaiter_t : public co_awaiter<X> {
     public:
+        awaiter_t(X &x):co_awaiter<X>(x) {}
         using co_awaiter<X>::co_awaiter;
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             this->_h = h;
             this->_owner.subscribe_awaiter(this);            
             return this->_owner.get_handle();
+        }
+        
+    protected:
+        virtual void resume() noexcept override {            
+            resumption_policy::unspecified<void>::resume(this->_h);
         }
     };
     
@@ -114,7 +122,7 @@ public:
             return std::coroutine_handle<promise_type>::from_promise(*_owner._promise);
         }
         
-        friend class awaiter_t<next_res>;
+        template<class> friend class awaiter_t;
         friend class co_awaiter<next_res>;
         
     };

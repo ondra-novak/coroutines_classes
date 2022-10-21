@@ -5,10 +5,12 @@
 #ifndef SRC_COCLASSES_QUEUE_H_
 #define SRC_COCLASSES_QUEUE_H_
 
+#include "awaiter.h"
 #include "common.h"
-#include "abstract_awaiter.h"
 #include "exceptions.h"
-#include "resume_lock.h"
+#include "resumption_policy.h"
+#include "queued_resumption_policy.h"
+
 #include <coroutine>
 
 #include <mutex>
@@ -164,8 +166,9 @@ protected:
 };
 
 
+
 template<typename T>
-inline void queue<T>::push(T &&x) {    
+inline void queue<T>::push(T &&x) {
     std::unique_lock<std::mutex> lk(_mx);
     //push to queue under lock
     _queue.push(std::move(x));
