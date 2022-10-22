@@ -324,6 +324,8 @@ struct thread_pool {
     
     thread_pool() = default;
     
+    using initial_awaiter = initial_resume_by_policy<thread_pool>;
+    
     class resumer: public abstract_awaiter<> {
     public:
         shared_thread_pool _cur_pool = nullptr;

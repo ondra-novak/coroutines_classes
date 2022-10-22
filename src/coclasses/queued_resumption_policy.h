@@ -17,22 +17,24 @@ public:
 
     static thread_local queued_resumption_control instance;
 
-    void resume(std::coroutine_handle<> h) {
-        _queue.push(h);
-        flush_queue();
-    }
-
-    void flush_queue() {
+    void resume(std::coroutine_handle<> h, bool immediate) {
         if (!_active) {
             _active = true;
+            h.resume();
             while (!_queue.empty()) {
-                auto h = _queue.front();
+                h = _queue.front();
                 _queue.pop();
                 h.resume();
             }
             _active = false;
+        } else if (immediate){
+            h.resume();
+        } else {
+            _queue.push(h);
         }
     }
+    
+
 
 
 protected:
@@ -55,25 +57,28 @@ namespace resumption_policy {
  * Nested resumes are put into queue and resumed after current coroutine is suspended or
  * finished
  * 
- * A task started under this policy is executed immediately when started from normal
- * function, but it is queued and postponed when started from a coroutine.
+ * A task started under this policy is executed immediately.
  * 
  * This resumption policy is recommended and it is default when resumption policy
  * is unspecified
  * 
  */
 struct queued {
+    struct initial_awaiter: std::suspend_always {
+        initial_awaiter(queued &) {}
+        void await_suspend(std::coroutine_handle<> h) {
+            _details::queued_resumption_control::instance.resume(h,true);
+        }
+    };
+    
     ///resume in queue
     static void resume(std::coroutine_handle<> h) {
-        _details::queued_resumption_control::instance.resume(h);
-    }
-    ///flush queue, executing all queued coroutines now
-    static void flush_queue() {
-        _details::queued_resumption_control::instance.flush_queue();
+        _details::queued_resumption_control::instance.resume(h,false);
     }
 };
 
 }
+
 }
 
 

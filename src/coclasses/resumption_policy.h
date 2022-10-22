@@ -61,6 +61,10 @@ namespace resumption_policy {
 
 ///Resumption policy concept - template to create resumption policy
 struct _policy_concept {
+    
+    ///Specifies how the coroutine is initially started. It is awaiter type.
+    /**Its constructor must accept the resumption policy object */ 
+    struct initial_awaiter;
     ///mandatory - handles resumption
     void resume(std::coroutine_handle<> h);
     ///optional - allows to initialize the polici on a task
@@ -104,10 +108,19 @@ struct _awaiter_concept {
     
 };
 
+struct initial_suspend_never: public std::suspend_never {
+    template<typename Policy> initial_suspend_never(Policy &p) {}
+};
 
-
-struct recursive_resumption_policy {    
-    static void resume(std::coroutine_handle<> h) noexcept {h.resume();}
+template<typename Policy>
+struct initial_resume_by_policy: public std::suspend_always {
+    Policy &_p;
+    initial_resume_by_policy(Policy &p):_p(p) {}
+    initial_resume_by_policy(const initial_resume_by_policy &p) = default;
+    initial_resume_by_policy &operator=(const initial_resume_by_policy &p) = delete;
+    constexpr void await_suspend(std::coroutine_handle<> h) const noexcept {
+        _p.resume(h);        
+    }
 };
 
 
@@ -119,20 +132,26 @@ struct recursive_resumption_policy {
      * Execution is immediate
      */
     struct immediate {
+        using initial_awaiter = initial_suspend_never;
         static void resume(std::coroutine_handle<> h) noexcept {h.resume();}
     };    
     struct queued;
     struct parallel;
-    struct thread_pool;        
+    struct thread_pool;
 
     ///when resumption policy is not specified
-    /** This template can be overwritten by specializing to unspecified<void> */
-    template<typename> using unspecified = queued; 
+    /** This template can be overwritten by specializing to unspecified<void> 
+     * 
+     * Default resumption policy is start_immediately_then_queued. This 
+     * causes that coroutines acts as normal functions, only when a coroutine 
+     * suspended, then its resumption is handled through thread's queue
+     * 
+     * */
+    template<typename> using unspecified = queued;; 
 
 }
 
 }
-
 
 
 #endif /* SRC_COCLASSES_RESUMPTION_POLICY_H_ */

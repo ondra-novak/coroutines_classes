@@ -303,7 +303,9 @@ public:
         }
     }
 
-    class initial_awaiter {
+    using initial_awaiter = typename std::remove_reference<Policy>::type::initial_awaiter;
+    
+/*    class initial_awaiter {
     public:
         initial_awaiter(Policy &p):_p(p) {}
         initial_awaiter(const initial_awaiter &) = default;
@@ -316,11 +318,11 @@ public:
         static void await_resume() noexcept {}
     protected:
         Policy &_p;
-    };
+    };*/
     
     initial_awaiter initial_suspend()  noexcept {
         ++this->_ref_count;
-        return {_policy};
+        return initial_awaiter(_policy);
     }
 
     template<typename ... Args>

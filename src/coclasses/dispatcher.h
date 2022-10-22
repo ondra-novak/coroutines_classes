@@ -230,7 +230,17 @@ namespace resumption_policy {
      */ 
     struct dispatcher {
 
+        
+        
         std::variant<std::monostate, dispatcher_ptr, std::coroutine_handle<> > _st; 
+
+        struct initial_awaiter: initial_resume_by_policy<dispatcher> {            
+            using initial_resume_by_policy<dispatcher>::initial_resume_by_policy;
+            bool await_ready() const {
+                return _p._st.index() == 1;
+            }
+        };
+
         
         dispatcher()
             :_st(dispatcher_ptr::element_type::instance) {}
