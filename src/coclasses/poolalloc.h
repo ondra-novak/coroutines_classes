@@ -137,8 +137,15 @@ struct global_block_cache {
     }
 };
 
+struct abstract_thread_local_cache {
+    virtual  ~abstract_thread_local_cache() = default;
+    virtual void *alloc() = 0;
+    virtual void dealloc(void *) = 0;
+    
+};
+
 template<std::size_t sz>
-struct thread_local_cache {
+struct thread_local_cache: abstract_thread_local_cache {
     global_block_cache<sz> *_cache;
     unsigned int _max_count;
 
@@ -149,7 +156,7 @@ struct thread_local_cache {
     thread_local_cache(global_block_cache<sz> *cache, unsigned int max_count)
         :_cache(cache), _max_count(max_count) {}
     
-    void *alloc() {
+    virtual void *alloc() override {
         auto x = _prepared;
         if (!x) [[unlikely]] {
             x = _dropped;            
@@ -168,7 +175,7 @@ struct thread_local_cache {
         return x;
     }
     
-    void dealloc(void *ptr) {
+    virtual void dealloc(void *ptr) override {
         block<sz> *b = reinterpret_cast<block<sz> *>(ptr);
         if (_count >= _max_count) [[unlikely]] {
             //if cache is full, check for refill global cache
@@ -241,18 +248,23 @@ struct thread_local_cache_chain {
         :_cache(&l->_cache, max_cache_size/_size), _next(&(l->_next), max_cache_size) {}
     
     void *alloc(std::size_t sz) {
-        if (sz <= _size && sz + step > _size) {
+        if (sz == _size) {
             return _cache.alloc();
         }
         return _next.alloc(sz);
     }
     void dealloc(void *ptr, std::size_t sz) {
-        if (sz <= _size && sz + step > _size) {
+        if (sz == _size) {
             _cache.dealloc(ptr);
             return;
         }
         _next.dealloc(ptr, sz);
         return;
+    }
+    
+    void init_map(abstract_thread_local_cache **map) {
+        *map = &_cache;
+        _next.init_map(map+1);
     }
     
     void gc() {
@@ -267,6 +279,7 @@ struct thread_local_cache_chain<0,step> {
     void *alloc(std::size_t) {return nullptr;}
     void dealloc(void *, std::size_t) {}
     void gc() {}
+    void init_map(abstract_thread_local_cache **map) {}
 };
 
 
@@ -275,9 +288,25 @@ struct alloc_master {
     static constexpr std::size_t _alloc_step = COCLS_POOLALLOC_ALLOCSTEP;
     static constexpr std::size_t _max_levels = COCLS_POOLALLOC_LEVELS;
     static constexpr std::size_t _max_alloc_size = _alloc_step * _max_levels;
+
+    struct Local {
+        std::array<abstract_thread_local_cache *, _max_levels> _map;
+        thread_local_cache_chain<_max_levels, _alloc_step> _chain;
+        Local(global_cache_chain<_max_levels, _alloc_step> *l, std::size_t max_cache_size)
+           :_chain(l, max_cache_size) {
+            _chain.init_map(_map.data());
+        }
+        static constexpr auto index(std::size_t sz) {return (sz+_alloc_step+1)/_alloc_step;}
+        void *alloc(std::size_t sz) {
+            return _map[index(sz)]->alloc();
+        }
+        void dealloc(void *ptr, std::size_t sz) {
+            _map[index(sz)]->dealloc(ptr);
+        }
+            
+    };
     
     using Global = global_cache_chain<_max_levels, _alloc_step>;
-    using Local = thread_local_cache_chain<_max_levels, _alloc_step>;
     
     static Global &get_global() {
         static Global g;
