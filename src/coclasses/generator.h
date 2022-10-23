@@ -128,6 +128,7 @@ public:
     };
 
     
+    generator() = default;
     generator(promise_type *promise):_promise(promise) {}
 
     coro_id get_id() {
