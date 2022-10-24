@@ -56,7 +56,7 @@ public:
      * to add a worker. Current thread becomes a worker until stop() is called.
      */
     void worker() {
-        current_pool() = this;
+        _current = this;
         std::unique_lock lk(_mx);
         for(;;) {
             _cond.wait(lk, [&]{return !_queue.empty() || _exit;});
@@ -65,6 +65,8 @@ public:
             _queue.pop();
             lk.unlock();
             h->resume();
+            //if _current is nullptr, thread_pool has been destroyed 
+            if (_current == nullptr) return;
             lk.lock();
         }
     }
@@ -86,7 +88,9 @@ public:
         auto me = std::this_thread::get_id();
         for (std::thread &t: tmp) {
             if (t.get_id() == me) {
-                t.detach(); 
+                t.detach();
+                //mark this thread as ordinary thread
+                _current = nullptr;
             }
             else {
                 t.join();
@@ -241,9 +245,9 @@ public:
         
         class  current_awaiter: public awaiter {
         public:
-            current_awaiter():awaiter(*current_pool()) {}
+            current_awaiter():awaiter(*_current) {}
             static bool await_ready() {
-                thread_pool *c = current_pool();
+                thread_pool *c = _current;
                 return c == nullptr || c->_exit;
             }
         };
@@ -251,9 +255,9 @@ public:
         template<typename Fn>
         class current_fork_awaiter: public fork_awaiter<Fn> {
         public:
-            current_fork_awaiter(Fn &&fn):fork_awaiter<Fn>(*current_pool(), std::forward<Fn>(fn)) {}
+            current_fork_awaiter(Fn &&fn):fork_awaiter<Fn>(*_current, std::forward<Fn>(fn)) {}
             static bool await_ready() {
-                thread_pool *c = current_pool();
+                thread_pool *c = _current;
                 return c == nullptr || c->_exit;
             }            
         };
@@ -267,7 +271,7 @@ public:
             return current_fork_awaiter<Fn>(std::forward<Fn>(fn));
         }
         static bool is_stopped() {
-            thread_pool *c = current_pool();
+            thread_pool *c = _current;
             return !c || c->is_stopped();
         }
 
@@ -284,10 +288,7 @@ protected:
     std::queue<abstract_awaiter<> *> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;    
-    static thread_pool * & current_pool() {
-        static thread_local thread_pool *c = nullptr;
-        return c;
-    }
+    static thread_local thread_pool *_current;
     
     friend class co_awaiter<thread_pool>;
     bool is_ready() noexcept {
@@ -305,6 +306,8 @@ protected:
     }
 
 };
+
+inline thread_local thread_pool *thread_pool::_current = nullptr;
 
 using shared_thread_pool = std::shared_ptr<thread_pool>;
 
