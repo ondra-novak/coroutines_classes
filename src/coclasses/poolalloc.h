@@ -262,9 +262,11 @@ struct thread_local_cache_chain {
         return;
     }
     
-    void init_map(abstract_thread_local_cache **map) {
+    abstract_thread_local_cache **init_map(abstract_thread_local_cache **map) {
+        map = _next.init_map(map);
+        map++;
         *map = &_cache;
-        _next.init_map(map+1);
+        return map;
     }
     
     void gc() {
@@ -279,7 +281,7 @@ struct thread_local_cache_chain<0,step> {
     void *alloc(std::size_t) {return nullptr;}
     void dealloc(void *, std::size_t) {}
     void gc() {}
-    void init_map(abstract_thread_local_cache **map) {}
+    abstract_thread_local_cache **init_map(abstract_thread_local_cache **map) {return map-1;}
 };
 
 
@@ -296,7 +298,7 @@ struct alloc_master {
            :_chain(l, max_cache_size) {
             _chain.init_map(_map.data());
         }
-        static constexpr auto index(std::size_t sz) {return (sz+_alloc_step+1)/_alloc_step;}
+        static constexpr auto index(std::size_t sz) {return (sz-1)/_alloc_step;}
         void *alloc(std::size_t sz) {
             return _map[index(sz)]->alloc();
         }
