@@ -10,10 +10,10 @@
 #include "common.h" 
 #include "exceptions.h"
 #include "debug.h"
+#include "future_var.h"
 #include "poolalloc.h"
 #include "resumption_policy.h"
 
-#include "value_or_exception.h"
 #include <atomic>
 #include <cassert>
 #include <coroutine>
@@ -68,39 +68,39 @@ public:
     using promise_type_base = task_promise_base<T>;
 
     ///You can create empty task, which can be initialized later by assign
-    task():_promise(nullptr) {}
+    task():_h(nullptr) {}
     ///task is internaly constructed from pointer to a promise  
-    task(promise_type_base *promise): _promise(promise) {
-        _promise->add_ref();
+    task(std::coroutine_handle<promise_type_base> h): _h(h) {
+        get_promise()->add_ref();
     }
     ///destruction of task decreases reference
     ~task() {
-        if (_promise) _promise->release_ref();
+        if (_h) get_promise()->release_ref();
     }
     
     ///you can copy task, which just increases references
-    task(const task &other):_promise(other._promise) {
-        _promise->add_ref();
+    task(const task &other):_h(other._h) {
+        get_promise()->add_ref();
     }
     ///you can move task
-    task(task &&other):_promise(other._promise) {
-        other._promise = nullptr;
+    task(task &&other):_h(other._h) {
+        other._h= nullptr;
     }
     ///you can assign
     task &operator=(const task &other){
         if (this != &other) {
-            if (_promise) _promise->release_ref();
-            _promise = other._promise;
-            _promise->add_ref();
+            if (_h) get_promise()->release_ref();
+            _h= other._h;
+            get_promise()->add_ref();
         }
         return *this;
     }
     ///you can move-assign
     task &operator=(task &&other) {
         if (this != &other) {
-            if (_promise) _promise->release_ref();
-            _promise = other._promise;
-            other._promise = nullptr;        
+            if (_h) get_promise()->release_ref();
+            _h = other._h;
+            other._h = nullptr;        
         }
         return *this;
     }
@@ -113,7 +113,7 @@ public:
      *     
      */
     co_awaiter<promise_type_base, true> operator co_await() {
-        return *_promise;
+        return *get_promise();
     }
     
     
@@ -126,12 +126,12 @@ public:
      * @retval false task is not finished yet
      */
     bool is_ready() const {
-        return _promise->is_ready();
+        return get_promise()->is_ready();
     }
 
     ///Join the task synchronously, returns value
     decltype(auto) join() {
-        blocking_awaiter<promise_type_base, true> aw(*_promise);
+        blocking_awaiter<promise_type_base, true> aw(*get_promise());
         return aw.wait();
     }
     
@@ -154,13 +154,13 @@ public:
     
     ///Retrieve unique coroutine identifier
     coro_id get_id() const {
-        return std::coroutine_handle<promise_type_base>::from_promise(*_promise).address();
+        return _h.address();
     }
     
    
     ///Determines whether object contains a valid task
     bool valid() const {
-        return _promise!=nullptr;
+        return _h!=nullptr;
     }
     
     
@@ -171,7 +171,7 @@ public:
      * Calling initialize_policy() after conversion is UB
      */ 
     operator task<T>() {
-        return task<T>(_promise);
+        return task<T>(_h);
     }
 
     ///Initializes resumption policy
@@ -184,14 +184,16 @@ public:
      */
     template<typename ... Args>
     void initialize_policy(Args && ... args) {
-        static_cast<promise_type *>(_promise)->initialize_policy(std::forward<Args>(args)...);
+        static_cast<promise_type *>(get_promise())->initialize_policy(std::forward<Args>(args)...);
     }
     
 protected:
-    promise_type_base *_promise;
+    std::coroutine_handle<promise_type_base> _h;
     
     
-    promise_type_base *get_promise() const {return _promise;}
+    promise_type_base *get_promise() const {
+        return &_h.promise();
+    }
 };
 
 
@@ -199,14 +201,18 @@ protected:
 template<typename T>
 class task_promise_base: public coro_promise_base  {
 public:
+    using AW = abstract_awaiter<true>;
+
+    future_var<T> _value;
+    std::atomic<AW *> _awaiter_chain;
 
     task_promise_base():_ref_count(0) {}
 
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
     ~task_promise_base() {
-        if (_state == State::ready) {
-            std::exception_ptr e = _value.get_exception();
+        if (!AW::is_processed(_awaiter_chain)) {
+            std::exception_ptr e = _value.exception_ptr();
             if (e) debug_reporter::get_instance()
                     .report_exception(e, typeid(task<T>));
         }
@@ -244,44 +250,29 @@ public:
         }
     }
 
-    using AW = abstract_awaiter<true>;
     
-    enum class State {
-        not_ready,
-        ready,
-        processed
-    };
-    
-    value_or_exception<T> _value;
-    std::atomic<State> _state = State::not_ready;
-    std::atomic<AW *> _awaiter_chain;
+
     
     bool is_ready() const {
-        return _state != State::not_ready;
+        return AW::is_ready(_awaiter_chain);
     }
     
     bool subscribe_awaiter(AW *aw) {
-        aw->subscribe(_awaiter_chain);
-        if (is_ready()) {
-            aw->resume_chain(_awaiter_chain, aw);
-            return false;
-        } else {
-            return true;
-        }
+        return aw->subscibre_check_ready(_awaiter_chain);
     }
     
     decltype(auto) get_result() {
-        State s = State::ready;
-        if (!_state.compare_exchange_strong(s, State::processed)) {
-            if (s == State::not_ready) throw value_not_ready_exception();
+        if (AW::mark_processed(_awaiter_chain)) {
+            return _value.get();
+        } else {
+            throw value_not_ready_exception();
         }
-        return _value.get_value();
+        
     }
     
     void unhandled_exception() {
         _value.unhandled_exception();
-        this->_state = State::ready;
-        AW::resume_chain(this->_awaiter_chain, nullptr);
+        AW::mark_ready_resume(_awaiter_chain);
     }
     
     std::atomic<unsigned int> _ref_count;
@@ -342,13 +333,12 @@ class task_promise: public task_promise_with_policy<T, Policy> {
 public:
     using AW = typename task_promise_with_policy<T, Policy>::AW;
     template<typename X>
-    auto return_value(X &&val)->decltype(std::declval<value_or_exception<T> >().set_value(val)) {
-        this->_value.set_value(std::forward<X>(val));
-        this->_state = task_promise_base<T>::State::ready;
-        AW::resume_chain(this->_awaiter_chain, nullptr);
+    auto return_value(X &&val)->decltype(std::declval<future_var<T> >().emplace(std::forward<X>(val))) {
+        this->_value.emplace(std::forward<X>(val));
+        AW::mark_ready_resume(this->_awaiter_chain);
     }
     task<T, Policy> get_return_object() {
-        return task<T, Policy>(this);
+        return task<T, Policy>(std::coroutine_handle<task_promise_base<T> >::from_promise(*this));
     }
 };
 
@@ -357,12 +347,11 @@ class task_promise<void, Policy>: public task_promise_with_policy<void, Policy> 
 public:
     using AW = typename task_promise_with_policy<void, Policy>::AW;
     auto return_void() {
-        this->_value.set_value();
-        this->_state= task_promise_base<void>::State::ready;
-        AW::resume_chain(this->_awaiter_chain, nullptr);
+        this->_value.emplace();
+        AW::mark_ready_resume(this->_awaiter_chain);
     }
     task<void, Policy> get_return_object() {
-        return task<void, Policy>(this);
+        return task<void, Policy>(std::coroutine_handle<task_promise_base<void> >::from_promise(*this) );
     }
 };
 

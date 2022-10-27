@@ -8,10 +8,9 @@
 #include "awaiter.h"
 #include "common.h"
 #include "exceptions.h"
+#include "future_var.h"
 
 
-
-#include "value_or_exception.h"
 
 #include "poolalloc.h"
 #include "resumption_policy.h"
@@ -37,6 +36,11 @@ class promise_base;
 template<typename T>
 class future_base {
 public:
+    
+    future_base() {}
+    future_base(const future_base &) = delete;
+    future_base &operator=(const future_base &) = delete;
+    
     ///Create a promise
     /**
      * @return a associated promise object. This object can be moved, copied,
@@ -72,7 +76,7 @@ public:
      * @exception value_not_ready_exception when value is not ready
      */
     decltype(auto) get() {
-        return _value.get_value();
+        return _value.get();
     }
     ///get value
     /**
@@ -81,15 +85,14 @@ public:
      * @exception value_not_ready_exception when value is not ready
      */
     decltype(auto) get() const {
-        return _value.get_value();
+        return _value.get();
     }
     
 protected:
     
     std::atomic<unsigned int> _pcount = 0;
     abstract_awaiter<> *_awaiter = nullptr;
-    value_or_exception<T> _value;
-    std::atomic<bool> _ready_flag = false;
+    future_var<T> _value;    
 
     void add_ref() {
         _pcount.fetch_add(1, std::memory_order_relaxed);
@@ -106,17 +109,17 @@ protected:
     }
     
     bool is_ready() {
-        return _ready_flag &&  _pcount == 0;        
+        return _value.has_value() &&  _pcount == 0;        
     }
     
     bool subscribe_awaiter(abstract_awaiter<> *x) {
         ++_pcount;
         _awaiter = x;
-        return  (--_pcount > 0 || !_value.is_ready());
+        return  (--_pcount > 0 || !_value.has_value());
     }
     
     decltype(auto) get_result() {
-        return _value.get_value();
+        return _value.get();
     }
     
     
@@ -127,9 +130,7 @@ protected:
     friend class blocking_awaiter<future<T> >;
     
     void unhandled_exception() {
-        if (_ready_flag.exchange(true) == false) {
-            _value.unhandled_exception();
-        }
+        _value.unhandled_exception();
     }
 };
 
@@ -172,13 +173,8 @@ class future: public future_base<T> {
 public:
     
     template<typename X>
-    auto set_value(X &&x) -> decltype(std::declval<value_or_exception<T> >().set_value(x), true) {
-        if (this->_ready_flag.exchange(true) == false) {
-            this->_value.set_value(std::forward<X>(x));
-            return true;
-        }
-        return false;
-            
+    auto set_value(X &&x) -> decltype(std::declval<future_var<T> >().emplace(x)) {
+        this->_value.emplace(std::forward<X>(x));
     }
 };
 
@@ -190,12 +186,8 @@ template<>
 class future<void>: public future_base<void> {
 public:
     
-    auto set_value() {
-        if (_ready_flag.exchange(true) == false) {
-            this->_value.set_value();
-            return true;
-        }
-        return false;
+    void set_value() {
+        this->_value.emplace();
     }
 };
 
@@ -277,21 +269,17 @@ public:
     ///set value
     /**
      * @param x value to be set
-     * @retval true value set
-     * @retval false future is already resolved
      */
-    bool set_value(T &&x) const {
-        return this->_owner->set_value(std::move(x));
+    void set_value(T &&x) const {
+        this->_owner->set_value(std::move(x));
     }
     
     ///set value
     /**
      * @param x value to be set
-     * @retval true value set
-     * @retval false future is already resolved
      */
-    bool set_value(const T &x) const {
-        return this->_owner->set_value(x);
+    void set_value(const T &x) const {
+        this->_owner->set_value(x);
     }
     
     
@@ -323,11 +311,9 @@ public:
 
     ///makes future ready
     /**
-     * @retval true success
-     * @retval false already resolved 
      */
-    bool set_value() const {
-        return _owner->set_value();
+    void set_value() const {
+        _owner->set_value();
     }
     ///you can call promise as callback
     void operator()() const{

@@ -21,9 +21,10 @@ template<typename T, typename Policy>
 class lazy: public task<T, Policy> {
 public:
     using promise_type = lazy_promise<T, Policy>;
+    using promise_type_base = typename task<T, Policy>::promise_type_base;
 
     lazy() {};
-    lazy(promise_type *p):task<T, Policy>(p) {}
+    lazy(std::coroutine_handle<promise_type_base> h):task<T, Policy>(h) {}
 
     ///co_await the result
     auto operator co_await() {
@@ -33,7 +34,7 @@ public:
 
     ///start coroutine now.
     void start() {
-        auto prom = static_cast<lazy_promise<T> *>(this->_promise);
+        auto prom = static_cast<lazy_promise<T> *>(this->get_promise());
         if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
             auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
             prom->_policy.resume(h);
@@ -42,7 +43,7 @@ public:
 
     template<typename resumption_policy>
     void start(resumption_policy policy) {
-        auto prom = static_cast<lazy_promise<T> *>(this->_promise);
+        auto prom = static_cast<lazy_promise<T> *>(this->get_promise());
         if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
             auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
             policy.resume(h);
@@ -61,7 +62,7 @@ public:
      * 
      */
     [[nodiscard]] std::coroutine_handle<> get_start_handle() {
-        auto prom = static_cast<lazy_promise<T> *>(this->_promise);
+        auto prom = static_cast<lazy_promise<T> *>(this->get_promise());
         if (prom->_started.exchange(true, std::memory_order_relaxed) == false) {
             auto h = std::coroutine_handle<lazy_promise<T> >::from_promise(*prom);
             return h;
@@ -82,7 +83,7 @@ public:
      * 
      */
     void mark_canceled() {
-        auto prom = static_cast<lazy_promise<T> *>(this->_promise);
+        auto prom = static_cast<lazy_promise<T> *>(this->get_promise());
         prom->cancel();
         start();
     }
@@ -141,7 +142,7 @@ public:
     }
     
     lazy<T> get_return_object() {
-        return lazy<T>(this);
+        return lazy<T>(std::coroutine_handle<task_promise_base<T> >::from_promise(*this) );
     }
 protected:
     std::atomic<bool> _started;

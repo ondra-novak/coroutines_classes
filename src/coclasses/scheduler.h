@@ -399,11 +399,9 @@ protected:
     
     void wait() {
         std::unique_lock _(_mx);
-        while (_list.empty() && !_exit) {
-            _signal = false;
-            _sleeper.wait(_, [&]{return _signal || _exit;});            
-        } 
-        if (!_exit) {
+        if (_list.empty()) {
+            _sleeper.wait(_, [&]{return _signal || _exit;});
+        } else {
             _sleeper.wait_until(_,_list.top().tp, [&]{return _signal || _exit;});
         }
         _signal = false;
