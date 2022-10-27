@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <optional>
+#include <functional>
 
 namespace cocls {
 
@@ -170,7 +171,7 @@ public:
      * @note do not use if previous value was not processed yet
      */
     template<typename Fn>
-    auto operator>>(Fn &&fn) -> decltype(fn(std::optional<T>()), std::unexpected()) {
+    auto operator>>(Fn &&fn) -> decltype(fn(std::optional<T>()), std::terminate()) {
         _promise->next_cb(std::forward<Fn>(fn));
     }
     

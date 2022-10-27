@@ -45,6 +45,7 @@
 #include <atomic>
 #include <cstddef>
 #include <vector>
+#include <array>
 #include "common.h"
 
 
