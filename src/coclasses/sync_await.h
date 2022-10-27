@@ -8,7 +8,7 @@
 #include "common.h"
 #include "no_alloc.h"
 
-
+#include "resumption_policy.h"
 
 
 #include <condition_variable>
@@ -20,23 +20,25 @@ namespace cocls {
 struct sync_await_tag{
 
     template<typename Expr>
-    static task<std::remove_reference_t<decltype(std::declval<Expr>().await_resume())>, resumption_policy::immediate>  sync_await_coro(Expr &expr) {
+    static task<std::remove_reference_t<decltype(std::declval<Expr>().await_resume())>, resumption_policy::immediate>  sync_await_coro(Expr &&expr) {
         co_return co_await expr;    
     }
-
     
-    template<typename Expr> 
-    auto operator,(Expr &&x) -> std::remove_reference_t<decltype(x.operator co_await().await_resume())> {
-        return operator,(x.operator co_await());
+    
+    
+    template<typename Expr>
+    auto operator,(Expr &&x) {
+        if constexpr(has_co_await<Expr>::value) {
+            return operator,(x.operator co_await());
+        } else if constexpr(has_wait<Expr>::value) {
+            return x.wait();
+        } else if constexpr(has_join<Expr>::value) {
+            return x.join();
+        } else {
+            return sync_await_coro(std::forward<Expr>(x)).join();
+        }
     }
-
-    template<typename Expr> 
-    auto operator,(Expr &&expr) -> std::remove_reference_t<decltype(expr.await_resume())> {
-
-        
-        return sync_await_coro(expr).join();
-    }
-
+    
     
 };
 

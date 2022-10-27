@@ -35,6 +35,14 @@ namespace _details {
     auto test_has_set_resumption_policy(X &&x, Y &&y) -> decltype(x.set_resumption_policy(std::forward<X>(x),std::forward<Y>(y)));
     std::monostate test_has_set_resumption_policy(...);
 
+    template<typename X>
+    auto test_has_wait(X &&x) -> decltype(x.wait());
+    std::monostate test_has_wait(...);
+    
+    template<typename X>
+    auto test_has_join(X &&x) -> decltype(x.join());
+    std::monostate test_has_join(...);
+
 }
 
 ///Determines whether specified awaiter object has operator co_await()
@@ -48,11 +56,16 @@ using has_co_await = std::negation<std::is_same<std::monostate, decltype(_detail
 ///Determines whether specified awaiter object has set_resumption_policy() function
 /**
  * @tparam X awaiter to test
- * @tparam Y policy object
  * @return value contains true, if there is such function, or false if not
+ * @tparam Y policy object
  */
 template<typename X, typename Y> 
 using has_set_resumption_policy = std::negation<std::is_same<std::monostate, decltype(_details::test_has_set_resumption_policy(std::declval<X>(), std::declval<Y>()))> >;
+
+template<typename X> 
+using has_wait = std::negation<std::is_same<std::monostate, decltype(_details::test_has_wait(std::declval<X>()))> >;
+template<typename X> 
+using has_join = std::negation<std::is_same<std::monostate, decltype(_details::test_has_join(std::declval<X>()))> >;
 
 
 
