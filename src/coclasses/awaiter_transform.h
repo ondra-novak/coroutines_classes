@@ -3,7 +3,7 @@
 #define SRC_COCLASSES_SRC_COCLASSES_AWAITER_TRANSFORM_H_
 #include <algorithm>
 #include <type_traits>
-
+#include "resumption_policy.h"
 
 namespace cocls {
 
