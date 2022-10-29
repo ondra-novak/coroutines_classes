@@ -37,6 +37,48 @@ template<typename T, typename Policy> class task_promise;
 
 template<typename T> class task_promise_base;
 
+class task_storage {
+public:
+    task_storage() = default;
+    task_storage(task_storage &) = delete;
+    task_storage &operator=(task_storage &) = delete;
+    virtual ~task_storage()=default;
+    
+    virtual void *alloc(std::size_t sz) = 0;
+    virtual std::size_t capacity() const = 0; 
+};
+
+
+///Represents preallocated space for the task
+/**
+ * @tparam space preallocated spaces
+ * 
+ * Pass reference of this object as the first argument of a coroutine
+ * 
+ * @code 
+ * task<int> example(static_task_storage<1000> &, int args)
+ *      co_return args;
+ * }
+ * 
+ * 
+ * {
+ *    static_task_storage<1000> storage;
+ *    int res = example(storage, 42).join();
+ *    //...
+ * }
+ * @endcode
+ */
+template<std::size_t space>
+class static_task_storage:public task_storage {
+public:
+    virtual void *alloc(std::size_t sz) override { 
+        assert(sz <= space); //space is too small to fit the cooroutine frame;
+        return _buffer;
+    }
+    virtual std::size_t capacity() const override {return space;}
+protected:
+    char _buffer[space];
+};
 
 ///Task object, it is returned from the coroutine
 /**
@@ -72,12 +114,7 @@ public:
     /** For the task<void>, the object is already initialized and co_await on such task
      * is always resolved
      */ 
-    task():_h(nullptr) {
-        if constexpr(std::is_void<T>::value) {
-            static task<void> prealloc = ([]()->task<void,resumption_policy::immediate>{co_return;})();
-            *this = prealloc;
-        }
-    }
+    task();
     
     ///Initializes task future with direct value
     /**
@@ -219,23 +256,6 @@ protected:
 };
 
 
-template<typename Impl>
-class task_storage {
-public:
-    task_storage() = default;
-    task_storage(task_storage &) = delete;
-    task_storage &operator=(task_storage &) = delete;
-    
-    void *alloc(std::size_t sz) {
-        return static_cast<Impl *>(this)->get_storage(sz);
-    }
-    Impl &get_impl() {
-        return *static_cast<Impl *>(this);
-    }
-    const Impl &get_impl() const {
-        return *static_cast<const Impl *>(this);
-    }
-};
 
 
 template<typename T>
@@ -322,19 +342,20 @@ public:
         *x = false;
         return r;
     }
-    template<typename Impl, typename ... Args>
-    void *operator new(std::size_t sz, task_storage<Impl> &storage, Args && ...) {
+
+    template< typename ... Args>
+    void *operator new(std::size_t sz, task_storage &storage, Args && ...) {
         void *r = storage.alloc(sz+1);
         bool *x = reinterpret_cast<bool *>(r)+sz;
         *x = true;
         return r;
     }
 
-    template<typename Impl, typename ... Args>
-    void operator delete(void *ptr, task_storage<Impl> &storage, Args && ... ) {
+    template<typename ... Args>
+    void operator delete(void *ptr, task_storage &storage, Args && ... ) {
         //empty
     }
-    
+
     void operator delete(void *ptr, std::size_t sz) {
         bool *x = reinterpret_cast<bool *>(ptr)+sz;
         if (!*x) coro_promise_base::operator delete(ptr, sz+1);
@@ -406,22 +427,46 @@ public:
     
 
 };
+namespace _details {
+    inline task<void, resumption_policy::immediate> coro_void(task_storage &) {
+        co_return;
+    }
+    template<typename X>
+    inline task<X, resumption_policy::immediate> coro_resolve(task_storage &, X x) {
+        co_return std::forward<X>(x);
+    }
+    template<typename X>
+    inline task<X, resumption_policy::immediate> coro_resolve(X x) {
+        co_return std::forward<X>(x);
+    }
+}
+
 
 template<typename T, typename P>
 template<typename X, typename>
 inline task<T,P>::task(X &&x) {
     if constexpr(std::is_same<X,bool>::value) {
         if (x) {
-            static task<bool> v_true = ([]()->task<bool, resumption_policy::immediate>{co_return true;})();
+            static static_task_storage<sizeof(void *)*11> storage; 
+            static task<bool> v_true = _details::coro_resolve(storage, true);
             *this = v_true;
         } else {
-            static task<bool> v_false= ([]()->task<bool, resumption_policy::immediate>{co_return false;})();
+            static static_task_storage<sizeof(void *)*11> storage; 
+            static task<bool> v_false = _details::coro_resolve(storage, false);
             *this = v_false;
         }
-    }    
-    (*this) = ([](X &&x)->task<T, resumption_policy::immediate> {
-        co_return x;
-    })(std::forward<X>(x));
+    } else {
+        *this = _details::coro_resolve(std::forward<X>(x));
+    }
+}
+
+template<typename T, typename P>
+task<T,P>::task():_h(nullptr) {
+    if constexpr(std::is_void<T>::value) {
+        static static_task_storage<sizeof(void *)*11> storage; 
+        static task<void> prealloc = _details::coro_void(storage); 
+        *this = prealloc;
+    }
 }
 
 

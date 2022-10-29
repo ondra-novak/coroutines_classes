@@ -266,8 +266,8 @@ void with_queue_test() {
     wq.join();    
 }
 
-cocls::task<void> test_reusable_co(cocls::reusable_task_storage &m, cocls::scheduler<> &sch) {
-    assert(m.get_impl().capacity() != 0); //ensure that storage was really used
+cocls::task<void> test_reusable_co(cocls::task_storage &m, cocls::scheduler<> &sch) {
+    assert(m.capacity() != 0); //ensure that storage was really used
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;
@@ -276,7 +276,7 @@ cocls::task<void> test_reusable_co(cocls::reusable_task_storage &m, cocls::sched
 
 
 void test_reusable() {
-    cocls::reusable_task_storage m;
+    cocls::static_task_storage<200> m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block

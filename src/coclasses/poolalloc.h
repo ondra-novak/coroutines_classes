@@ -292,46 +292,57 @@ struct alloc_master {
     static constexpr std::size_t _max_levels = COCLS_POOLALLOC_LEVELS;
     static constexpr std::size_t _max_alloc_size = _alloc_step * _max_levels;
 
+    class ForceDelete: public abstract_thread_local_cache {
+    public:
+        virtual void *alloc() {throw std::bad_alloc();}
+        virtual void dealloc(void *p) {::operator delete(p);}
+    };
+    
+    static ForceDelete force_delete_instance;
+    
     struct Local {
         std::array<abstract_thread_local_cache *, _max_levels> _map;
         thread_local_cache_chain<_max_levels, _alloc_step> _chain;
-        Local(global_cache_chain<_max_levels, _alloc_step> *l, std::size_t max_cache_size)
-           :_chain(l, max_cache_size) {
+        
+        Local()
+           :_chain(&global_instance, _max_alloc_size) {
             _chain.init_map(_map.data());
+        }
+        ~Local() {
+            for (auto &x: _map) {
+                x = &force_delete_instance;
+            }
         }
         static constexpr auto index(std::size_t sz) {return (sz-1)/_alloc_step;}
         void *alloc(std::size_t sz) {
             return _map[index(sz)]->alloc();
         }
-        void dealloc(void *ptr, std::size_t sz) {
+        void dealloc(void *ptr, std::size_t sz) {            
             _map[index(sz)]->dealloc(ptr);
         }
             
     };
     
     using Global = global_cache_chain<_max_levels, _alloc_step>;
-    
-    static Global &get_global() {
-        static Global g;
-        return g;
-    }
+    static Global global_instance;
+    static thread_local Local local_instance;
     
     
-    static Local &get_local() {
-        static thread_local Local l(&get_global(), _max_cache_size);
-        return l;
-    }
     
     static void *mem_alloc(std::size_t sz) {
         if (sz > _max_alloc_size) return ::operator new(sz);        
-        return get_local().alloc(sz);
+        return local_instance.alloc(sz);
     }
     static void mem_dealloc(void *ptr, std::size_t sz) {
         if (sz > _max_alloc_size) return ::operator delete(ptr);
-        return get_local().dealloc(ptr, sz);
+        return local_instance.dealloc(ptr, sz);
     }
     
 };
+
+inline alloc_master::ForceDelete alloc_master::force_delete_instance;
+inline alloc_master::Global alloc_master::global_instance;
+inline thread_local alloc_master::Local alloc_master::local_instance;
 
 
 }
