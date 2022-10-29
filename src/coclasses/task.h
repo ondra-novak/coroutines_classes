@@ -37,6 +37,7 @@ template<typename T, typename Policy> class task_promise;
 
 template<typename T> class task_promise_base;
 
+
 ///Task object, it is returned from the coroutine
 /**
  * @code
@@ -68,7 +69,28 @@ public:
     using promise_type_base = task_promise_base<T>;
 
     ///You can create empty task, which can be initialized later by assign
-    task():_h(nullptr) {}
+    /** For the task<void>, the object is already initialized and co_await on such task
+     * is always resolved
+     */ 
+    task():_h(nullptr) {
+        if constexpr(std::is_void<T>::value) {
+            static task<void> prealloc = ([]()->task<void,resumption_policy::immediate>{co_return;})();
+            *this = prealloc;
+        }
+    }
+    
+    ///Initializes task future with direct value
+    /**
+     * @param x value to initialize the task future
+     * 
+     * This allows to generate task<> result without executing coroutine
+     * 
+     * @note There will be always a coroutine which is executed to handle this
+     * feature, there is no much optimization. 
+     */
+    template<typename X, typename = decltype(T(std::declval<X>()))>
+    explicit task(X &&x);
+    
     ///task is internaly constructed from pointer to a promise  
     task(std::coroutine_handle<promise_type_base> h): _h(h) {
         get_promise()->add_ref();
@@ -197,14 +219,33 @@ protected:
 };
 
 
+template<typename Impl>
+class task_storage {
+public:
+    task_storage() = default;
+    task_storage(task_storage &) = delete;
+    task_storage &operator=(task_storage &) = delete;
+    
+    void *alloc(std::size_t sz) {
+        return static_cast<Impl *>(this)->get_storage(sz);
+    }
+    Impl &get_impl() {
+        return *static_cast<Impl *>(this);
+    }
+    const Impl &get_impl() const {
+        return *static_cast<const Impl *>(this);
+    }
+};
+
 
 template<typename T>
 class task_promise_base: public coro_promise_base  {
 public:
     using AW = abstract_awaiter<true>;
 
-    future_var<T> _value;
     std::atomic<AW *> _awaiter_chain;
+    std::atomic<unsigned int> _ref_count;
+    future_var<T> _value;
 
     task_promise_base():_ref_count(0) {}
 
@@ -275,7 +316,29 @@ public:
         AW::mark_ready_resume(_awaiter_chain);
     }
     
-    std::atomic<unsigned int> _ref_count;
+    void *operator new(std::size_t sz) {
+        void *r = coro_promise_base::operator new(sz+1);
+        bool *x = reinterpret_cast<bool *>(r)+sz;
+        *x = false;
+        return r;
+    }
+    template<typename Impl, typename ... Args>
+    void *operator new(std::size_t sz, task_storage<Impl> &storage, Args && ...) {
+        void *r = storage.alloc(sz+1);
+        bool *x = reinterpret_cast<bool *>(r)+sz;
+        *x = true;
+        return r;
+    }
+
+    template<typename Impl, typename ... Args>
+    void operator delete(void *ptr, task_storage<Impl> &storage, Args && ... ) {
+        //empty
+    }
+    
+    void operator delete(void *ptr, std::size_t sz) {
+        bool *x = reinterpret_cast<bool *>(ptr)+sz;
+        if (!*x) coro_promise_base::operator delete(ptr, sz+1);
+    }
 };
 
 
@@ -295,22 +358,7 @@ public:
     }
 
     using initial_awaiter = typename std::remove_reference<Policy>::type::initial_awaiter;
-    
-/*    class initial_awaiter {
-    public:
-        initial_awaiter(Policy &p):_p(p) {}
-        initial_awaiter(const initial_awaiter &) = default;
-        initial_awaiter &operator=(const initial_awaiter &) = delete;
-        
-        static bool await_ready() noexcept {return false;}
-        void await_suspend(std::coroutine_handle<> h) {
-            _p.resume(h);
-        }
-        static void await_resume() noexcept {}
-    protected:
-        Policy &_p;
-    };*/
-    
+
     initial_awaiter initial_suspend()  noexcept {
         ++this->_ref_count;
         return initial_awaiter(_policy);
@@ -328,6 +376,7 @@ template<typename T>
 class task_promise_with_policy<T, void>: public task_promise_with_policy<T, resumption_policy::unspecified<void> > {
 };
 
+
 template<typename T, typename Policy>
 class task_promise: public task_promise_with_policy<T, Policy> {
 public:
@@ -342,6 +391,7 @@ public:
     }
 };
 
+
 template<typename Policy>
 class task_promise<void, Policy>: public task_promise_with_policy<void, Policy> {
 public:
@@ -353,7 +403,28 @@ public:
     task<void, Policy> get_return_object() {
         return task<void, Policy>(std::coroutine_handle<task_promise_base<void> >::from_promise(*this) );
     }
+    
+
 };
+
+template<typename T, typename P>
+template<typename X, typename>
+inline task<T,P>::task(X &&x) {
+    if constexpr(std::is_same<X,bool>::value) {
+        if (x) {
+            static task<bool> v_true = ([]()->task<bool, resumption_policy::immediate>{co_return true;})();
+            *this = v_true;
+        } else {
+            static task<bool> v_false= ([]()->task<bool, resumption_policy::immediate>{co_return false;})();
+            *this = v_false;
+        }
+    }    
+    (*this) = ([](X &&x)->task<T, resumption_policy::immediate> {
+        co_return x;
+    })(std::forward<X>(x));
+}
+
+
 
 
 }

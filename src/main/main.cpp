@@ -10,7 +10,7 @@
 #include <coclasses/thread_pool.h>
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
-#include <coclasses/no_alloc.h>
+#include <coclasses/task_storage.h>
 #include <coclasses/publisher.h>
 #include <coclasses/sync_await.h>
 #include <coclasses/cancelable.h>
@@ -266,7 +266,8 @@ void with_queue_test() {
     wq.join();    
 }
 
-cocls::no_alloc<cocls::task<void>,cocls::storage_t<> > test_reusable_co(cocls::storage_t<> &m, cocls::scheduler<> &sch) {
+cocls::task<void> test_reusable_co(cocls::reusable_task_storage &m, cocls::scheduler<> &sch) {
+    assert(m.get_impl().capacity() != 0); //ensure that storage was really used
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;
@@ -275,13 +276,14 @@ cocls::no_alloc<cocls::task<void>,cocls::storage_t<> > test_reusable_co(cocls::s
 
 
 void test_reusable() {
-    cocls::storage_t<> m;
+    cocls::reusable_task_storage m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block
     {
         test_reusable_co(m, sch).join();
     }
+    std::cout << "Coroutine allocated in storage. size=" << m.capacity() << std::endl; 
     //coroutine should reuse preallocated block
     {
         test_reusable_co(m, sch).join();

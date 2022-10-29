@@ -36,6 +36,7 @@ add_executable (pause pause.cpp)
 add_executable (dispatcher dispatcher.cpp)
 add_executable (dispatcher_failed_resume dispatcher_failed_resume.cpp)
 add_executable (multi_source_future multi_source_future.cpp)
+add_executable (nocoroutine nocoroutine.cpp) 
 
 
 
