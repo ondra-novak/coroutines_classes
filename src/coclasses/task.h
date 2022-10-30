@@ -37,48 +37,8 @@ template<typename T, typename Policy> class task_promise;
 
 template<typename T> class task_promise_base;
 
-class task_storage {
-public:
-    task_storage() = default;
-    task_storage(task_storage &) = delete;
-    task_storage &operator=(task_storage &) = delete;
-    virtual ~task_storage()=default;
-    
-    virtual void *alloc(std::size_t sz) = 0;
-    virtual std::size_t capacity() const = 0; 
-};
 
-
-///Represents preallocated space for the task
-/**
- * @tparam space preallocated spaces
- * 
- * Pass reference of this object as the first argument of a coroutine
- * 
- * @code 
- * task<int> example(static_task_storage<1000> &, int args)
- *      co_return args;
- * }
- * 
- * 
- * {
- *    static_task_storage<1000> storage;
- *    int res = example(storage, 42).join();
- *    //...
- * }
- * @endcode
- */
-template<std::size_t space>
-class static_task_storage:public task_storage {
-public:
-    virtual void *alloc(std::size_t sz) override { 
-        assert(sz <= space); //space is too small to fit the cooroutine frame;
-        return _buffer;
-    }
-    virtual std::size_t capacity() const override {return space;}
-protected:
-    char _buffer[space];
-};
+template<std::size_t space> class static_task_storage;
 
 ///Task object, it is returned from the coroutine
 /**
@@ -255,6 +215,17 @@ protected:
     }
 };
 
+
+class task_storage {
+public:
+    task_storage() = default;
+    task_storage(task_storage &) = delete;
+    task_storage &operator=(task_storage &) = delete;
+    virtual ~task_storage()=default;
+    
+    virtual void *alloc(std::size_t sz) = 0;
+    virtual std::size_t capacity() const = 0; 
+};
 
 
 
@@ -441,6 +412,38 @@ namespace _details {
     }
 }
 
+///Represents preallocated space for the task
+/**
+ * @tparam space preallocated spaces
+ * 
+ * Pass reference of this object as the first argument of a coroutine
+ * 
+ * @code 
+ * task<int> example(static_task_storage<1000> &, int args)
+ *      co_return args;
+ * }
+ * 
+ * 
+ * {
+ *    static_task_storage<1000> storage;
+ *    int res = example(storage, 42).join();
+ *    //...
+ * }
+ * @endcode
+ */
+template<std::size_t space>
+class static_task_storage:public task_storage {
+public:
+    virtual void *alloc(std::size_t sz) override { 
+        assert(sz <= space); //space is too small to fit the cooroutine frame;
+        return _buffer;
+    }
+    virtual std::size_t capacity() const override {return space;}
+protected:
+    char _buffer[space];
+};
+
+
 
 template<typename T, typename P>
 template<typename X, typename>
@@ -468,6 +471,8 @@ task<T,P>::task():_h(nullptr) {
         *this = prealloc;
     }
 }
+
+
 
 
 
