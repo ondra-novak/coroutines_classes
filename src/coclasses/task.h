@@ -150,7 +150,7 @@ public:
 
     ///Join the task synchronously, returns value
     decltype(auto) join() {
-        blocking_awaiter<promise_type_base, true> aw(*get_promise());
+        co_awaiter<promise_type_base, true> aw(*get_promise());
         return aw.wait();
     }
     
@@ -342,6 +342,8 @@ public:
     decltype(auto) await_transform(Awt&& awt) noexcept {
         if constexpr (has_co_await<Awt>::value) {
             return await_transform(awt.operator co_await());
+        } else if constexpr (has_global_co_await<Awt>::value) {
+            return operator co_await(awt);
         } else if constexpr (has_set_resumption_policy<Awt, Policy>::value) {
             return awt.set_resumption_policy(std::forward<Awt>(awt), _policy);
         } else {

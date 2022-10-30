@@ -18,9 +18,9 @@ cocls::generator<int> co_fib(cocls::thread_pool &pool, int count) {
 
 
 void test_cb(cocls::generator<int> &gen, cocls::promise<void> p) {
-    gen >> [&,p](std::optional<int> val) {
-        if (val.has_value()) {
-            std::cout << *val << std::endl;
+    gen >> [&,p] {
+        if (!gen.done()) {
+            std::cout << gen.value() << std::endl;
             test_cb(gen,p);
         } else{
             std::cout << "Done" << std::endl;

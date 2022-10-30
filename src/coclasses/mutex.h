@@ -54,13 +54,8 @@ protected:
 public:
 
 
-    using co_awaiter = ::cocls::co_awaiter<mutex,true>;
-    using blocking_awaiter = ::cocls::blocking_awaiter<mutex, true>;
-    using abstract_awaiter = ::cocls::abstract_awaiter<true>; 
-    class null_awaiter: public abstract_awaiter {
-        virtual void resume()  noexcept override {}
-       
-    };
+    using awaiter = co_awaiter<mutex,true>;
+    using abstract_awaiter = abstract_awaiter<true>; 
 
     ///construct a mutex
     /**
@@ -79,7 +74,7 @@ public:
     /** By holding this object, you owns an ownership */
     class ownership {
     public:
-        ownership(co_awaiter &&awt):ownership(awt.wait()) {}
+        ownership(awaiter &&awt):ownership(awt.wait()) {}
         ownership(ownership &&) = default;
         ownership &operator=(ownership &&) = delete;
         ///Release ownership
@@ -113,7 +108,7 @@ public:
      * @note function must be called with co_await. You can also use wait()
      * to obtain ownership outside of coroutine
      */
-    co_awaiter lock() {return co_awaiter(*this);}
+    awaiter lock() {return *this;}
     
     
     
@@ -128,14 +123,13 @@ public:
     
     
 protected:
-    
-    friend class ::cocls::blocking_awaiter<mutex, true>;
+        
     friend class ::cocls::co_awaiter<mutex, true>;
     
     
     std::atomic<abstract_awaiter *> _requests = nullptr;
     abstract_awaiter *_queue = nullptr;
-    null_awaiter _locked;
+    empty_awaiter<true> _locked;
     
     void unlock() {
             bool rep;

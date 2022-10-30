@@ -42,6 +42,10 @@ namespace _details {
     template<typename X>
     auto test_has_join(X &&x) -> decltype(x.join());
     std::monostate test_has_join(...);
+    
+    template<typename X>
+    auto test_can_co_await(X &&x) -> decltype(operator co_await(std::forward<X>(x)));
+    std::monostate test_can_co_await(...);
 
 }
 
@@ -52,6 +56,8 @@ namespace _details {
  */
 template<typename X> 
 using has_co_await = std::negation<std::is_same<std::monostate, decltype(_details::test_has_co_await(std::declval<X>()))> >;
+template<typename X> 
+using has_global_co_await = std::negation<std::is_same<std::monostate, decltype(_details::test_can_co_await(std::declval<X>()))> >;
 
 ///Determines whether specified awaiter object has set_resumption_policy() function
 /**

@@ -16,9 +16,9 @@ cocls::generator<int> co_fib(int count) {
 
 
 void test_cb(cocls::generator<int> &gen) {
-    gen >> [&](std::optional<int> val) {
-        if (val.has_value()) {
-            std::cout << *val << std::endl;
+    gen >> [&] {
+        if (!gen.done()) {
+            std::cout << gen.value() << std::endl;
             test_cb(gen);
         } else{
             std::cout << "Done" << std::endl;

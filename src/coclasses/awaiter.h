@@ -285,39 +285,30 @@ protected:
     std::exception_ptr _resume_exception;    
 };
 
-///Awaiter which allows to block thread until value is ready
-template<typename promise_type, bool chain = false>
-class blocking_awaiter: public abstract_owned_awaiter<promise_type, chain> {
-public:
-    using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
-    
-    decltype(auto) wait() {
-        _signal = this->_owner.is_ready();
-        if (!_signal && this->_owner.subscribe_awaiter(this)) {
-            std::unique_lock _(_mx);
-            _cond.wait(_,[this]{return _signal;});
-        }
-        return this->_owner.get_result();
-    }
-        
-    
-protected:
-    std::mutex _mx;
-    std::condition_variable _cond;
-    bool _signal = false;
-    
-    virtual void resume() noexcept  override {
-        std::unique_lock _(_mx);
-        _signal = true;
-        _cond.notify_all();
-    }
-
-};
 
 template<typename promise_type, bool chain>
 inline decltype(auto) co_awaiter<promise_type, chain>::wait() {
-    blocking_awaiter<promise_type, chain> x(this->_owner);
-    return x.wait();
+    if (await_ready()) return await_resume();
+    
+    class Awaiter: public abstract_awaiter<chain> {
+    public:
+        std::mutex mx;
+        std::condition_variable cond;
+        bool flag = false;        
+        virtual void resume() noexcept override {
+            std::unique_lock _(mx);
+            flag = true;
+            cond.notify_all();
+        }
+    };
+    
+    Awaiter awt;
+    std::unique_lock lk(awt.mx);
+    if (subscribe_awaiter(&awt)) {
+        awt.cond.wait(lk, [&]{return awt.flag;});
+    }
+    
+    return await_resume();
 }
 
 template<bool chain>

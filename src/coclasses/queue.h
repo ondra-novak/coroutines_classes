@@ -135,7 +135,6 @@ protected:
 
     
     friend class co_awaiter<queue>;
-    friend class blocking_awaiter<queue>;
     ///lock protects internal
     std::mutex _mx;
     ///queue itself

@@ -23,37 +23,42 @@ class generator {
 public:
 
     using promise_type = generator_promise<T>;
-    
-
-    struct Deleter {
-    public:
-        void operator()(promise_type *p) {
-            p->destroy();
-        }
-    };
-        
 
     ///Iterator
     struct iterator {
     public:
+        ///construct uninitialized iterator
         iterator():_g(0),_end(true) {}
+        ///construct and initialize iterator
+        /**
+         * @param g pointer to generator object
+         * @param end set this is end iterator 
+         */
         iterator(generator *g, bool end):_g(g),_end(end) {}
+        ///Copy
         iterator(const iterator &other) = default;
+        ///Assign
         iterator &operator=(const iterator &other) = default;
         
+        ///compare iterators
         bool operator==(const iterator &other) const {
             return _g == other._g && _end == other._end;
         } 
+        ///compare iterators
         bool operator!=(const iterator &other) const {
             return !operator==(other);
         } 
         
+        ///access item
         T &operator *() const {return _g->_promise->get();}
+        ///access item
         T *operator ->() const {return &_g->_promise->get();}
+        ///move to next item
         iterator &operator++() {
             _end = !_g->_promise->next();
             return *this;
         }
+        ///move to next item
         iterator operator++(int) {
             iterator r = *this;
             _end = !_g->_promise->next();
@@ -66,7 +71,7 @@ public:
         bool _end;
     };
 
-    
+    ///awaiter - allows to wait on generater using co_await
     template<typename X>
     class awaiter_t : public co_awaiter<X> {
     public:
@@ -85,11 +90,22 @@ public:
     };
     
     
+    ///Object returned by next() function
+    /** it can be awaited by co_await, or accessed directly */
     class next_res {
     public:
         next_res(generator &owner):_owner(owner) {}
         next_res(const next_res &) = default;
         next_res &operator=(const next_res &) = delete;
+        
+        
+        ///retrieves whether next item is available
+        /**
+         * @retval true next item is available
+         * @retval false next item is not available
+         * 
+         * @note this call actually performs to move to next item when it is called for the first time
+         */
         operator bool() const {
             if (!_resolved) {
                 _value = _owner._promise->next();
@@ -97,9 +113,19 @@ public:
             }
             return _value;
         }
+        ///retrieves whether generator is done
+        /**
+         * @retval true generator done
+         * @return false generator is not done yet
+         */
         bool operator !() const {
             return !operator bool();
         }
+        ///await this state
+        /**
+         * @retval true next item loaded
+         * @retval false generator is done
+         */
         awaiter_t<next_res> operator co_await() {
             return *this;
         }
@@ -129,27 +155,75 @@ public:
     };
 
     
+    ///construct empty generator variable - can be assigned
     generator() = default;
     generator(promise_type *promise):_promise(promise) {}
 
+    ///Retrieve ID of this coroutine
     coro_id get_id() {
         return std::coroutine_handle<promise_type>::from_promise(*_promise).address();
     }
+    ///Returns iterator
+    /**
+     * Despite on name, this function loads the first item and returns iterator. Further calls
+     * loads more and more items Actually there is no separate iterators. The iterator only
+     * allows to iterate generated items through the ranged-for (simulation)
+     *
+     */
     iterator begin() {
         return iterator(this, !_promise->next());
     }
+    ///Returns iterator which represents end of iteration
     iterator end() {
         return iterator(this, true);
     }
+    ///Runs generator and waits to generation of next item
+    /**
+     * @return co_awaitable object. If called from non-coroutine, you need to convert returned
+     * object to bool to perform loading of next item and returning true/false whether the
+     * next item is available
+     * 
+     * @code
+     * if (generator.next()) {
+     *      //next item is loaded
+     * } else {
+     *      //generator is done
+     * }
+     * @endcode
+     * 
+     */
     next_res next() {
         return *this;
     }
+    ///Retrieves current value
+    /**
+     * @return current value
+     * 
+     * @note you need to call next() or check for done()
+     */
     T &value() {
         return _promise->get();
     }
+    ///Retrieves current value
+    /**
+     * @return current value
+     * 
+     * @note you need to call next() or check for done()
+     */
     const T &value() const {
         return _promise->get();
     }
+
+    ///Run generator and retrieve next item
+    /**
+     * @return if the next item is available, function returns optional object with value.
+     * If the generator is done, returns empty value
+     * 
+     * @note function is synchronous. If the generator is asynchronous, function blocks current
+     * thread until the generator is done. If you need co_await the generator, just call co_await on
+     * its object directly
+     * 
+     */
     std::optional<T> operator()() {
         if (_promise->next()) {
             return std::optional<T>(std::move(_promise->get()));
@@ -158,7 +232,16 @@ public:
         }
     }
     
+    ///Checks, whether 
+    bool done() const {
+        return _promise->done();
+    }
     
+
+    ///Allows to co_await on generator
+    /**
+     * @return std::optional<T> for next item, similar to operator()
+     */
     awaiter_t<promise_type> operator co_await() {
         return *_promise;
     }
@@ -166,17 +249,24 @@ public:
     
     ///request next item. Callback is called when item is ready
     /**
-     * @param fn callback function
+     * @param fn callback function. Function has no arguments. To retrieve item, use
+     * done() to check, whether generator is done and if not, use value()
      * 
      * @note do not use if previous value was not processed yet
      */
     template<typename Fn>
-    auto operator>>(Fn &&fn) -> decltype(fn(std::optional<T>()), std::terminate()) {
+    auto operator>>(Fn &&fn) -> decltype(fn(), std::terminate()) {
         _promise->next_cb(std::forward<Fn>(fn));
     }
     
 protected:
 
+    struct Deleter {
+    public:
+        void operator()(promise_type *p) {
+            p->destroy();
+        }
+    };
     
     std::unique_ptr<promise_type, Deleter> _promise;    
     
@@ -188,16 +278,17 @@ template<typename T>
 class generator_promise: public coro_promise_base {
 public:
 
+    ///Generator's state
     enum class State {
-        //generator was not started
+        ///generator was not started
         not_started,
-        //generator is running, new value is not ready yet
+        ///generator is running, new value is not ready yet
         running,
-        //generator is running, but promise object is prepared to accept new state
+        ///generator is running, but promise object is prepared to accept new state
         running_promise_set,
-        //data are ready, can be read
+        ///data are ready, can be read
         data_ready,
-        //generator finished, no more data
+        ///generator finished, no more data
         done
     };
 
@@ -241,12 +332,12 @@ public:
         return yield_suspender(h);
     }
 
-    yield_suspender yield_value(T &&value) noexcept {
-        _value = std::move(value);
+    yield_suspender yield_value(T &value) noexcept {
+        _value = &value;
         return yield_cont();
     }
-    yield_suspender yield_value(const T &value) noexcept {
-        _value = value;
+    yield_suspender yield_value(T &&value) noexcept {
+        _value = &value;
         return yield_cont();
     }
 
@@ -259,6 +350,10 @@ public:
             return *_value;       
         }
         throw value_not_ready_exception();
+    }
+    
+    bool done() const {
+        return _state == State::done;
     }
     
     bool next() {
@@ -283,7 +378,7 @@ public:
     void next_cb(Fn &&fn) {        
           auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
           if (_state.load(std::memory_order_relaxed) == State::done) {
-              fn({});
+              fn();
               return;
           }
           subscribe_awaiter(nullptr);
@@ -292,15 +387,12 @@ public:
               future<State> f;
               State chk = State::running;
               _wait_promise = cocls::make_promise<State>([this, fn = std::forward<Fn>(fn)](cocls::future<State> &f) mutable {
-                  std::optional<T> var;
                   try {
                       _state = f.get();
-                      var = std::move(get_result());                       
                   } catch (...) {
-                      fn(std::move(var));
-                      return;
+                      _state = State::done;
                   }
-                  fn(std::move(var));
+                  fn();
               }, _future_storage);
               if (!_state.compare_exchange_strong(chk, State::running_promise_set, std::memory_order_release)) {
                   _wait_promise.set_value(chk);
@@ -308,14 +400,7 @@ public:
               }            
               return;
           }
-          std::optional<T> var;
-          try {
-              var = std::move(get_result());                       
-          } catch (...) {
-              fn(std::move(var));
-              return;
-          }
-          fn(std::move(var));
+          fn();
     }
     
     bool subscribe_awaiter(abstract_awaiter<> *h) {
@@ -323,7 +408,7 @@ public:
         assert(_state != State::running_promise_set);
 
         _awaiter = h;
-        _value.reset();
+        _value = nullptr;
         _state = State::running;
         return true;
     }
@@ -376,7 +461,7 @@ protected:
     //contains recorded exception
     std::exception_ptr _exception;
     //contains current value
-    std::optional<T> _value;
+    T *_value = nullptr;
     //contains consumer's handle - this coroutine must be resumed on co_yield
     abstract_awaiter<> *_awaiter = nullptr;
     //contains promise when State::promise_set is active

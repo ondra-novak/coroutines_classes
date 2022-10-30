@@ -66,7 +66,7 @@ public:
      * @return the value of the future
      */
     decltype(auto) wait() {
-        return blocking_awaiter<future<T> >(*static_cast<future<T> *>(this)).wait();
+        return co_awaiter<future<T> >(*static_cast<future<T> *>(this)).wait();
     }
     
     ///get value
@@ -127,7 +127,6 @@ protected:
     friend class promise<T>;
     friend class abstract_owned_awaiter<future<T> >;
     friend class co_awaiter<future<T> >;
-    friend class blocking_awaiter<future<T> >;
     
     void unhandled_exception() {
         _value.unhandled_exception();
