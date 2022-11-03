@@ -29,7 +29,7 @@ public:
 class no_more_values_exception: public std::exception {
 public:
     const char *what() const noexcept {
-        return "Generator has no more values";
+        return "No more values available or accepted";
     }
     
 };
@@ -41,6 +41,7 @@ public:
     }
     
 };
+
 
 }
 

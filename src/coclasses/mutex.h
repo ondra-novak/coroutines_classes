@@ -55,7 +55,6 @@ public:
 
 
     using awaiter = co_awaiter<mutex,true>;
-    using abstract_awaiter = abstract_awaiter<true>; 
 
     ///construct a mutex
     /**
@@ -127,8 +126,8 @@ protected:
     friend class ::cocls::co_awaiter<mutex, true>;
     
     
-    std::atomic<abstract_awaiter *> _requests = nullptr;
-    abstract_awaiter *_queue = nullptr;
+    std::atomic<abstract_awaiter<true> *> _requests = nullptr;
+    abstract_awaiter<true> *_queue = nullptr;
     empty_awaiter<true> _locked;
     
     void unlock() {
@@ -144,7 +143,7 @@ protected:
                     a->resume();
                 } else { //no items in queue?
                     //assume, no requests
-                    abstract_awaiter *n = &_locked;
+                    abstract_awaiter<true> *n = &_locked;
                     //try to mark lock unlocked
                     if (!_requests.compare_exchange_strong(n, nullptr)) {
                         //attempt was unsuccessful, there are requests
@@ -160,12 +159,12 @@ protected:
         }
 
     bool is_ready() {
-        abstract_awaiter *n = nullptr;
+        abstract_awaiter<true> *n = nullptr;
         bool ok = _requests.compare_exchange_strong(n, &_locked);
         return ok;
     }
     
-    bool subscribe_awaiter(abstract_awaiter *aw) {
+    bool subscribe_awaiter(abstract_awaiter<true> *aw) {
         aw->subscribe(_requests);
         if (aw->_next== nullptr) {
             //as we are subscribe into queue, we expect that aw->next is &_locked
@@ -183,19 +182,19 @@ protected:
         }
     }
     
-    void build_queue(abstract_awaiter *stop) {
+    void build_queue(abstract_awaiter<true> *stop) {
         //queue is linked list of awaiters order by order of income
         //queue is under control of owned lock
         //can be modified only by owner
         
-        abstract_awaiter **tail = &_queue;
+        abstract_awaiter<true> **tail = &_queue;
         //try to find end of queue - tail points to end pointer
         while (*tail) { //if the end pointer is not null, move to next item 
             tail = &((*tail)->_next);
         }
         //pick requests - so the list no longer can be modified
         //because mutex should be locked, exchange it with _locked flag
-        abstract_awaiter *reqs = _requests.exchange(&_locked);
+        abstract_awaiter<true> *reqs = _requests.exchange(&_locked);
         //requests are ordered in reverse order, so process it and update queue
         //stop on nullptr or on _locked
         while (reqs && reqs != stop) {

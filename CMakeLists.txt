@@ -9,6 +9,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/)
 add_compile_options(-Wall -Wno-noexcept-type)
 
 add_subdirectory (src/examples)
-add_subdirectory (src/main)
+add_subdirectory (src/cotest)
 
 
