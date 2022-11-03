@@ -22,6 +22,9 @@ namespace cocls {
 ///Awaitable queue
 /**
  * @tparam T type of queued item
+ * @tparam Queue type which implements queue of T objects, default is std::queue<T>
+ * @tparam CoroQueue type which implements queue of waiting awaiter, default is std::queue<abstract_awaiter<> *>
+ * @tparam Lock object responsible to lock internals - default is std::mutex
  * 
  * Awaitable queue is queue, which can be awaited for the new item. If there is no
  * item in the queue, the awaiting coroutine is suspened. Pushing new item into
@@ -40,20 +43,19 @@ namespace cocls {
  * int value = co_await q;
  * @endcode
  */
-template<typename T>
+template<typename T, 
+         typename Queue = std::queue<T>, 
+         typename CoroQueue = std::queue<abstract_awaiter<> *>, 
+         typename Lock = std::mutex >
 class queue {
 public:
     ///construct empty queue
     queue() = default;
     ~queue();
-    ///Queue can't be copied
-    queue(const queue &) = delete;
-    ///Queue can't be moved
-    queue &operator=(const queue &) = delete;
     
     ///Push the item
     /**
-     * @param x rvalue reference for item, use for movable itesm
+     * @param x rvalue reference for item, use for movable items
      * 
      * @note if there is awaiting coroutine, it may be resumed now (resume_lock is used)
      */
@@ -136,11 +138,11 @@ protected:
     
     friend class co_awaiter<queue>;
     ///lock protects internal
-    std::mutex _mx;
+    Lock _mx;
     ///queue itself
-    std::queue<T> _queue;
+    Queue _queue;
     ///list of awaiters - in queue
-    std::queue<abstract_awaiter<> *> _awaiters;
+    CoroQueue _awaiters;
     ///count of items in the queue reserved for return
     /**
      * once coroutine is being resumed, the item, which is going to be returned
@@ -166,8 +168,8 @@ protected:
 
 
 
-template<typename T>
-inline void queue<T>::push(T &&x) {
+template<typename T, typename Queue, typename CoroQueue, typename Lock>
+inline void queue<T,Queue,CoroQueue, Lock>::push(T &&x) {
     std::unique_lock<std::mutex> lk(_mx);
     //push to queue under lock
     _queue.push(std::move(x));
@@ -175,8 +177,8 @@ inline void queue<T>::push(T &&x) {
     resume_awaiter(lk);
 }
 
-template<typename T>
-inline void queue<T>::push(const T &x) {
+template<typename T, typename Queue, typename CoroQueue, typename Lock>
+inline void queue<T,Queue,CoroQueue, Lock>::push(const T &x) {
     std::unique_lock<std::mutex> lk(_mx);
     //push to queue under lock
     _queue.push(x);
@@ -185,22 +187,22 @@ inline void queue<T>::push(const T &x) {
 }
 
 
-template<typename T>
-inline bool queue<T>::empty() {
+template<typename T, typename Queue, typename CoroQueue, typename Lock>
+inline bool queue<T,Queue,CoroQueue, Lock>::empty() {
     std::unique_lock lk(_mx);
     return empty_lk();
 }
 
-template<typename T>
-inline std::size_t queue<T>::size() {
+template<typename T, typename Queue, typename CoroQueue, typename Lock>
+inline std::size_t queue<T,Queue,CoroQueue, Lock>::size() {
     std::unique_lock lk(_mx);
     return size_lk();
 }
 
 
 
-template<typename T>
-inline queue<T>::~queue() {
+template<typename T, typename Queue, typename CoroQueue, typename Lock>
+inline queue<T,Queue,CoroQueue, Lock>::~queue() {
     _exit = true;
     while (!_awaiters.empty()) {
         auto x = _awaiters.front();        
@@ -209,8 +211,8 @@ inline queue<T>::~queue() {
     }
 }
 
-template<typename T>
-inline void cocls::queue<T>::resume_awaiter(std::unique_lock<std::mutex> &lk) {
+template<typename T, typename Queue, typename CoroQueue, typename Lock>
+inline void cocls::queue<T,Queue,CoroQueue, Lock>::resume_awaiter(std::unique_lock<std::mutex> &lk) {
     if (_awaiters.empty()) return;
     auto h = _awaiters.front();
     _awaiters.pop();
