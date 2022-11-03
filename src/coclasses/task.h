@@ -263,9 +263,9 @@ public:
     //not initialized, the allocator handles it
     //contains A0 - allocated on memory, C0 - allocated by custom allocator
     //other values are invalid, probably clash of memory layout
-    unsigned char _custom_allocator; 
+    unsigned char _custom_allocator[1]; 
 
-    task_promise_base():_ref_count(0) {} // @suppress("Class members should be properly initialized")
+    task_promise_base():_ref_count(0) {}          
 
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
@@ -349,7 +349,7 @@ public:
         std::coroutine_handle<task_promise_base> h = std::coroutine_handle<task_promise_base>::from_address(alloc_place);
         task_promise_base &p = h.promise();       
         assert(reinterpret_cast<char *>(&p) >= reinterpret_cast<char *>(alloc_place));
-        return &p._custom_allocator;
+        return std::launder(p._custom_allocator);
     }
     
     void *operator new(std::size_t sz) {
@@ -376,6 +376,7 @@ public:
         unsigned char flg = *find_custom_allocator_flag(ptr);;
         assert(flg == 0xA0 || flg == 0xC0);
         if (flg == 0xA0) coro_promise_base::operator delete(ptr, sz);
+        else if (flg != 0xC0) abort();
     }
 #else
     void *operator new(std::size_t sz) {

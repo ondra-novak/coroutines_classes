@@ -18,7 +18,7 @@ namespace _details {
  */
 template<typename T>
 struct generator_aggregator_controller {
-    using Queue = queue<generator<T> *>;
+    using Queue = limited_queue<generator<T> *, single_item_queue<abstract_awaiter<> * > >;
     generator_aggregator_controller(std::size_t count, Queue &queue):_count(count),_queue(queue) {}
     generator_aggregator_controller(const generator_aggregator_controller  &) = delete;
     generator_aggregator_controller &operator=(const generator_aggregator_controller  &) = delete;
@@ -52,12 +52,12 @@ generator<T> generator_aggregator(std::vector<generator<T> > list__) {
     
     std::exception_ptr exp;
     
-    using Queue = queue<generator<T> *>; 
+    using Queue = limited_queue<generator<T> *, single_item_queue<abstract_awaiter<> * > >; 
     using controller = _details::generator_aggregator_controller<T>;
     
     
     std::vector<generator<T> > list(std::move(list__));
-    Queue queue;
+    Queue queue(list.size());
     controller cnt(list.size(), queue);
         
     

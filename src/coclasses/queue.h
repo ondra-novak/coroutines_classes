@@ -158,13 +158,146 @@ protected:
     
     void resume_awaiter(std::unique_lock<std::mutex> &lk);
     
-    bool size_lk() const {
+    std::size_t size_lk() const {
         return _queue.size() - _reserved_items;
     }
     bool empty_lk() const {
         return size_lk() == 0;
     }
 };
+
+namespace _details {
+
+
+    template<class T>
+    class limited_queue_impl {
+    public:
+
+        union item {
+            T _subject;
+            char _buffer[sizeof(T)];
+            item() {}
+            ~item() {}
+        };
+
+        
+        void reserve(std::size_t sz) {
+            clear();
+            _items.resize(sz+1); //alloc +1 item, to distinguish between empty and full queue
+            _beg = _end = 0;
+        }
+        
+        void clear() {
+            while(!empty()) pop();
+        }
+        
+        bool empty() const {
+            return _beg == _end;
+        }
+        
+        template<typename ... Args>
+        void emplace(Args && ... args) {
+            std::size_t newend = (_end + 1) % _items.size();
+            if (newend == _end) throw std::runtime_error("Limited queue is full");
+            new (_items[_end]._buffer) T(std::forward<Args>(args)...);
+            _end = newend;
+        }
+        
+        void push(T &&v) {
+            emplace(std::move(v));
+        }
+        void push(const T &v) {
+            emplace(v);
+        }
+        
+        std::size_t size() const {
+            auto sz = _items.size();
+            return (_end + sz - _beg) % sz;
+        }
+        
+        T &front() {
+            //reading empty queue is UB
+            return _items[_beg]._subject;
+        }
+        
+        const T &front() const {
+            //reading empty queue is UB
+            return _items[_beg]._subject;
+        }
+        
+        void pop() {
+            //pop from empty queue is UB;
+            _items[_beg]._subject.~T();
+            _beg = (_beg + 1) % _items.size();
+        }
+        ~limited_queue_impl() {
+            clear();
+        }
+    protected:
+        std::vector<item> _items;
+        std::size_t _beg = 0;
+        std::size_t _end = 0;
+        
+    };
+
+    
+}
+
+template<typename T, typename CoroQueue = std::queue<abstract_awaiter<> *>, typename Lock = std::mutex>
+class limited_queue: public queue<T, _details::limited_queue_impl<T>, CoroQueue, Lock> {
+public:
+    limited_queue(std::size_t sz) {
+        this->_queue.reserve(sz);
+    }
+};
+
+
+///Simulates queue interface above single item. 
+/** It can be used to simplify queue of awaiters for queue<>, if only
+ * one coroutine is expected to be awaiting. However if this
+ * promise is not fullfiled, the result is UB
+ * 
+ * 
+ * @tparam T type of item
+ */
+template<typename T>
+class single_item_queue {
+public:
+    
+    ///
+    void clear() {!_val.reset();}
+    ///
+    bool empty() const {return !_val.has_value();}
+    
+    ///
+    template<typename ... Args>
+    void emplace(Args && ... args) {
+        if (_val.has_value()) throw std::runtime_error("Single item queue is full");
+        _val.emplace(std::forward<Args>(args)...);
+    }
+    ///
+    void push(T &&val) {
+        emplace(std::move(val));
+    }
+    ///
+    void push(const T &val) {
+        emplace(val);
+    }
+    ///
+    std::size_t size() const {return empty()?0:1;}
+    ///
+    T &front() {return *_val;}
+    ///
+    const T &front() const {return *_val;}
+    ///
+    void pop() {
+        _val.reset();
+    }
+    
+protected:
+    std::optional<T> _val;
+};
+
 
 
 
