@@ -58,7 +58,16 @@ using coro_promise_base = COCLS_USE_CUSTOM_ALLOCATOR
 #else
 ///Disable using poolalloc
 #ifdef COCLS_DISABLE_POOLALLOC
-class coro_promise_base {};
+class coro_promise_base {
+public:
+    void* operator new(std::size_t sz) {
+        return ::operator new(sz);
+    }
+    void operator delete(void* ptr, std::size_t sz) {
+        ::operator delete(ptr);
+    }
+
+};
 #else
 
 #ifndef COCLS_POOLALLOC_MAXCACHE
@@ -148,13 +157,13 @@ struct abstract_thread_local_cache {
 template<std::size_t sz>
 struct thread_local_cache: abstract_thread_local_cache {
     global_block_cache<sz> *_cache;
-    unsigned int _max_count;
+    std::size_t _max_count;
 
     block<sz> * _prepared = nullptr;
     block<sz> * _dropped = nullptr;
-    unsigned int _count = 0;
+    std::size_t _count = 0;
     
-    thread_local_cache(global_block_cache<sz> *cache, unsigned int max_count)
+    thread_local_cache(global_block_cache<sz> *cache, std::size_t max_count)
         :_cache(cache), _max_count(max_count) {}
     
     virtual void *alloc() override {

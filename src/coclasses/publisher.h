@@ -155,8 +155,11 @@ public:
             using value_type = X;
             block *blks = nullptr;
         };
-
+#ifdef _WIN32
+        using pos_set = std::set<lock_pos, std::less<lock_pos>>; 
+#else
         using pos_set = std::set<lock_pos, std::less<lock_pos>, allocator<lock_pos> >; 
+#endif
         
         const std::size_t _max_queue_len = std::numeric_limits<std::size_t>::max();
         const std::size_t _min_queue_len = 1; 

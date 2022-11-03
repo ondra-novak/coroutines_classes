@@ -85,7 +85,8 @@ public:
      * @note There will be always a coroutine which is executed to handle this
      * feature, there is no much optimization. 
      */
-    template<typename X, typename = decltype(T(std::declval<X>()))>
+    
+    template<std::convertible_to<T> X>
     explicit task(X &&x);
     
     ///task is internaly constructed from pointer to a promise  
@@ -402,7 +403,7 @@ public:
     void operator delete(void *ptr, std::size_t sz) {
         bool *x = reinterpret_cast<bool *>(ptr)+sz;
         if (!*x) coro_promise_base::operator delete(ptr, sz+1);
-    }
+        }
 #endif
 };
 
@@ -509,20 +510,27 @@ namespace _details {
 template<std::size_t space>
 class static_task_storage:public task_storage {
 public:
+#ifdef _WIN32 //msvc coroutines are much larger
+    static constexpr std::size_t multiplier = 250;
+#else
+    static constexpr std::size_t multiplier = 100;
+#endif
+    static constexpr std::size_t adjspace = space * multiplier /100;
+
     virtual void *alloc(std::size_t sz) override { 
-        assert(sz <= space); //space is too small to fit the cooroutine frame;
+        assert(sz <= adjspace); //space is too small to fit the cooroutine frame;
         return _buffer;
     }
     virtual std::size_t capacity() const override {return space;}
 protected:
-    char _buffer[space];
+    char _buffer[adjspace];
 };
 
 
-
 template<typename T, typename P>
-template<typename X, typename>
+template<std::convertible_to<T> X>
 inline task<T,P>::task(X &&x) {
+
     if constexpr(std::is_same<X,bool>::value) {
         if (x) {
             static static_task_storage<sizeof(void *)*11> storage; 
@@ -534,7 +542,7 @@ inline task<T,P>::task(X &&x) {
             *this = v_false;
         }
     } else {
-        *this = _details::coro_resolve(std::forward<X>(x));
+        *this = task<T,P>(_details::coro_resolve(std::forward<X>(x)));
     }
 }
 
