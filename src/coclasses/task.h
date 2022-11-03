@@ -260,8 +260,12 @@ public:
     std::atomic<AW *> _awaiter_chain;
     std::atomic<unsigned int> _ref_count;
     future_var<T> _value;
+    //not initialized, the allocator handles it
+    //contains A0 - allocated on memory, C0 - allocated by custom allocator
+    //other values are invalid, probably clash of memory layout
+    unsigned char _custom_allocator; 
 
-    task_promise_base():_ref_count(0) {}
+    task_promise_base():_ref_count(0) {} // @suppress("Class members should be properly initialized")
 
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
@@ -324,12 +328,56 @@ public:
         }
         
     }
+
+    
     
     void unhandled_exception() {
         _value.unhandled_exception();
         AW::mark_ready_resume(_awaiter_chain);
     }
+#ifdef __GNUC__
+    //experimental, tested in GCC and CLANG - allocator flag is inside of promise
+    //we need to find this flag using transformation of address of coroutine frame
+    //however it assumes, that address of coroutine frame is exact same as
+    //as allocation address
     
+    //for unknown compiler, this flag is placed at the end of the frame, allocating
+    //one extra byte of the space - which can be extended up to 8 extra bytes 
+    //because of alignment, this is the reason why it is better to use space in the promise
+    
+    static unsigned char *find_custom_allocator_flag(void *alloc_place) {
+        std::coroutine_handle<task_promise_base> h = std::coroutine_handle<task_promise_base>::from_address(alloc_place);
+        task_promise_base &p = h.promise();       
+        assert(reinterpret_cast<char *>(&p) >= reinterpret_cast<char *>(alloc_place));
+        return &p._custom_allocator;
+    }
+    
+    void *operator new(std::size_t sz) {
+        void *r = coro_promise_base::operator new(sz);
+        unsigned char *flg = find_custom_allocator_flag(r);
+        *flg = 0xA0;
+        return r;
+    }
+
+    template< typename ... Args>
+    void *operator new(std::size_t sz, task_storage &storage, Args && ...) {
+        void *r = storage.alloc(sz);
+        unsigned char *flg = find_custom_allocator_flag(r);
+        *flg = 0xC0;
+        return r;
+    }
+
+    template<typename ... Args>
+    void operator delete(void *ptr, task_storage &storage, Args && ... ) {
+        //empty
+    }
+
+    void operator delete(void *ptr, std::size_t sz) {
+        unsigned char flg = *find_custom_allocator_flag(ptr);;
+        assert(flg == 0xA0 || flg == 0xC0);
+        if (flg == 0xA0) coro_promise_base::operator delete(ptr, sz);
+    }
+#else
     void *operator new(std::size_t sz) {
         void *r = coro_promise_base::operator new(sz+1);
         bool *x = reinterpret_cast<bool *>(r)+sz;
@@ -354,6 +402,7 @@ public:
         bool *x = reinterpret_cast<bool *>(ptr)+sz;
         if (!*x) coro_promise_base::operator delete(ptr, sz+1);
     }
+#endif
 };
 
 
