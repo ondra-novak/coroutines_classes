@@ -243,9 +243,22 @@ namespace _details {
     
 }
 
+///Limited queue
+/**
+ * works as queue<>, queue has limited length. It is slightly faster, 
+ * queue allocation is done only once - at the beginning
+ * 
+ * @tparam T type of item
+ * @tparam CoroQueue type of queue of awaiters
+ * @tparam Lock type of lock
+ */
 template<typename T, typename CoroQueue = std::queue<abstract_awaiter<> *>, typename Lock = std::mutex>
 class limited_queue: public queue<T, _details::limited_queue_impl<T>, CoroQueue, Lock> {
 public:
+    ///construct queue, specify size
+    /**
+     * @param sz size of queue (must be >0)
+     */
     limited_queue(std::size_t sz) {
         this->_queue.reserve(sz);
     }
