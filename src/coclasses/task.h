@@ -216,6 +216,21 @@ protected:
 };
 
 
+///Abstract class to define storage for coroutines
+/**
+ * @note because destruction of coroutines doesn't call custom deallocators,
+ * storages doesn't contain dealloc function. It is expected, that 
+ * object itself handles deallocation when storage is no longer needed
+ * 
+ * The most storages expect allocation memory for a single coroutine. You
+ * can assume, that further calls of alloc() also means deallocation of previous
+ * allocation 
+ * 
+ * To use task_storage, pass task_storage reference to a coroutine as the first argument.
+ * Then you can pass reference to actuall implementation of storage when the
+ * coroutine is called
+ * 
+ */
 class task_storage {
 public:
     task_storage() = default;
@@ -223,6 +238,14 @@ public:
     task_storage &operator=(task_storage &) = delete;
     virtual ~task_storage()=default;
     
+    ///allocate space for the coroutine
+    /**
+     * @param sz required size
+     * 
+     * @note there is no dealloc. It assumes that next call of 
+     * alloc() automatically deallocates space allocated by prevous
+     * alloc. You can also effecively reuse already allocated space 
+     */
     virtual void *alloc(std::size_t sz) = 0;
     virtual std::size_t capacity() const = 0; 
 };

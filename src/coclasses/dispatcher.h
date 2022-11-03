@@ -7,8 +7,7 @@
 #include "awaiter.h"
 #include "lazy.h"
 
-#include "no_alloc.h"
-
+#include "task_storage.h"
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -99,7 +98,7 @@ public:
                 return awt.await_resume();
             } 
             if (instance == nullptr) throw no_thread_dispatcher_is_initialized_exception();
-            no_alloc<lazy<>, storage_t<> > t = ([](storage_t<> &,Awt &&awt, std::shared_ptr<dispatcher> inst)->lazy<>{
+            lazy<> t = ([](task_storage &,Awt &&awt, std::shared_ptr<dispatcher> inst)->lazy<>{
                 inst->quit();
                 co_return;
             })(instance->_watcher_storage, std::forward<Awt>(awt),instance);
@@ -165,7 +164,7 @@ public:
 protected:
     
     static thread_local std::shared_ptr<dispatcher> instance;
-    storage_t<> _watcher_storage;
+    reusable_task_storage _watcher_storage;
 
 
     

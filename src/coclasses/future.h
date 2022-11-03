@@ -365,12 +365,15 @@ public:
         return m.alloc(sz);
     }
     void operator delete(void *ptr, Storage &m) {
-        m.dealloc(ptr);
+        
     }
     
     void operator delete(void *ptr, std::size_t) {
-        Storage::dealloc(ptr);
+        
     }
+private:
+    void *operator new(std::size_t sz);
+
 };
 
 

@@ -6,8 +6,8 @@
 #include "common.h"
 #include "poolalloc.h"
 #include "future.h"
-#include "no_alloc.h"
 
+#include "task_storage.h"
 #include <memory>
 #include <optional>
 #include <functional>
@@ -467,7 +467,7 @@ protected:
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
     //storage for future
-    storage_t<> _future_storage;
+    reusable_task_storage _future_storage;
 
 };
 

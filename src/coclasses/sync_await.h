@@ -6,7 +6,6 @@
 #define SRC_COCLASSES_SYNC_AWAIT_H_
 
 #include "common.h"
-#include "no_alloc.h"
 
 #include "resumption_policy.h"
 
