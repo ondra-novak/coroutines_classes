@@ -119,6 +119,8 @@ public:
         public:
             allocator() = default;
             allocator(const allocator &other) {};
+            template <class _Other>
+            constexpr allocator(const allocator<_Other>&) noexcept {}
             allocator &operator=(const allocator &other) = delete;
             struct block {                 // @suppress("Miss copy constructor or assignment operator")
                 block *_next;
@@ -151,11 +153,17 @@ public:
                     delete x;
                 }
             }
+
+            using size_type = size_t;
+            using difference_type = ptrdiff_t;
+            using propagate_on_container_move_assignment = std::true_type;
+            using is_always_equal  = std::true_type;
+            using _From_primary = allocator;
             
             using value_type = X;
             block *blks = nullptr;
         };
-#ifdef _WIN32
+#if 0
         using pos_set = std::set<lock_pos, std::less<lock_pos>>; 
 #else
         using pos_set = std::set<lock_pos, std::less<lock_pos>, allocator<lock_pos> >; 

@@ -6,3 +6,6 @@
 /doxygen
 /bin
 /.vs
+/build
+/out/build
+/CMakeSettings.json

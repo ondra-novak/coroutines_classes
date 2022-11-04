@@ -2,7 +2,7 @@
 #ifndef SRC_COCLASSES_GENERATOR_AGGREGATOR_H_
 #define SRC_COCLASSES_GENERATOR_AGGREGATOR_H_
 #include "generator.h"
-#include "queue.h"
+#include "limited_queue.h"
 
 namespace cocls {
 
@@ -18,7 +18,7 @@ namespace _details {
  */
 template<typename T>
 struct generator_aggregator_controller {
-    using Queue = limited_queue<generator<T> *, single_item_queue<abstract_awaiter<> * > >;
+    using Queue = limited_queue<generator<T> *, primitives::single_item_queue<abstract_awaiter<> * > >;
     generator_aggregator_controller(std::size_t count, Queue &queue):_count(count),_queue(queue) {}
     generator_aggregator_controller(const generator_aggregator_controller  &) = delete;
     generator_aggregator_controller &operator=(const generator_aggregator_controller  &) = delete;
@@ -52,7 +52,7 @@ generator<T> generator_aggregator(std::vector<generator<T> > list__) {
     
     std::exception_ptr exp;
     
-    using Queue = limited_queue<generator<T> *, single_item_queue<abstract_awaiter<> * > >; 
+    using Queue = limited_queue<generator<T> *, primitives::single_item_queue<abstract_awaiter<> * > >; 
     using controller = _details::generator_aggregator_controller<T>;
     
     

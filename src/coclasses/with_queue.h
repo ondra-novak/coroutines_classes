@@ -87,7 +87,7 @@ template<typename Coro, typename T>
 class with_queue_promise: public Coro::promise_type {
 public:
     
-    using queue_t = queue<T, std::queue<T>, single_item_queue<abstract_awaiter<> *> >; 
+    using queue_t = queue<T, std::queue<T>, primitives::single_item_queue<abstract_awaiter<> *> >; 
     
     queue_t _q;
     
