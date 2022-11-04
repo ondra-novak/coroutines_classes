@@ -22,13 +22,7 @@
 #include <type_traits>
 #include <concepts>
 
-
-
 namespace cocls {
-
-
-
-
 
 ///Coroutine promise object - part of coroutine frame
 /** This object is never used directly, but it is essential object to support coroutines
@@ -555,6 +549,16 @@ task<T,P>::task():_h(nullptr) {
         *this = prealloc;
     }
 }
+
+
+template<typename T> 
+    struct is_task :std::integral_constant<bool, false> {};
+template<typename T, typename P> 
+    struct is_task<task<T,P> > : std::integral_constant<bool, true> {};
+template<typename T> 
+    struct task_result;
+template<typename T, typename P> 
+    struct task_result<task<T,P> > {using type = T;};
 
 
 

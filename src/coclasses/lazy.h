@@ -152,6 +152,10 @@ protected:
     
 };;
 
+template<typename T, typename P> 
+    struct is_task<lazy<T,P> > : std::integral_constant<bool, true> {};
+template<typename T, typename P> 
+    struct task_result<lazy<T,P> > {using type = T;};
 
 
 

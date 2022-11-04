@@ -38,7 +38,11 @@ namespace _details {
     template<typename X>
     auto test_has_wait(X &&x) -> decltype(x.wait());
     std::monostate test_has_wait(...);
-    
+
+    template<typename X, typename Y>
+    auto test_has_subscribe_awaiter(X &&x, Y &&y) -> decltype(x.subscribe_awaiter(y));
+    std::monostate test_has_subscribe_awaiter(...);
+
     template<typename X>
     auto test_has_join(X &&x) -> decltype(x.join());
     std::monostate test_has_join(...);
@@ -70,6 +74,8 @@ using has_set_resumption_policy = std::negation<std::is_same<std::monostate, dec
 
 template<typename X> 
 using has_wait = std::negation<std::is_same<std::monostate, decltype(_details::test_has_wait(std::declval<X>()))> >;
+template<typename X, typename Y> 
+using has_subscribe_awaiter = std::negation<std::is_same<std::monostate, decltype(_details::test_has_subscribe_awaiter(std::declval<X>(),std::declval<Y>()))> >;
 template<typename X> 
 using has_join = std::negation<std::is_same<std::monostate, decltype(_details::test_has_join(std::declval<X>()))> >;
 
