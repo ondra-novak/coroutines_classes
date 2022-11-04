@@ -107,6 +107,8 @@ namespace cocls {
     template<typename T, typename CoroQueue = std::queue<abstract_awaiter<>*>, typename Lock = std::mutex>
     class limited_queue : public queue<T, _details::limited_queue_impl<T>, CoroQueue, Lock> {
     public:
+        
+        using super_t = queue<T, _details::limited_queue_impl<T>, CoroQueue, Lock>;
         ///construct queue, specify size
         /**
          * @param sz size of queue (must be >0)
@@ -117,9 +119,9 @@ namespace cocls {
     };
     /// limited queue, where function push is also awaitable, because the pusher - producer - can be blocked on full queue
     /**
-    * @tparam T type of ite,
+    * @tparam T type of item
     * @tparam PQueue queue implementation for producers
-    * @tparam CQueue queue implemenration for consumers
+    * @tparam CQueue queue implementation for consumers
     * @tparam Lock lock implementation
     */
     template<typename T, typename PQueue = std::queue<abstract_awaiter<>* >, typename CQueue = std::queue<abstract_awaiter<>* >, typename Lock = std::mutex>
@@ -127,40 +129,40 @@ namespace cocls {
     public:
         using super_t = limited_queue<T, CQueue, Lock>;
 
+        limited_queue_awaitable_push(std::size_t sz):super_t(sz),_reserved_space(0) {}
+
+        template<typename X>
         class push_awaiter : public co_awaiter<limited_queue_awaitable_push> {
         public:
-            push_awaiter(co_awaiter<limited_queue_awaitable_push>& owner, T &&item)
-                :co_awaiter<limited_queue_awaitable_push>(owner), _item(std::move(item)) {}
-            push_awaiter(co_awaiter<limited_queue_awaitable_push>& owner, const T& item)
-                :co_awaiter<limited_queue_awaitable_push>(owner), _item(item) {}
+            push_awaiter(limited_queue_awaitable_push& owner, X &&item)
+                :co_awaiter<limited_queue_awaitable_push>(owner), _item(&item) {}
             push_awaiter(const push_awaiter& other) = default;
             push_awaiter& operator=(const push_awaiter& other) = delete;
 
             bool await_ready() {
-                if (try_push(*_item)) {
-                    _item.reset();
+                if (this->_owner.try_push(std::forward<X>(*_item))) {
+                    _item = nullptr;
                     return true;
                 }
-                else {
-                    return false;
-                }
+                return false;
             }
 
             void await_resume() {
-                if (_item.has_value()) {
-                    final_push(*_item);
+                if (_item) {
+                   this->_owner.final_push(std::forward<X>(*_item));
                 }
             }
         protected:
-            std::optional<T> _item;
+            std::remove_reference_t<X> *_item;
         };
 
-        class pop_awaiter : public co_awaiter<super_t> {
+        class pop_awaiter : public co_awaiter<typename super_t::super_t> {
         public:
-            using co_awaiter<super_t>::co_awaiter;
+            using super_awaiter = co_awaiter<typename super_t::super_t>; 
+            using co_awaiter<typename super_t::super_t>::co_awaiter;
 
             decltype(auto) await_resume() {
-                decltype(auto) x = co_awaiter<super_t>::await_resume();
+                decltype(auto) x = super_awaiter::await_resume();
                 static_cast<limited_queue_awaitable_push&>(this->_owner).check_after_pop();
                 return x;
             }
@@ -172,8 +174,8 @@ namespace cocls {
         * @param item rvalue reference to an item
         * @return awaiter, so you need to co_await on result
         */
-        push_awaiter push(T &&item) {
-            push_awaiter(*this, &item);
+        push_awaiter<T> push(T &&item) {
+            return push_awaiter<T>(*this, std::move(item));
         }
 
         ///push items to the queue
@@ -181,8 +183,8 @@ namespace cocls {
         * @param item lvalue reference to an item
         * @return awaiter, so you need to co_await on result
         */
-        push_awaiter push(const T& item) {
-            push_awaiter(*this, item);
+        push_awaiter<const T &> push(const T& item) {
+            return push_awaiter<const T &>(*this, item);
         }
 
         /// pop item from the queue
@@ -198,7 +200,7 @@ namespace cocls {
         * has a space to insert new items. This function is called automatically 
         * after pop() on this class. However, if the pop is done through the
         * its parent class (queue), this check is not done, so you must call it
-        * manualy
+        * manually
         **/
         void check_after_pop() {
             abstract_awaiter<>* awt;
@@ -222,13 +224,17 @@ namespace cocls {
         friend class co_awaiter<limited_queue_awaitable_push>;
         std::size_t _reserved_space;
 
-        bool try_push(T &item) {
-            std::lock_guard _(this->_mx);
+        template<typename X>
+        bool try_push(X &&item) {
+            std::unique_lock lk(this->_mx);
             if (this->_queue.size() + _reserved_space < this->_queue.capacity()) {
-                this->_queue.push(std::move(item));
+                this->_queue.push(std::forward<X>(item));
+                this->resume_awaiter(lk);
+                return true;
             }
             return false;
         }
+
 
         bool subscribe_awaiter(abstract_awaiter<>* awt) {
             std::lock_guard _(this->_mx);
@@ -240,11 +246,13 @@ namespace cocls {
             return true;
         }
 
-        void final_push(T &item) {
+        template<typename X>
+        void final_push(X &&item) {
             std::lock_guard _(this->_mx);
-            this->_queue.push(std::move(item));
+            this->_queue.push(std::forward<X>(item));
             _reserved_space--;
         }
+
 
     };
 }
