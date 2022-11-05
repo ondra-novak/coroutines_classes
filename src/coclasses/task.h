@@ -144,6 +144,10 @@ public:
         return get_promise()->is_ready();
     }
 
+    bool done() const {
+        return is_ready();
+    }
+    
     ///Join the task synchronously, returns value
     decltype(auto) join() {
         co_awaiter<promise_type_base, true> aw(*get_promise());
@@ -201,6 +205,7 @@ public:
     void initialize_policy(Args && ... args) {
         static_cast<promise_type *>(get_promise())->initialize_policy(std::forward<Args>(args)...);
     }
+    
     
 protected:
     std::coroutine_handle<promise_type_base> _h;
