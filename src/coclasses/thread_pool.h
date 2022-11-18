@@ -64,7 +64,7 @@ public:
             auto h = _queue.front();
             _queue.pop();
             lk.unlock();
-            h->resume();
+            resumption_policy::queued::resume(h->resume_handle());
             //if _current is nullptr, thread_pool has been destroyed 
             if (_current == nullptr) return;
             lk.lock();
@@ -111,7 +111,14 @@ public:
         stop();
     }
     
-    using awaiter = co_awaiter<thread_pool>;
+    class awaiter : public co_awaiter<thread_pool> {
+    public:
+        using co_awaiter<thread_pool>::co_awaiter;
+
+    private:
+        using co_awaiter<thread_pool>::set_resumption_policy;
+        
+    };
     template<typename Fn>
     class fork_awaiter: public awaiter {
     public:
@@ -124,8 +131,6 @@ public:
         }
     protected:
         Fn _fn;
-    private:
-        using awaiter::set_resumption_policy;
     };
     
     
