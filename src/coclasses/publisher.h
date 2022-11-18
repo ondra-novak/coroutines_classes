@@ -8,6 +8,7 @@
 #include "future.h"
 
 #include <deque>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -58,6 +59,8 @@ public:
     class queue {
     public:
         
+        using Handle = std::size_t;
+        
         queue() = default;
         queue(std::size_t max_queue_len, std::size_t min_queue_len = 1)
             :_max_queue_len(max_queue_len), _min_queue_len(min_queue_len)
@@ -66,172 +69,177 @@ public:
             assert(_max_queue_len >= _min_queue_len);
         }
         ///announce position
-        void subscribe(const subscriber<T> *sub, std::size_t pos) {
+        Handle subscribe(const subscriber<T> *sub, std::size_t pos) {
             std::lock_guard _(_mx);
-            subscribe_lk(sub,pos);
+            return subscribe_lk(sub,pos);
         }
         ///announce position - set to most recent
-        std::size_t subscribe(const subscriber<T> *sub) {
+        Handle subscribe(const subscriber<T> *sub) {
             std::lock_guard _(_mx);
             return subscribe_lk(sub);
         }
-        bool advance(const subscriber<T> *sub, std::size_t &pos, subscribtion_type type) {
+        ///announce position - set to most recent
+        Handle subscribe(Handle h, const subscriber<T> *sub) {
             std::lock_guard _(_mx);
-            return advance_lk(sub,pos,type);
+            return subscribe_lk(h, sub);
         }
-        bool advance_suspend(const subscriber<T> *sub, std::size_t &pos, abstract_awaiter<true> *awt) {
+        bool advance(Handle id, subscribtion_type type) {
             std::lock_guard _(_mx);
-            return advance_suspend_lk(sub,pos,awt);
+            return advance_lk(id,type);
+        }
+        bool advance_suspend(Handle id, abstract_awaiter<> *awt) {
+            std::lock_guard _(_mx);
+            return advance_suspend_lk(id,awt);
         }
         
-        void leave(const subscriber<T> *sub, std::size_t pos) {
+        void leave(Handle id) {
             std::lock_guard _(_mx);
-            leave_lk(sub, pos);
+            leave_lk(id);
         }
         
-        std::optional<T> get_value(const subscriber<T> *sub, std::size_t pos, subscribtion_type type) {
+        std::size_t position(Handle h) {
+            return _regs[h]._pos;            
+        }
+        
+        std::optional<T> get_value(Handle id, subscribtion_type type) {
             std::lock_guard _(_mx);
-            return get_value_lk(sub, pos,type);
+            return get_value_lk(id,type);
         }
         void push(T &&val) {
             std::unique_lock<std::mutex> lk(_mx);
             _q.push_front(std::move(val));
-            push_lk(lk);
+            push_lk(lk,1);
         }
         void push(const T &val) {
             std::unique_lock<std::mutex> lk(_mx);
             _q.push_front(val);
-            push_lk(lk);
+            push_lk(lk,1);
         }
+        template<typename Iter>
+        void push(Iter &&from, Iter &&to) {
+            std::unique_lock<std::mutex> lk(_mx);
+            auto n = _q.size();
+            std::copy(from, to, std::front_inserter(_q));
+            auto d = _q.size() - n;
+            if (d) {
+                push_lk(lk,d);
+            }
+        }
+        
         void close() {
             std::unique_lock<std::mutex> lk(_mx);
             if (_closed) [[unlikely]] return;
-            _pos--;
             _closed = true;
-            push_lk(lk);
+            push_lk(lk,0);
+        }
+        void kick(const subscriber<T> *sub) {
+            std::unique_lock<std::mutex> lk(_mx);
+            kick_lk(sub, lk);            
         }
         
     protected:
-        using lock_pos = std::pair<std::size_t, const subscriber<T> *>;        
-
-        template<typename X>
-        struct allocator {
-        public:
-            allocator() = default;
-            allocator(const allocator &other) {};
-            template <class _Other>
-            constexpr allocator(const allocator<_Other>&) noexcept {}
-            allocator &operator=(const allocator &other) = delete;
-            struct block {                 // @suppress("Miss copy constructor or assignment operator")
-                block *_next;
-                char _buffer[sizeof(X)];
-            };
-            X *allocate(auto n) {
-                assert(n == 1);
-                void *ret;
-                if (blks) {
-                    ret = blks->_buffer;
-                    blks = blks->_next;
-                } else {
-                    block *b = new block;
-                    ret = b->_buffer;
-                }
-                return reinterpret_cast<X *>(ret);
-            }
-            
-            void deallocate(X *ptr, auto n) {
-                assert(n == 1);
-                block *b = reinterpret_cast<block *>(reinterpret_cast<char *>(ptr)-offsetof(block, _buffer));
-                b->_next = blks;
-                blks = b;
-            }
-
-            ~allocator() {
-                while (blks) {
-                    auto x = blks;
-                    blks = blks->_next;
-                    delete x;
-                }
-            }
-
-            using size_type = size_t;
-            using difference_type = ptrdiff_t;
-            using propagate_on_container_move_assignment = std::true_type;
-            using is_always_equal  = std::true_type;
-            using _From_primary = allocator;
-            
-            using value_type = X;
-            block *blks = nullptr;
+        //subscriber registration
+        struct subreg_t {
+            std::size_t _pos;           //reading position  (it is used as _next_free when not used)      
+            const subscriber<T> *_sub;   //associated subscriber (used as identification) 
+            abstract_awaiter<> *_awt;   //currently registered awaiter            
+            bool _used;         //this slot is used
+            bool _kicked;       //subscriber has been kicked out
         };
-#if 0
-        using pos_set = std::set<lock_pos, std::less<lock_pos>>; 
-#else
-        using pos_set = std::set<lock_pos, std::less<lock_pos>, allocator<lock_pos> >; 
-#endif
+        
+        using posreg_t = std::pair<std::size_t, Handle>; //position, index
+        
+        using registrations_t = std::vector<subreg_t>;          //list of registrations
         
         const std::size_t _max_queue_len = std::numeric_limits<std::size_t>::max();
         const std::size_t _min_queue_len = 1; 
-
-        std::mutex _mx;
-        std::deque<T> _q;
-        pos_set _positions;
-        std::size_t _pos = 0;
-        abstract_awaiter<true> * _awaiters = nullptr;
-        bool _closed = false;
         
-        void subscribe_lk(const subscriber<T> *sub, std::size_t pos) {
-            _positions.insert(lock_pos(pos, sub));
+        registrations_t _regs;  //list of registrations
+        std::size_t _next_free = 0; //contains next free registration slot
+        std::mutex _mx;         //mutex
+        std::deque<T> _q;       //queue of items
+        std::size_t _pos = 1;   //position in the stream
+        std::vector<abstract_awaiter<> *> _wakeup_buffer;
+        bool _closed = false;   //true if closed
+        
+        Handle subscribe_lk(const subscriber<T> *sub, std::size_t pos) {
+            Handle h;
+            if (_next_free >= _regs.size()) {
+                h=_regs.size();
+                _regs.push_back({pos, sub,nullptr,true,false});
+                _next_free = _regs.size();
+            } else {
+                h = _next_free;
+                subreg_t &l = _regs[_next_free];                
+                _next_free = l._pos;
+                l._awt = nullptr;
+                l._sub = sub;
+                l._pos = pos;
+                l._used = true;
+                l._kicked = false;
+            }
+            return h;
         }
-        std::size_t subscribe_lk(const subscriber<T> *sub) {            
-            _positions.insert(lock_pos(_pos-1, sub));
-            return _pos-1;
+        Handle subscribe_lk(const subscriber<T> *sub) {
+            auto r = subscribe_lk(sub, _pos-1);
+            return r;
         }
-        void leave_lk(const subscriber<T> *sub, std::size_t pos) {
-            _positions.erase(lock_pos(pos, sub));
+        Handle subscribe_lk(Handle h, const subscriber<T> *sub) {            
+            auto r = subscribe_lk(sub, _regs[h]._pos);
+            return r;
         }
-        bool advance_lk(const subscriber<T> *sub, std::size_t &pos, subscribtion_type t) {
-            if (pos+1 == _pos && !_closed) return false;
+        
+        
+        void leave_lk(Handle h) {
+            subreg_t &l = _regs[h];
+            assert(l._used);
+            l._pos = _next_free;
+            _next_free = h;
+            l._used = false;
+        }
+        
+        bool advance_lk(Handle h, subscribtion_type t) {
+            subreg_t &l = _regs[h];
+            if (l._kicked) return false;
+            if (l._pos+1 == _pos && !_closed) return false;
             switch (t) {
                 default:
                 case subscribtion_type::all_values:
-                    _positions.erase(lock_pos(pos, sub));
-                    pos++;
-                    _positions.insert(lock_pos(pos, sub));
+                    l._pos++;                    
                     break;
                 case subscribtion_type::skip_if_behind:
-                    _positions.erase(lock_pos(pos, sub));
-                    pos = std::max(pos+1, _pos - _q.size());                    
-                    _positions.insert(lock_pos(pos, sub));
+                    l._pos = std::max(l._pos+1, _pos - _q.size());                    
                     break;
                 case subscribtion_type::skip_to_recent:
-                    _positions.erase(lock_pos(pos, sub));
-                    pos = std::max(pos+1, _pos - 1);
-                    _positions.insert(lock_pos(pos, sub));
+                    l._pos = std::max(l._pos+1, _pos - 1);                    
                     break;
-            }
+            }            
             return true;
         }
-        bool advance_suspend_lk(const subscriber<T> *sub, std::size_t &pos, abstract_awaiter<true> *awt) {
-            _positions.erase(lock_pos(pos, sub));
-            pos++;
-            _positions.insert(lock_pos(pos, sub));
-            if (pos == _pos) {
-                awt->_next = _awaiters;
-                _awaiters = awt;
+
+        bool advance_suspend_lk(Handle h, abstract_awaiter<> *awt) {
+            subreg_t &l = _regs[h];
+            if (l._kicked || _closed) return false;
+            l._pos++;            
+            if (l._pos == _pos) {
+                l._awt = awt;
+                return true;
+            } else {
+                return false;
             }
-            return pos == _pos;
         }
-        std::optional<T> get_value_lk(const subscriber<T> *sub, std::size_t pos, subscribtion_type type) {
-            if (pos == _pos) return {};
+        std::optional<T> get_value_lk(Handle h, subscribtion_type type) {
+            subreg_t &l = _regs[h];
+            if (l._kicked || l._pos == _pos) return {};
             switch (type) {
                 default:
                 case subscribtion_type::all_values: {
-                    std::size_t relpos = _pos - pos - 1;
+                    std::size_t relpos = _pos - l._pos - 1;
                     if (relpos >= _q.size()) return {};
                     return _q[relpos];
                 }
                 case subscribtion_type::skip_if_behind: {
-                    std::size_t relpos = _pos - pos - 1;
+                    std::size_t relpos = _pos - l._pos - 1;
                     if (relpos >= _q.size()) relpos = _q.size()-1;
                     return _q[relpos];
                 }
@@ -241,20 +249,42 @@ public:
             }
             
         }
-        void push_lk(std::unique_lock<std::mutex> &lk) {
-            _pos++;
-            std::size_t need_len = _min_queue_len;
-            auto iter = _positions.begin();
-            if (iter != _positions.end()) {
-                need_len = std::max(_pos - iter->first,_min_queue_len);                
-            }            
-            _q.resize(std::min({need_len, _max_queue_len, _q.size()}));
-            abstract_awaiter<true> *x = _awaiters;
-            _awaiters = nullptr;
-            lk.unlock();
-            x->resume_chain_lk(x, nullptr);            
-        }
         
+        void push_lk(std::unique_lock<std::mutex> &lk, std::size_t count) {
+             _pos+=count;
+             std::size_t need_len = _min_queue_len;
+             _wakeup_buffer.clear();
+             for (auto &x: _regs) {
+                 if (x._used) {
+                     if (x._awt) {
+                         _wakeup_buffer.push_back(x._awt);
+                         x._awt = nullptr;
+                     }
+                     need_len = std::max(need_len, _pos - x._pos);
+                 }
+             }
+
+             _q.resize(std::min({need_len, _max_queue_len, _q.size()}));
+             auto wk = std::move(_wakeup_buffer);
+             lk.unlock();
+             for (abstract_awaiter<> *x: wk) x->resume();
+             lk.lock();
+             std::swap(wk, _wakeup_buffer);
+         }
+        
+        void kick_lk(const subscriber<T> *sub, std::unique_lock<std::mutex> &lk) {
+            abstract_awaiter<> *awt = nullptr;
+            auto iter = std::find_if(_regs.begin(), _regs.end(), [&](const subreg_t &x){
+               return x._used && x._sub == sub; 
+            });
+            if (iter != _regs.end()) {
+                awt = iter->_awt;
+                iter->_awt = nullptr;
+                iter->_kicked =true;
+            }
+            lk.unlock();
+            if (awt) awt->resume();
+        }
         
     };
     
@@ -290,6 +320,21 @@ public:
         _q->push(std::forward<X>(x));
     }
     
+    ///Publish multiple items
+    /**
+     * @param beg begin iterator
+     * @param end end iterator
+     * 
+     * @note It is faster to publish multiple items at once, than calling publish for each item,
+     * because of overhead needed to handle each item. 
+     */
+    template<typename Iter>
+    void publish(Iter &&beg, Iter &&end) {
+        _q->push(std::forward<Iter>(beg), std::forward<Iter>(end));
+    }
+    
+    
+    
     ///Retrieve the queue object
     auto get_queue() {
         return _q;
@@ -312,6 +357,18 @@ public:
         _q->close();
     }
     
+    ///Kick given subscriber
+    /**
+     * @param sub pointer to subscriber to kick. The pointer is used as identification of the
+     * subscriber and it is not accessed, so it can contain invalid value or point to already
+     * released memory - this can handle issue with potential race condition. 
+     * 
+     * Kicked subscriber is waken up (if it is suspended) and receives end of stream. In
+     * case if use invalid pointer, nothing happen
+     */
+    void kick(const subscriber<T> *sub) {
+        _q->kick(sub);
+    }
     
 protected:
     
@@ -342,7 +399,7 @@ public:
      * 
      */
     subscriber(publisher<T> &pub, subscribtion_type t = subscribtion_type::all_values)
-    :_q(pub.get_queue()),_pos(_q->subscribe(this)),_t(t) {}
+    :_q(pub.get_queue()),_h(_q->subscribe(this)),_t(t) {}
     ///construct subscriber, specify starting position
     /**
      * @param pub publisher 
@@ -350,8 +407,7 @@ public:
      * @param t type of subscription
      */
     subscriber(publisher<T> &pub, std::size_t pos, subscribtion_type t = subscribtion_type::all_values)
-    :_q(pub.get_queue()),_pos(pos),_t(t) {
-            _q->subscribe(this, _pos);
+    :_q(pub.get_queue()),_h(_q->subscribe(this, pos)),_t(t) {            
     }
     
     
@@ -362,16 +418,15 @@ public:
      *
      * @param other source subscriber
      */
-    subscriber(const subscriber &other):_q(other._q),_pos(other._pos), _t(other._t){
-        _q->subscribe(this, _pos);
-    }
+    subscriber(const subscriber &other)
+        :_q(other._q),_h(_q->subscribe(other._h, this)), _t(other._t){}
     ///can't be assigned
     subscriber &operator=(const subscriber &) = delete;
     
     
     ///Unsubscribes
     ~subscriber() {
-        _q->leave(this, _pos);
+        _q->leave(_h);
     }
     
     
@@ -382,8 +437,8 @@ public:
      * @exception no_longer_avaiable_exception subscriber wants to access a value, which has been outside of available queue window.
      * @exception no_more_values_exception publisher has been closed
      */
-    co_awaiter<subscriber,  true> operator co_await() {
-        return co_awaiter<subscriber, true>(*this);
+    co_awaiter<subscriber> operator co_await() {
+        return co_awaiter<subscriber>(*this);
     }
 
     ///Retrieves current position
@@ -395,25 +450,51 @@ public:
      * @return current position
      */
     std::size_t position() const {
-        return _pos;
+        return _q->position(_h);
+    }
+    
+    ///Synchronous wait and get next published item
+    /**
+     * @return next published item. Returns empty container when publisher closed the stream,
+     * or next item is no longer available
+     */
+    std::optional<T> wait() {
+        return std::optional<T>(std::move((operator co_await()).wait()));
+    }
+    
+    ///Get next published item 
+    /**
+     * Function returns next unprocessed published item. If there is no such item, it returns
+     * empty container. Function will not wait to publish a next item, it just reads already unprocessed
+     * published items.
+     * 
+     * @return next item or empty if no such item is available
+     */
+    std::optional<T> next() {
+        auto awt = operator co_await();
+        if (!awt.await_ready()) return {};
+        return std::optional<T>(std::move(awt.await_resume()));
     }
     
 protected:
+    using Handle = typename publisher<T>::queue::Handle;
+           
+    
     std::shared_ptr<queue> _q;
-    std::size_t _pos;
+    Handle _h;
     subscribtion_type _t;
     
     friend class publisher<T>;
-    friend class co_awaiter<subscriber<T>, true >;
+    friend class co_awaiter<subscriber<T> >;
 
     bool is_ready() {
-        return _q->advance(this, _pos,_t);
+        return _q->advance(_h,_t);
     }
-    bool subscribe_awaiter(abstract_awaiter<true> *awt) {
-        return _q->advance_suspend(this, _pos, awt);
+    bool subscribe_awaiter(abstract_awaiter<> *awt) {
+        return _q->advance_suspend(_h, awt);
     }
     std::optional<T> get_result() {
-        return _q->get_value(this, _pos,_t);
+        return _q->get_value(_h,_t);
     }
     
 
