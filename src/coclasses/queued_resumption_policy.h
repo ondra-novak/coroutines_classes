@@ -17,7 +17,7 @@ public:
 
     static thread_local queued_resumption_control instance;
 
-    void resume(std::coroutine_handle<> h, bool immediate) {
+    void resume(std::coroutine_handle<> h) {
         if (!_active) {
             _active = true;
             h.resume();
@@ -27,8 +27,6 @@ public:
                 h.resume();
             }
             _active = false;
-        } else if (immediate){
-            h.resume();
         } else {
             _queue.push(h);
         }
@@ -36,6 +34,7 @@ public:
     
 
 
+    bool is_active() const {return _active;}
 
 protected:
     bool _active = false;
@@ -64,16 +63,24 @@ namespace resumption_policy {
  * 
  */
 struct queued {
-    struct initial_awaiter: std::suspend_always {
+    struct initial_awaiter {
         initial_awaiter(queued &) {}
-        void await_suspend(std::coroutine_handle<> h) {
-            _details::queued_resumption_control::instance.resume(h,true);
+        bool await_ready() noexcept {
+            //check whether queue is already active
+            //awaiter is ready if queue exists, otherwise we need to install queue then return false
+            return _details::queued_resumption_control::instance.is_active();
         }
+        void await_suspend(std::coroutine_handle<> h) {
+            //this is called only when we need to install queue
+            //this resume does it automatically for us
+            _details::queued_resumption_control::instance.resume(h);
+        }
+        static constexpr void await_resume() noexcept {}
     };
     
     ///resume in queue
     static void resume(std::coroutine_handle<> h) {
-        _details::queued_resumption_control::instance.resume(h,false);
+        _details::queued_resumption_control::instance.resume(h);
     }
 };
 
