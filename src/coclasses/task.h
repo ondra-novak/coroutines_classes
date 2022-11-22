@@ -85,37 +85,37 @@ public:
     explicit task(X &&x);
     
     ///task is internaly constructed from pointer to a promise  
-    task(std::coroutine_handle<promise_type_base> h): _h(h) {
-        get_promise()->add_ref();
+    task(promise_type_base *p): _promise(p) {
+        _promise->add_ref();
     }
     ///destruction of task decreases reference
     ~task() {
-        if (_h) get_promise()->release_ref();
+        if (_promise) _promise->release_ref();
     }
     
     ///you can copy task, which just increases references
-    task(const task &other):_h(other._h) {
-        get_promise()->add_ref();
+    task(const task &other):_promise(other._promise) {
+        _promise->add_ref();
     }
     ///you can move task
-    task(task &&other):_h(other._h) {
-        other._h= nullptr;
+    task(task &&other):_promise(other._promise) {
+        other._promise= nullptr;
     }
     ///you can assign
     task &operator=(const task &other){
         if (this != &other) {
-            if (_h) get_promise()->release_ref();
-            _h= other._h;
-            get_promise()->add_ref();
+            if (_promise) _promise->release_ref();
+            _promise= other._promise;
+            _promise->add_ref();
         }
         return *this;
     }
     ///you can move-assign
     task &operator=(task &&other) {
         if (this != &other) {
-            if (_h) get_promise()->release_ref();
-            _h = other._h;
-            other._h = nullptr;        
+            if (_promise) _promise->release_ref();
+            _promise = other._promise;
+            other._promise = nullptr;        
         }
         return *this;
     }
@@ -128,7 +128,7 @@ public:
      *     
      */
     co_awaiter<promise_type_base, true> operator co_await() {
-        return *get_promise();
+        return *_promise;
     }
     
     
@@ -141,7 +141,7 @@ public:
      * @retval false task is not finished yet
      */
     bool is_ready() const {
-        return get_promise()->is_ready();
+        return _promise->is_ready();
     }
 
     bool done() const {
@@ -150,7 +150,7 @@ public:
     
     ///Join the task synchronously, returns value
     decltype(auto) join() {
-        co_awaiter<promise_type_base, true> aw(*get_promise());
+        co_awaiter<promise_type_base, true> aw(*_promise);
         return aw.wait();
     }
     
@@ -173,13 +173,13 @@ public:
     
     ///Retrieve unique coroutine identifier
     coro_id get_id() const {
-        return _h.address();
+        return _promise;
     }
     
    
     ///Determines whether object contains a valid task
     bool valid() const {
-        return _h!=nullptr;
+        return _promise!=nullptr;
     }
     
     
@@ -190,7 +190,7 @@ public:
      * Calling initialize_policy() after conversion is UB
      */ 
     operator task<T>() {
-        return task<T>(_h);
+        return task<T>(_promise);
     }
 
     ///Initializes resumption policy
@@ -203,17 +203,13 @@ public:
      */
     template<typename ... Args>
     void initialize_policy(Args && ... args) {
-        static_cast<promise_type *>(get_promise())->initialize_policy(std::forward<Args>(args)...);
+        static_cast<promise_type *>(_promise)->initialize_policy(std::forward<Args>(args)...);
     }
     
     
 protected:
-    std::coroutine_handle<promise_type_base> _h;
+    promise_type_base *_promise;
     
-    
-    promise_type_base *get_promise() const {
-        return &_h.promise();
-    }
 };
 
 
@@ -270,7 +266,7 @@ public:
 
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
-    ~task_promise_base() {
+    virtual ~task_promise_base() {
         if (!AW::is_processed(_awaiter_chain)) {
             std::exception_ptr e = _value.exception_ptr();
             if (e) debug_reporter::get_instance()
@@ -278,6 +274,8 @@ public:
         }
     }
 
+    virtual std::coroutine_handle<> get_handle()  = 0;
+    
     ///handles final_suspend
     class final_awaiter {
     public:
@@ -305,7 +303,7 @@ public:
     }
     void release_ref() {
         if (--_ref_count == 0) {
-            auto h = std::coroutine_handle<task_promise_base>::from_promise(*this);
+            auto h = get_handle();
             h.destroy();
         }
     }
@@ -457,7 +455,10 @@ public:
         AW::mark_ready_resume(this->_awaiter_chain);
     }
     task<T, Policy> get_return_object() {
-        return task<T, Policy>(std::coroutine_handle<task_promise_base<T> >::from_promise(*this));
+        return task<T, Policy>(static_cast<task_promise_base<T> *>(this));
+    }
+    virtual std::coroutine_handle<> get_handle()  {
+        return std::coroutine_handle<task_promise>::from_promise(*this);
     }
 };
 
@@ -471,7 +472,10 @@ public:
         AW::mark_ready_resume(this->_awaiter_chain);
     }
     task<void, Policy> get_return_object() {
-        return task<void, Policy>(std::coroutine_handle<task_promise_base<void> >::from_promise(*this) );
+        return task<void, Policy>(this);
+    }
+    virtual std::coroutine_handle<> get_handle()  {
+        return std::coroutine_handle<task_promise>::from_promise(*this);
     }
     
 
@@ -549,7 +553,7 @@ inline task<T,P>::task(X &&x) {
 }
 
 template<typename T, typename P>
-task<T,P>::task():_h(nullptr) {
+task<T,P>::task():_promise(nullptr) {
     if constexpr(std::is_void<T>::value) {
         static static_task_storage<sizeof(void *)*11> storage; 
         static task<void> prealloc = _details::coro_void(storage); 
