@@ -24,7 +24,7 @@ public:
     using promise_type_base = typename task<T, Policy>::promise_type_base;
 
     lazy() {};
-    lazy(std::coroutine_handle<promise_type_base> h):task<T, Policy>(h) {}
+    lazy(promise_type_base *h):task<T, Policy>(h) {}
 
     ///co_await the result
     auto operator co_await() {
@@ -142,7 +142,7 @@ public:
     }
     
     lazy<T> get_return_object() {
-        return lazy<T>(std::coroutine_handle<task_promise_base<T> >::from_promise(*this) );
+        return lazy<T>(this);
     }
 protected:
     std::atomic<bool> _started;

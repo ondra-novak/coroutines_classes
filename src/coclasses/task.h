@@ -210,6 +210,7 @@ public:
 protected:
     promise_type_base *_promise;
     
+    promise_type_base * get_promise() const {return _promise;}
 };
 
 
