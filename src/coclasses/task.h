@@ -64,6 +64,7 @@ public:
     
     using promise_type = task_promise<T, Policy>;
     using promise_type_base = task_promise_base<T>;
+    using value_type = T;
 
     ///You can create empty task, which can be initialized later by assign
     /** For the task<void>, the object is already initialized and co_await on such task
@@ -182,7 +183,23 @@ public:
         return _promise!=nullptr;
     }
     
+    template<typename Fn>
+    auto then(Fn &&fn);
     
+    template<typename Fn, typename ExceptFn>
+    auto then(Fn &&fn, ExceptFn &&efn);
+
+    template<typename Fn, typename ExceptFn>
+    auto except(ExceptFn &&efn);
+
+    template<typename Fn>
+    auto operator >> (Fn &&fn) {
+        return then(std::forward<Fn>(fn));
+    }
+    
+    
+    
+
     ///Allows to convert this object to object with unspecified policy
     /**
      * This helps to work with task<> objects, where policy has no meaning
@@ -215,20 +232,6 @@ protected:
 
 
 ///Abstract class to define storage for coroutines
-/**
- * @note because destruction of coroutines doesn't call custom deallocators,
- * storages doesn't contain dealloc function. It is expected, that 
- * object itself handles deallocation when storage is no longer needed
- * 
- * The most storages expect allocation memory for a single coroutine. You
- * can assume, that further calls of alloc() also means deallocation of previous
- * allocation 
- * 
- * To use task_storage, pass task_storage reference to a coroutine as the first argument.
- * Then you can pass reference to actuall implementation of storage when the
- * coroutine is called
- * 
- */
 class task_storage {
 public:
     task_storage() = default;
@@ -239,13 +242,11 @@ public:
     ///allocate space for the coroutine
     /**
      * @param sz required size
-     * 
-     * @note there is no dealloc. It assumes that next call of 
-     * alloc() automatically deallocates space allocated by prevous
-     * alloc. You can also effecively reuse already allocated space 
-     */
+     */ 
     virtual void *alloc(std::size_t sz) = 0;
-    virtual std::size_t capacity() const = 0; 
+    virtual std::size_t capacity() const = 0;
+    virtual void dealloc(void *ptr, std::size_t sz) = 0;
+    virtual void dealloc_on_exception(void *ptr) = 0;
 };
 
 
@@ -258,10 +259,6 @@ public:
     std::atomic<AW *> _awaiter_chain;
     std::atomic<unsigned int> _ref_count;
     future_var<T> _value;
-    //not initialized, the allocator handles it
-    //contains A0 - allocated on memory, C0 - allocated by custom allocator
-    //other values are invalid, probably clash of memory layout
-    unsigned char _custom_allocator[1]; 
 
     task_promise_base():_ref_count(0) {}          
 
@@ -275,7 +272,9 @@ public:
         }
     }
 
-    virtual std::coroutine_handle<> get_handle()  = 0;
+//    virtual std::coroutine_handle<> get_handle()  = 0;
+    //destroy this promise (coroutine)
+    virtual void destroy() =0;
     
     ///handles final_suspend
     class final_awaiter {
@@ -304,14 +303,10 @@ public:
     }
     void release_ref() {
         if (--_ref_count == 0) {
-            auto h = get_handle();
-            h.destroy();
+            destroy();
         }
     }
 
-    
-
-    
     bool is_ready() const {
         return AW::is_ready(_awaiter_chain);
     }
@@ -330,80 +325,42 @@ public:
     }
 
     
-    
     void unhandled_exception() {
         _value.unhandled_exception();
         AW::mark_ready_resume(_awaiter_chain);
     }
-#ifdef __GNUC__
-    //experimental, tested in GCC and CLANG - allocator flag is inside of promise
-    //we need to find this flag using transformation of address of coroutine frame
-    //however it assumes, that address of coroutine frame is exact same as
-    //as allocation address
-    
-    //for unknown compiler, this flag is placed at the end of the frame, allocating
-    //one extra byte of the space - which can be extended up to 8 extra bytes 
-    //because of alignment, this is the reason why it is better to use space in the promise
-    
-    static unsigned char *find_custom_allocator_flag(void *alloc_place) {
-        std::coroutine_handle<task_promise_base> h = std::coroutine_handle<task_promise_base>::from_address(alloc_place);
-        task_promise_base &p = h.promise();       
-        assert(reinterpret_cast<char *>(&p) >= reinterpret_cast<char *>(alloc_place));
-        return std::launder(p._custom_allocator);
-    }
     
     void *operator new(std::size_t sz) {
-        void *r = coro_promise_base::operator new(sz);
-        unsigned char *flg = find_custom_allocator_flag(r);
-        *flg = 0xA0;
+        void *r = coro_promise_base::operator new(sz+sizeof(task_storage *));
+        task_storage **x = reinterpret_cast<task_storage **>(static_cast<char *>(r)+sz);
+        *x = nullptr;
         return r;
     }
 
+
     template< typename ... Args>
     void *operator new(std::size_t sz, task_storage &storage, Args && ...) {
-        void *r = storage.alloc(sz);
-        unsigned char *flg = find_custom_allocator_flag(r);
-        *flg = 0xC0;
+        void *r = storage.alloc(sz+sizeof(task_storage *));
+        task_storage **x = reinterpret_cast<task_storage **>(static_cast<char *>(r)+sz);
+        *x = &storage;
         return r;
     }
 
     template<typename ... Args>
     void operator delete(void *ptr, task_storage &storage, Args && ... ) {
-        //empty
+        storage.dealloc_on_exception(ptr);
     }
+
 
     void operator delete(void *ptr, std::size_t sz) {
-        unsigned char flg = *find_custom_allocator_flag(ptr);;
-        assert(flg == 0xA0 || flg == 0xC0);
-        if (flg == 0xA0) coro_promise_base::operator delete(ptr, sz);
-        else if (flg != 0xC0) abort();
+        task_storage **x = reinterpret_cast<task_storage **>(static_cast<char *>(ptr)+sz);
+        sz += sizeof(task_storage *);
+        if (*x) {
+            (*x)->dealloc(ptr, sz);
+        } else { 
+            coro_promise_base::operator delete(ptr, sz);
+        }        
     }
-#else
-    void *operator new(std::size_t sz) {
-        void *r = coro_promise_base::operator new(sz+1);
-        bool *x = reinterpret_cast<bool *>(r)+sz;
-        *x = false;
-        return r;
-    }
-
-    template< typename ... Args>
-    void *operator new(std::size_t sz, task_storage &storage, Args && ...) {
-        void *r = storage.alloc(sz+1);
-        bool *x = reinterpret_cast<bool *>(r)+sz;
-        *x = true;
-        return r;
-    }
-
-    template<typename ... Args>
-    void operator delete(void *ptr, task_storage &storage, Args && ... ) {
-        //empty
-    }
-
-    void operator delete(void *ptr, std::size_t sz) {
-        bool *x = reinterpret_cast<bool *>(ptr)+sz;
-        if (!*x) coro_promise_base::operator delete(ptr, sz+1);
-        }
-#endif
 };
 
 
@@ -458,8 +415,9 @@ public:
     task<T, Policy> get_return_object() {
         return task<T, Policy>(static_cast<task_promise_base<T> *>(this));
     }
-    virtual std::coroutine_handle<> get_handle()  {
-        return std::coroutine_handle<task_promise>::from_promise(*this);
+    virtual void destroy() override {
+        auto h = std::coroutine_handle<task_promise>::from_promise(*this);
+        h.destroy();
     }
 };
 
@@ -475,92 +433,146 @@ public:
     task<void, Policy> get_return_object() {
         return task<void, Policy>(this);
     }
-    virtual std::coroutine_handle<> get_handle()  {
-        return std::coroutine_handle<task_promise>::from_promise(*this);
+    virtual void destroy() override {
+        auto h = std::coroutine_handle<task_promise>::from_promise(*this);
+        h.destroy();
+    }
+};
+
+template<typename T>
+class task_manual_resolve: public task_promise_base<T> {
+public:
+    using AW = typename task_promise_base<T>::AW;
+    
+    enum _resolve {resolve};
+    
+    template<typename ... Args>
+    explicit task_manual_resolve(_resolve, Args &&...args ) {
+        emplace(std::forward<Args>(args)...);
     }
     
-
+    template<typename ... Args>
+    void emplace(Args && ... args) {
+        this->_value.emplace(std::forward<Args>(args)...);
+        AW::mark_ready_resume(this->_awaiter_chain);
+    }
+    virtual void destroy() override {
+        delete this;
+    }
 };
-namespace _details {
-    inline task<void, resumption_policy::immediate> coro_void(task_storage &) {
-        co_return;
-    }
-    template<typename X>
-    inline task<X, resumption_policy::immediate> coro_resolve(task_storage &, X x) {
-        co_return std::forward<X>(x);
-    }
-    template<typename X>
-    inline task<X, resumption_policy::immediate> coro_resolve(X x) {
-        co_return std::forward<X>(x);
-    }
-}
 
-///Represents preallocated space for the task
-/**
- * @tparam space preallocated spaces
- * 
- * Pass reference of this object as the first argument of a coroutine
- * 
- * @code 
- * task<int> example(static_task_storage<1000> &, int args)
- *      co_return args;
- * }
- * 
- * 
- * {
- *    static_task_storage<1000> storage;
- *    int res = example(storage, 42).join();
- *    //...
- * }
- * @endcode
- */
-template<std::size_t space>
-class static_task_storage:public task_storage {
+template<typename T, typename Task, typename Fn, typename ExceptFn>
+class task_transform_promise: public task_promise_base<T>, public abstract_awaiter<true> {
 public:
-#ifdef _WIN32 //msvc coroutines are much larger
-    static constexpr std::size_t multiplier = 250;
-#else
-    static constexpr std::size_t multiplier = 100;
-#endif
-    static constexpr std::size_t adjspace = space * multiplier /100;
+    using AW = typename task_promise_base<T>::AW;
 
-    virtual void *alloc(std::size_t sz) override { 
-        assert(sz <= adjspace); //space is too small to fit the cooroutine frame;
-        return _buffer;
+    task_transform_promise(Task t, Fn &&fn, ExceptFn &&exceptFn)
+        :_t(std::move(t))
+        , _fn(std::forward<Fn>(fn))
+        , _except(std::forward<ExceptFn>(exceptFn)){}
+    
+    virtual void resume() noexcept override {
+        auto awt = _t.operator co_await();
+        try {
+            this->_value.transform(std::forward<Fn>(_fn),awt.await_resume());
+            AW::mark_ready_resume(this->_awaiter_chain);            
+        } catch (...) {
+            try {
+                this->_value.transform(std::forward<ExceptFn>(_except));
+                AW::mark_ready_resume(this->_awaiter_chain);            
+            } catch (...) {
+                this->unhandled_exception();
+            }            
+        }
     }
-    virtual std::size_t capacity() const override {return space;}
+    virtual void destroy() override {
+        delete this;
+    }
 protected:
-    char _buffer[adjspace];
+    Task _t;
+    Fn _fn;
+    ExceptFn _except;
 };
+
 
 
 template<typename T, typename P>
 template<std::convertible_to<T> X>
 inline task<T,P>::task(X &&x) {
 
-    if constexpr(std::is_same<X,bool>::value) {
+    if constexpr(std::is_base_of_v<task_promise_base<T>, std::remove_pointer_t<X> >) {
+        _promise = x;
+        if (_promise) _promise->add_ref();
+    }
+    else if constexpr(std::is_same<X,bool>::value) {
         if (x) {
-            static static_task_storage<sizeof(void *)*11> storage; 
-            static task<bool> v_true = _details::coro_resolve(storage, true);
-            *this = v_true;
+            static task<T,P> inst(new task_manual_resolve<bool>(task_manual_resolve<bool>::resolve, true));
+            *this = inst;
         } else {
-            static static_task_storage<sizeof(void *)*11> storage; 
-            static task<bool> v_false = _details::coro_resolve(storage, false);
-            *this = v_false;
+            static task<T,P> inst(new task_manual_resolve<bool>(task_manual_resolve<bool>::resolve, false));
+            *this = inst;
         }
-    } else {
-        *this = task<T,P>(_details::coro_resolve(std::forward<X>(x)));
+    } 
+    else {
+        *this = task<T,P>(new task_manual_resolve<T>(task_manual_resolve<T>::resolve, std::forward<X>(x)));
     }
 }
 
 template<typename T, typename P>
 task<T,P>::task():_promise(nullptr) {
     if constexpr(std::is_void<T>::value) {
-        static static_task_storage<sizeof(void *)*11> storage; 
-        static task<void> prealloc = _details::coro_void(storage); 
-        *this = prealloc;
+        static task<T,P> inst(new task_manual_resolve<void>(task_manual_resolve<void>::resolve));
+        *this = inst;
     }
 }
+
+namespace _details {
+
+template<typename T, typename Fn>
+struct task_from_return_value {
+    using type = task<decltype(std::declval<Fn>()(std::declval<T>()))>;
+};
+
+template<typename Fn>
+struct task_from_return_value<void, Fn> {
+    using type = task<decltype(std::declval<Fn>()())>;
+};
+
+template<typename T, typename Fn>
+using task_from_return_value_t = typename task_from_return_value<T,Fn>::type;
+
+
+}
+
+template<typename T, typename P>
+template<typename Fn>
+auto task<T,P>::then(Fn &&fn) {
+    using mytask = _details::task_from_return_value_t<T, Fn>;
+    using newT = typename mytask::value_type;
+    auto exceptFn = []()->newT {throw;};
+    return then(std::forward<Fn>(fn), std::move(exceptFn));
+}
+
+template<typename T, typename P>
+template<typename Fn, typename ExceptFn>
+auto task<T,P>::then(Fn &&fn, ExceptFn &&efn) {
+    using mytask = _details::task_from_return_value_t<T, Fn>;
+    auto t = new task_transform_promise<typename mytask::value_type, task<T,P>, Fn, ExceptFn>(*this,std::forward<Fn>(fn), std::forward<ExceptFn>(efn));
+    if (!_promise->subscribe_awaiter(t)) {
+        t->resume();
+    }
+    return mytask(t);
+}
+
+template<typename T, typename P>
+template<typename Fn, typename ExceptFn>
+auto task<T,P>::except(ExceptFn &&efn) {
+    return then([](auto &&x)->decltype(auto) {
+        using X = decltype(x);
+        return std::forward<X>(x);
+    }, std::forward<ExceptFn>(efn));
+}
+
 
 
 template<typename T> 

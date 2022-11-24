@@ -1,3 +1,10 @@
+/** @file nocoroutine.cpp
+ * 
+ * Demonstration how you can create task<> with already resolved value, so you
+ * don't need coroutine to do this
+ * 
+ */
+
 #include <iostream>
 #include <coclasses/task.h>
 
