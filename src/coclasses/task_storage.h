@@ -42,8 +42,6 @@ public:
         return _buffer;
     }
     virtual void dealloc(void *, std::size_t) override {}
-    virtual void dealloc_on_exception(void *) override {}
-    virtual std::size_t capacity() const override {return space;}
 protected:
     char _buffer[adjspace];
 };
@@ -74,9 +72,9 @@ public:
         _storage.resize(sz);
         return _storage.data();
     }
-    std::size_t capacity() const override {return _storage.size();}
     virtual void dealloc(void *, std::size_t) override {}
-    virtual void dealloc_on_exception(void *) override {}
+    
+    std::size_t capacity() const {return _storage.size();}
 
 protected:
     std::vector<char> _storage;
@@ -106,9 +104,7 @@ class placement_alloc: public task_storage {
 public:
     placement_alloc(void *p):_p(p) {}
     virtual void *alloc(std::size_t) override { return _p;}
-    virtual std::size_t capacity() const override {return -1;}
     virtual void dealloc(void *, std::size_t) override{}
-    virtual void dealloc_on_exception(void *) override{}
 
 protected:
     void *_p;

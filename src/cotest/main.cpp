@@ -266,8 +266,7 @@ void with_queue_test() {
     wq.join();    
 }
 
-cocls::task<void> test_reusable_co(cocls::task_storage &m, cocls::scheduler<> &sch) {
-    assert(m.capacity() != 0); //ensure that storage was really used
+cocls::task<void> test_reusable_co(cocls::scheduler<> &sch) {
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;
@@ -276,21 +275,21 @@ cocls::task<void> test_reusable_co(cocls::task_storage &m, cocls::scheduler<> &s
 
 
 void test_reusable() {
-    cocls::static_task_storage<200> m;
+    cocls::reusable_task_storage m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block
     {
-        test_reusable_co(m, sch).join();
+        co_new(m,test_reusable_co)(sch).join();
     }
     std::cout << "Coroutine allocated in storage. size=" << m.capacity() << std::endl; 
     //coroutine should reuse preallocated block
     {
-        test_reusable_co(m, sch).join();
+        co_new(m,test_reusable_co)(sch).join();
     }
     //coroutine should reuse preallocated block
     {
-        test_reusable_co(m, sch).join();
+        co_new(m,test_reusable_co)(sch).join();
     }
 }
 

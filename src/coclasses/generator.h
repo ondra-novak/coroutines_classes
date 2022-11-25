@@ -275,7 +275,7 @@ protected:
 };
 
 template<typename T>
-class generator_promise: public coro_promise_base {
+class generator_promise: public coro_allocator {
 public:
 
     ///Generator's state

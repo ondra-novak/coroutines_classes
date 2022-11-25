@@ -11,7 +11,7 @@
 #include "exceptions.h"
 #include "debug.h"
 #include "future_var.h"
-#include "poolalloc.h"
+#include "co_new.h"
 #include "resumption_policy.h"
 
 #include <atomic>
@@ -231,28 +231,9 @@ protected:
 };
 
 
-///Abstract class to define storage for coroutines
-class task_storage {
-public:
-    task_storage() = default;
-    task_storage(task_storage &) = delete;
-    task_storage &operator=(task_storage &) = delete;
-    virtual ~task_storage()=default;
-    
-    ///allocate space for the coroutine
-    /**
-     * @param sz required size
-     */ 
-    virtual void *alloc(std::size_t sz) = 0;
-    virtual std::size_t capacity() const = 0;
-    virtual void dealloc(void *ptr, std::size_t sz) = 0;
-    virtual void dealloc_on_exception(void *ptr) = 0;
-};
-
-
 
 template<typename T>
-class task_promise_base: public coro_promise_base  {
+class task_promise_base: public coro_allocator  {
 public:
     using AW = abstract_awaiter<true>;
 
@@ -330,37 +311,6 @@ public:
         AW::mark_ready_resume(_awaiter_chain);
     }
     
-    void *operator new(std::size_t sz) {
-        void *r = coro_promise_base::operator new(sz+sizeof(task_storage *));
-        task_storage **x = reinterpret_cast<task_storage **>(static_cast<char *>(r)+sz);
-        *x = nullptr;
-        return r;
-    }
-
-
-    template< typename ... Args>
-    void *operator new(std::size_t sz, task_storage &storage, Args && ...) {
-        void *r = storage.alloc(sz+sizeof(task_storage *));
-        task_storage **x = reinterpret_cast<task_storage **>(static_cast<char *>(r)+sz);
-        *x = &storage;
-        return r;
-    }
-
-    template<typename ... Args>
-    void operator delete(void *ptr, task_storage &storage, Args && ... ) {
-        storage.dealloc_on_exception(ptr);
-    }
-
-
-    void operator delete(void *ptr, std::size_t sz) {
-        task_storage **x = reinterpret_cast<task_storage **>(static_cast<char *>(ptr)+sz);
-        sz += sizeof(task_storage *);
-        if (*x) {
-            (*x)->dealloc(ptr, sz);
-        } else { 
-            coro_promise_base::operator delete(ptr, sz);
-        }        
-    }
 };
 
 
