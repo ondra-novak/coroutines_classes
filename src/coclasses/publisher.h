@@ -476,6 +476,16 @@ public:
         return std::optional<T>(std::move(awt.await_resume()));
     }
     
+    ///Kick this subscriber from the publisher
+    /**
+     * Function can be called from different thread to kick this subscriber from the
+     * publisher without need to know where it is subscribed 
+     * 
+     */
+    void kick_me() {
+        _q->kick(this);
+    }
+    
 protected:
     using Handle = typename publisher<T>::queue::Handle;
            
