@@ -45,7 +45,7 @@ cocls::task<> consumer(cocls::scheduler<> &sch, int id, int delay) {
             std::cout << "P " << val.first << "," << val.second  << std::endl;
             co_await sch.sleep_for(std::chrono::milliseconds(delay));
         }
-    } catch (cocls::await_canceled_exception) {
+    } catch (const cocls::await_canceled_exception &) {
         
     }
 }

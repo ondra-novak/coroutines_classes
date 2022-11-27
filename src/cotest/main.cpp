@@ -10,12 +10,12 @@
 #include <coclasses/thread_pool.h>
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
-#include <coclasses/task_storage.h>
 #include <coclasses/publisher.h>
 #include <coclasses/sync_await.h>
 #include <coclasses/cancelable.h>
 #include <coclasses/queued_resumption_policy.h>
 #include <coclasses/pause.h>
+#include <coclasses/coro_storage.h>
 #include <array>
 #include <iostream>
 #include <cassert>
@@ -275,7 +275,7 @@ cocls::task<void> test_reusable_co(cocls::scheduler<> &sch) {
 
 
 void test_reusable() {
-    cocls::reusable_task_storage m;
+    cocls::reusable_storage m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block

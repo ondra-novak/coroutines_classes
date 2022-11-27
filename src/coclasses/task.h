@@ -33,7 +33,7 @@ template<typename T, typename Policy> class task_promise;
 template<typename T> class task_promise_base;
 
 
-template<std::size_t space> class static_task_storage;
+template<std::size_t space> class static_storage;
 
 ///Task object, it is returned from the coroutine
 /**
@@ -231,7 +231,6 @@ protected:
 };
 
 
-
 template<typename T>
 class task_promise_base: public coro_allocator  {
 public:
@@ -313,7 +312,6 @@ public:
     
 };
 
-
 template<typename T, typename Policy>
 class task_promise_with_policy: public task_promise_base<T> {
 public:
@@ -352,7 +350,6 @@ template<typename T>
 class task_promise_with_policy<T, void>: public task_promise_with_policy<T, resumption_policy::unspecified<void> > {
 };
 
-
 template<typename T, typename Policy>
 class task_promise: public task_promise_with_policy<T, Policy> {
 public:
@@ -370,7 +367,6 @@ public:
         h.destroy();
     }
 };
-
 
 template<typename Policy>
 class task_promise<void, Policy>: public task_promise_with_policy<void, Policy> {

@@ -1,12 +1,41 @@
+/**
+ * @file coro_storage.h 
+ * 
+ * various storages for co_new() 
+ * 
+ * @see co_new.h
+ */
+
 #pragma once
-#ifndef SRC_COCLASSES_TASK_STORAGE_H_
-#define SRC_COCLASSES_TASK_STORAGE_H_
+#ifndef SRC_COCLASSES_CORO_STORAGE_H_
+#define SRC_COCLASSES_CORO_STORAGE_H_
 
 #include "task.h"
 
 #include <vector>
 
 namespace cocls {
+
+
+///Defines multiplier for all statically allocated storages for coroutines
+/**
+ * In current C++ version (C++20) it is very difficult to determine space needed to
+ * coroutine frame. The value must be determined by guessing, trial and error. The
+ * final value can be valid for some compilers. For other compilers, the value can
+ * be insufficient which results to assert (in debug) or not using static storage at all. 
+ * If this happen, you can redefine COCLS_STATIC_STORAGE_MULTIPLIER and specify how much this
+ * number must be increased globally. The value is in percent, so setting 150 means, that all
+ * sizes are multiplied by 1.5 times.
+ * 
+ * This constant can be passed at command line as -DCOCLS_STATIC_STORAGE_MULTIPLIER=150 
+ */ 
+#ifndef COCLS_STATIC_STORAGE_MULTIPLIER
+#ifdef _WIN32
+#define COCLS_STATIC_STORAGE_MULTIPLIER 250
+#else
+#define COCLS_STATIC_STORAGE_MULTIPLIER 100
+#endif
+#endif
 
 ///Represents preallocated space for the task
 /**
@@ -28,20 +57,19 @@ namespace cocls {
  * @endcode
  */
 template<std::size_t space>
-class static_task_storage:public task_storage {
+class static_storage:public coro_storage {
 public:
-#ifdef _WIN32 //msvc coroutines are much larger
-    static constexpr std::size_t multiplier = 250;
-#else
-    static constexpr std::size_t multiplier = 100;
-#endif
+    static constexpr std::size_t multiplier = COCLS_STATIC_STORAGE_MULTIPLIER;
     static constexpr std::size_t adjspace = space * multiplier /100;
 
     virtual void *alloc(std::size_t sz) override { 
         assert(sz <= adjspace); //space is too small to fit the cooroutine frame;
+        if (sz > adjspace) return ::operator new(sz);
         return _buffer;
     }
-    virtual void dealloc(void *, std::size_t) override {}
+    virtual void dealloc(void *ptr, std::size_t sz) override {
+        if (sz > adjspace) return ::operator delete(ptr);        
+    }
 protected:
     char _buffer[adjspace];
 };
@@ -66,7 +94,7 @@ protected:
  * @endcode
  * 
  */
-class reusable_task_storage: public task_storage {
+class reusable_storage: public coro_storage {
 public:
     void *alloc(std::size_t sz) override {
         _storage.resize(sz);
@@ -100,7 +128,7 @@ protected:
   
  *  
  */
-class placement_alloc: public task_storage {
+class placement_alloc: public coro_storage {
 public:
     placement_alloc(void *p):_p(p) {}
     virtual void *alloc(std::size_t) override { return _p;}
@@ -114,4 +142,4 @@ protected:
 
 }
 
-#endif /* SRC_COCLASSES_TASK_STORAGE_H_ */
+#endif /* SRC_COCLASSES_CORO_STORAGE_H_ */

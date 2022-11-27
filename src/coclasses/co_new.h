@@ -1,5 +1,6 @@
 /**
- * @file handles custom coroutine allocation controlled by the caller
+ * @file co_new.h 
+ * handles custom coroutine allocation controlled by the caller
  */
 #ifndef SRC_COCLASSES_CO_NEW_H_
 #define SRC_COCLASSES_CO_NEW_H_
@@ -8,12 +9,12 @@ namespace cocls {
 
 
 ///Abstract class to define storage for coroutines
-class task_storage {
+class coro_storage {
 public:
-    task_storage() = default;
-    task_storage(task_storage &) = delete;
-    task_storage &operator=(task_storage &) = delete;
-    virtual ~task_storage()=default;
+    coro_storage() = default;
+    coro_storage(coro_storage &) = delete;
+    coro_storage &operator=(coro_storage &) = delete;
+    virtual ~coro_storage()=default;
     
     ///allocate space for the coroutine
     /**
@@ -35,12 +36,12 @@ public:
 class coro_allocator: public coro_promise_base {
 public:
 
-    static thread_local task_storage *coro_next_storage;
+    static thread_local coro_storage *coro_next_storage;
 
     
     void *operator new(std::size_t sz) {
-        std::size_t needsz = sz + sizeof(task_storage *);
-        task_storage *s = nullptr;
+        std::size_t needsz = sz + sizeof(coro_storage *);
+        coro_storage *s = nullptr;
         void *ptr = nullptr;
         if (coro_next_storage) {
             s = coro_next_storage;
@@ -49,15 +50,15 @@ public:
         } else {
             ptr = coro_promise_base::operator new(needsz);
         }
-        task_storage **store_ptr = reinterpret_cast<task_storage **>(reinterpret_cast<char *>(ptr)+sz);
+        coro_storage **store_ptr = reinterpret_cast<coro_storage **>(reinterpret_cast<char *>(ptr)+sz);
         *store_ptr = s;
         return ptr;
     }
     
     void operator delete(void *ptr, std::size_t sz) {
-        std::size_t needsz = sz + sizeof(task_storage *);
-        task_storage **store_ptr = reinterpret_cast<task_storage **>(reinterpret_cast<char *>(ptr)+sz);
-        task_storage *s = *store_ptr;
+        std::size_t needsz = sz + sizeof(coro_storage *);
+        coro_storage **store_ptr = reinterpret_cast<coro_storage **>(reinterpret_cast<char *>(ptr)+sz);
+        coro_storage *s = *store_ptr;
         if (s) {
             s->dealloc(ptr, needsz);
         } else {
@@ -66,13 +67,13 @@ public:
     }
 };
 
-inline thread_local task_storage *coro_allocator::coro_next_storage = nullptr;
+inline thread_local coro_storage *coro_allocator::coro_next_storage = nullptr;
 
 namespace _details {
     template<typename Fn>
     class alloc_coro {
     public:
-        alloc_coro(task_storage &stor, Fn &fn): _fn(fn) {
+        alloc_coro(coro_storage &stor, Fn &fn): _fn(fn) {
             coro_allocator::coro_next_storage = &stor;
         }
         ~alloc_coro() {
@@ -90,7 +91,7 @@ namespace _details {
     template<typename Obj, typename Fn>
     class alloc_coro_mfn {
     public:
-        alloc_coro_mfn(task_storage &stor, Obj &obj, Fn &fn): _obj(obj),_fn(fn) {
+        alloc_coro_mfn(coro_storage &stor, Obj &obj, Fn &fn): _obj(obj),_fn(fn) {
             coro_allocator::coro_next_storage = &stor;
         }
         ~alloc_coro_mfn() {
@@ -125,7 +126,7 @@ namespace _details {
  * 
  */
 template<typename Fn>
-auto co_new(task_storage &stor, Fn &&fn) {
+auto co_new(coro_storage &stor, Fn &&fn) {
     return _details::alloc_coro<std::remove_reference_t<Fn> >(stor, fn); 
 }
 
@@ -145,7 +146,7 @@ auto co_new(task_storage &stor, Fn &&fn) {
  * @note Coroutine types supported: task, generator, stoppable_generator, lazy
  */
 template<typename Obj, typename Fn>
-auto co_new(task_storage &stor, Obj &&obj, Fn &&fn) {
+auto co_new(coro_storage &stor, Obj &&obj, Fn &&fn) {
     return _details::alloc_coro_mfn<std::remove_reference_t<Obj>, std::remove_reference_t<Fn> >(stor, obj, fn); 
 }
 

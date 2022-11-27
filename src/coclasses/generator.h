@@ -4,10 +4,10 @@
 #define SRC_COCLASSES_GENERATOR_H_
 #include "awaiter.h"
 #include "common.h"
+#include "coro_storage.h"
 #include "poolalloc.h"
 #include "future.h"
 
-#include "task_storage.h"
 #include <memory>
 #include <optional>
 #include <functional>
@@ -467,7 +467,7 @@ protected:
     //contains promise when State::promise_set is active
     promise<State> _wait_promise;
     //storage for future
-    reusable_task_storage _future_storage;
+    reusable_storage _future_storage;
 
 };
 

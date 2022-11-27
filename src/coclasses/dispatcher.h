@@ -5,9 +5,9 @@
 #ifndef SRC_COCLASSES_DISPATCHER_H_
 #define SRC_COCLASSES_DISPATCHER_H_
 #include "awaiter.h"
+#include "coro_storage.h"
 #include "lazy.h"
 
-#include "task_storage.h"
 #include <memory>
 #include <mutex>
 #include <queue>

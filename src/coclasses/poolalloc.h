@@ -88,26 +88,11 @@ public:
 #ifndef COCLS_POOLALLOC_ALLOCSTEP
 /** defines allocation step
  *  
- *  so allocation requests are rounded to next alloc. step. Default is 8x size of pointer
- *  (80 bytes for 64b platform) 
+ *  so allocation requests are rounded to next alloc. step. Default is 12x size of pointer
+ *  (96 bytes for 64b platform) 
  */
-#define COCLS_POOLALLOC_ALLOCSTEP (sizeof(void *)*10)
+#define COCLS_POOLALLOC_ALLOCSTEP (sizeof(void *)*12)
 #endif
-
-#ifndef COCLS_POOLALLOC_LEVELS
-/** defines max allocation levels which also defines maximum size can be handled by pool alloc
- * 
- *  COCLS_POOLALLOC_ALLOCSTEP * COCLS_POOLALLOC_LEVELS
- *  
- *  default is 20, which means 1600 bytes long block. Larger blocks are handled
- *  by standard new allocator 
- *  
- *  Note that there will be 20 atomic pointers and 40 normal pointers for every thread
- * 
- */
-#define COCLS_POOLALLOC_LEVELS 20
-#endif
-
 
 namespace poolalloc {
 
@@ -147,15 +132,8 @@ struct global_block_cache {
     }
 };
 
-struct abstract_thread_local_cache {
-    virtual  ~abstract_thread_local_cache() = default;
-    virtual void *alloc() = 0;
-    virtual void dealloc(void *) = 0;
-    
-};
-
 template<std::size_t sz>
-struct thread_local_cache: abstract_thread_local_cache {
+struct thread_local_cache {
     global_block_cache<sz> *_cache;
     std::size_t _max_count;
 
@@ -166,7 +144,7 @@ struct thread_local_cache: abstract_thread_local_cache {
     thread_local_cache(global_block_cache<sz> *cache, std::size_t max_count)
         :_cache(cache), _max_count(max_count) {}
     
-    virtual void *alloc() override {
+    void *alloc()  {
         auto x = _prepared;
         if (!x) [[unlikely]] {
             x = _dropped;            
@@ -185,7 +163,7 @@ struct thread_local_cache: abstract_thread_local_cache {
         return x;
     }
     
-    virtual void dealloc(void *ptr) override {
+    void dealloc(void *ptr)  {
         block<sz> *b = reinterpret_cast<block<sz> *>(ptr);
         if (_count >= _max_count) [[unlikely]] {
             //if cache is full, check for refill global cache
@@ -247,111 +225,142 @@ struct global_cache_chain<0,step> {
 
 };
 
-
-template<std::size_t level, std::size_t step>
-struct thread_local_cache_chain {
-    static constexpr std::size_t _size = level*step; 
-    thread_local_cache<_size> _cache;
-    thread_local_cache_chain<level-1, step> _next;
-    
-    thread_local_cache_chain(global_cache_chain<level, step> *l, std::size_t max_cache_size)
-        :_cache(&l->_cache, max_cache_size/_size), _next(&(l->_next), max_cache_size) {}
-    
-    void *alloc(std::size_t sz) {
-        if (sz == _size) {
-            return _cache.alloc();
-        }
-        return _next.alloc(sz);
-    }
-    void dealloc(void *ptr, std::size_t sz) {
-        if (sz == _size) {
-            _cache.dealloc(ptr);
-            return;
-        }
-        _next.dealloc(ptr, sz);
-        return;
-    }
-    
-    abstract_thread_local_cache **init_map(abstract_thread_local_cache **map) {
-        map = _next.init_map(map);
-        map++;
-        *map = &_cache;
-        return map;
-    }
-    
-    void gc() {
-        _cache.gc();
-        _next.gc();
-    }
-};
-
-template<std::size_t step>
-struct thread_local_cache_chain<0,step> {
-    thread_local_cache_chain(global_cache_chain<0, step> *l, std::size_t max_cache_size) {}
-    void *alloc(std::size_t) {return nullptr;}
-    void dealloc(void *, std::size_t) {}
-    void gc() {}
-    abstract_thread_local_cache **init_map(abstract_thread_local_cache **map) {return map-1;}
-};
-
-
 struct alloc_master {
     static constexpr std::size_t _max_cache_size = COCLS_POOLALLOC_MAXCACHE;
     static constexpr std::size_t _alloc_step = COCLS_POOLALLOC_ALLOCSTEP;
-    static constexpr std::size_t _max_levels = COCLS_POOLALLOC_LEVELS;
+    static constexpr std::size_t _max_levels = 20;
     static constexpr std::size_t _max_alloc_size = _alloc_step * _max_levels;
+    static consteval std::size_t max_cache_size(int lvl) {
+        return _max_cache_size/(_alloc_step * lvl);
+    }
 
-    class ForceDelete: public abstract_thread_local_cache {
-    public:
-        virtual void *alloc() {throw std::bad_alloc();}
-        virtual void dealloc(void *p) {::operator delete(p);}
+    struct Global {
+        global_block_cache<1*_alloc_step> _l1;
+        global_block_cache<2*_alloc_step> _l2;
+        global_block_cache<3*_alloc_step> _l3;
+        global_block_cache<4*_alloc_step> _l4;
+        global_block_cache<5*_alloc_step> _l5;
+        global_block_cache<6*_alloc_step> _l6;
+        global_block_cache<7*_alloc_step> _l7;
+        global_block_cache<8*_alloc_step> _l8;
+        global_block_cache<9*_alloc_step> _l9;
+        global_block_cache<10*_alloc_step> _l10;
+        global_block_cache<11*_alloc_step> _l11;
+        global_block_cache<12*_alloc_step> _l12;
+        global_block_cache<13*_alloc_step> _l13;
+        global_block_cache<14*_alloc_step> _l14;
+        global_block_cache<15*_alloc_step> _l15;
+        global_block_cache<16*_alloc_step> _l16;
+        global_block_cache<17*_alloc_step> _l17;
+        global_block_cache<18*_alloc_step> _l18;
+        global_block_cache<19*_alloc_step> _l19;
+        global_block_cache<20*_alloc_step> _l20;        
+        
     };
     
-    static ForceDelete force_delete_instance;
-    
     struct Local {
-        std::array<abstract_thread_local_cache *, _max_levels> _map;
-        thread_local_cache_chain<_max_levels, _alloc_step> _chain;
+        thread_local_cache<1*_alloc_step> _l1;
+        thread_local_cache<2*_alloc_step> _l2;
+        thread_local_cache<3*_alloc_step> _l3;
+        thread_local_cache<4*_alloc_step> _l4;
+        thread_local_cache<5*_alloc_step> _l5;
+        thread_local_cache<6*_alloc_step> _l6;
+        thread_local_cache<7*_alloc_step> _l7;
+        thread_local_cache<8*_alloc_step> _l8;
+        thread_local_cache<9*_alloc_step> _l9;
+        thread_local_cache<10*_alloc_step> _l10;
+        thread_local_cache<11*_alloc_step> _l11;
+        thread_local_cache<12*_alloc_step> _l12;
+        thread_local_cache<13*_alloc_step> _l13;
+        thread_local_cache<14*_alloc_step> _l14;
+        thread_local_cache<15*_alloc_step> _l15;
+        thread_local_cache<16*_alloc_step> _l16;
+        thread_local_cache<17*_alloc_step> _l17;
+        thread_local_cache<18*_alloc_step> _l18;
+        thread_local_cache<19*_alloc_step> _l19;
+        thread_local_cache<20*_alloc_step> _l20;        
+
+        Local(Global &g)
+            :_l1(&g._l1, max_cache_size(1)) 
+            ,_l2(&g._l2, max_cache_size(2))
+            ,_l3(&g._l3, max_cache_size(3))
+            ,_l4(&g._l4, max_cache_size(4))
+            ,_l5(&g._l5, max_cache_size(5))
+            ,_l6(&g._l6, max_cache_size(6))
+            ,_l7(&g._l7, max_cache_size(7))
+            ,_l8(&g._l8, max_cache_size(8))
+            ,_l9(&g._l9, max_cache_size(9))
+            ,_l10(&g._l10, max_cache_size(10))
+            ,_l11(&g._l11, max_cache_size(11))
+            ,_l12(&g._l12, max_cache_size(12))
+            ,_l13(&g._l13, max_cache_size(13))
+            ,_l14(&g._l14, max_cache_size(14))
+            ,_l15(&g._l15, max_cache_size(15))
+            ,_l16(&g._l16, max_cache_size(16))
+            ,_l17(&g._l17, max_cache_size(17))
+            ,_l18(&g._l18, max_cache_size(18))
+            ,_l19(&g._l19, max_cache_size(19))
+            ,_l20(&g._l20, max_cache_size(20))
+        {}
         
-        Local()
-           :_chain(&global_instance, _max_alloc_size) {
-            _chain.init_map(_map.data());
-        }
-        ~Local() {
-            for (auto &x: _map) {
-                x = &force_delete_instance;
+        template<typename Fn>
+        inline auto find_step(int i, Fn &&fn) {
+            switch (i) {
+                case 1: return fn(_l1);
+                case 2: return fn(_l2);
+                case 3: return fn(_l3);
+                case 4: return fn(_l4);
+                case 5: return fn(_l5);
+                case 6: return fn(_l6);
+                case 7: return fn(_l7);
+                case 8: return fn(_l8);
+                case 9: return fn(_l9);
+                case 10: return fn(_l10);
+                case 11: return fn(_l11);
+                case 12: return fn(_l12);
+                case 13: return fn(_l13);
+                case 14: return fn(_l14);
+                case 15: return fn(_l15);
+                case 16: return fn(_l16);
+                case 17: return fn(_l17);
+                case 18: return fn(_l18);
+                case 19: return fn(_l19);
+                case 20: return fn(_l20);
+                default: throw std::bad_alloc(); //replace by std::unreachable in C++23
             }
         }
-        static constexpr auto index(std::size_t sz) {return (sz-1)/_alloc_step;}
-        void *alloc(std::size_t sz) {
-            return _map[index(sz)]->alloc();
+                
+        inline void *alloc(std::size_t sz) {
+            int idx = static_cast<int>((sz +_alloc_step-1)/_alloc_step);
+            return find_step(idx, [](auto &x){
+                   return x.alloc();
+            });
         }
-        void dealloc(void *ptr, std::size_t sz) {            
-            _map[index(sz)]->dealloc(ptr);
+        inline void dealloc(void *ptr, std::size_t sz) {
+            int idx = static_cast<int>((sz +_alloc_step-1)/_alloc_step);
+            find_step(idx, [ptr](auto &x){
+                x.dealloc(ptr);
+            });
         }
             
     };
     
-    using Global = global_cache_chain<_max_levels, _alloc_step>;
     static Global global_instance;
     static thread_local Local local_instance;
-    
-    
-    
+
     static void *mem_alloc(std::size_t sz) {
-        if (sz > _max_alloc_size) return ::operator new(sz);        
+        if (sz > _max_alloc_size) [[unlikely]] return ::operator new(sz);        
         return local_instance.alloc(sz);
     }
     static void mem_dealloc(void *ptr, std::size_t sz) {
-        if (sz > _max_alloc_size) return ::operator delete(ptr);
+        if (sz > _max_alloc_size) [[unlikely]] return ::operator delete(ptr);
         return local_instance.dealloc(ptr, sz);
     }
     
 };
 
-inline alloc_master::ForceDelete alloc_master::force_delete_instance;
 inline alloc_master::Global alloc_master::global_instance;
-inline thread_local alloc_master::Local alloc_master::local_instance;
+inline thread_local alloc_master::Local alloc_master::local_instance(global_instance);
 
 
 }
