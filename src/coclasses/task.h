@@ -407,6 +407,20 @@ public:
     }
 };
 
+template<typename T>
+class task_manual_static_resolve: public task_manual_resolve<T> {
+public:
+    using task_manual_resolve<T>::task_manual_resolve;
+    
+    void *operator new(std::size_t sz) {
+        return ::operator new(sz);
+    }
+    void operator delete(void *ptr, std::size_t sz) {
+        ::operator delete(ptr);
+    }
+};
+
+
 template<typename T, typename Task, typename Fn, typename ExceptFn>
 class task_transform_promise: public task_promise_base<T>, public abstract_awaiter<true> {
 public:
@@ -452,10 +466,10 @@ inline task<T,P>::task(X &&x) {
     }
     else if constexpr(std::is_same<X,bool>::value) {
         if (x) {
-            static task<T,P> inst(new task_manual_resolve<bool>(task_manual_resolve<bool>::resolve, true));
+            static task<T,P> inst(new task_manual_static_resolve<bool>(task_manual_resolve<bool>::resolve, true));
             *this = inst;
         } else {
-            static task<T,P> inst(new task_manual_resolve<bool>(task_manual_resolve<bool>::resolve, false));
+            static task<T,P> inst(new task_manual_static_resolve<bool>(task_manual_resolve<bool>::resolve, false));
             *this = inst;
         }
     } 
@@ -467,7 +481,7 @@ inline task<T,P>::task(X &&x) {
 template<typename T, typename P>
 task<T,P>::task():_promise(nullptr) {
     if constexpr(std::is_void<T>::value) {
-        static task<T,P> inst(new task_manual_resolve<void>(task_manual_resolve<void>::resolve));
+        static task<T,P> inst(new task_manual_static_resolve<void>(task_manual_resolve<void>::resolve));
         *this = inst;
     }
 }

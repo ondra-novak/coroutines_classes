@@ -41,10 +41,9 @@ public:
     
     void *operator new(std::size_t sz) {
         std::size_t needsz = sz + sizeof(coro_storage *);
-        coro_storage *s = nullptr;
+        coro_storage *s = coro_next_storage;
         void *ptr = nullptr;
-        if (coro_next_storage) {
-            s = coro_next_storage;
+        if (s) {
             coro_next_storage = nullptr;
             ptr = s->alloc(needsz);
         } else {

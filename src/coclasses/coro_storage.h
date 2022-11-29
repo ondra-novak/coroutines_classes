@@ -168,6 +168,37 @@ protected:
 };
 
 
+///Converts any buffer with POD (Plain Old Data) to act as temporary buffer for coroutine
+/**
+ * During working with data and coroutines, there can be a lot unused buffers with preallocated
+ * storage. Such a buffer can be used as storage for a coroutine frame. You only need to
+ * ensure, that buffer is not used while the coroutine is active. Keep in mind, that content of
+ * buffer is destroyed (actually, it destroys begin of the buffer. If the coroutine is
+ * called repeatedly, it  destroys only begin of the buffer of the same size on each call, 
+ * so you can use rest of the buffer for any arbitrary data)
+ * 
+ * @tparam Buffer type
+ */
+template<typename Buffer>
+class reusable_buffer_storage: public coro_storage { // @suppress("Miss copy constructor or assignment operator")
+public:
+    ///Construct the storage, pass reference to unused buffer to it
+    reusable_buffer_storage(Buffer &buff):_buff(buff) {
+        static_assert(std::is_trivial_v<std::remove_reference_t<decltype(*buff.data())> >, "Only buffer of POD data can be used as temporary storage");
+    }
+    virtual void *alloc(std::size_t sz) override {
+        constexpr std::size_t itemsz = sizeof(decltype(*(this->_buff.data())));
+        std::size_t items = (sz+itemsz-1)/itemsz;
+        if (_buff.size() < items) _buff.resize(items);
+        return _buff.data();
+    }
+    virtual void dealloc(void *, std::size_t) override {}
+    
+protected:
+    Buffer &_buff;    
+};
+
+
 }
 
 #endif /* SRC_COCLASSES_CORO_STORAGE_H_ */
