@@ -60,13 +60,12 @@ using coro_promise_base = COCLS_USE_CUSTOM_ALLOCATOR
 #ifdef COCLS_DISABLE_POOLALLOC
 class coro_promise_base {
 public:
-    void* operator new(std::size_t sz) {
+    static void *default_new(std::size_t sz) {
         return ::operator new(sz);
     }
-    void operator delete(void* ptr, std::size_t sz) {
+    static void default_delete(void *ptr, std::size_t sz) {
         ::operator delete(ptr);
     }
-
 };
 #else
 
@@ -371,11 +370,23 @@ inline thread_local alloc_master::Local alloc_master::local_instance(global_inst
  */
 class coro_promise_base  {
 public:
-    void *operator new(std::size_t sz) {
+
+    ///for manual call
+    /** if you need to manually allocate something using the same allocator as coroutine allocator */
+    static void *default_new(std::size_t sz) {
         return poolalloc::alloc_master::mem_alloc(sz);
     }
+    ///for manual call
+    /** if you need to manually deallocate something using the same allocator as coroutine allocator */
+    static void default_delete(void *ptr, std::size_t sz) {
+        return poolalloc::alloc_master::mem_dealloc(ptr, sz);
+    }
+    
+    void *operator new(std::size_t sz) {
+        return coro_promise_base::default_new(sz);
+    }
     void operator delete(void *ptr, std::size_t sz) {
-        poolalloc::alloc_master::mem_dealloc(ptr, sz);
+        coro_promise_base::default_delete(ptr, sz);
     }    
 };
 

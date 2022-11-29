@@ -96,7 +96,7 @@ protected:
  */
 class reusable_storage: public coro_storage {
 public:
-    void *alloc(std::size_t sz) override {
+    virtual void *alloc(std::size_t sz) override {
         _storage.resize(sz);
         return _storage.data();
     }
@@ -137,6 +137,34 @@ public:
 protected:
     void *_p;
 
+};
+
+
+///Reusable storage with MT usage protection
+/**
+ * Purpose of this storage is to be used with classes that working heavily with coroutines where
+ * is can happen, that coroutine can be called from multiple threads but it is mostly unlikely. 
+ * When the storage is used again while there is already running coroutine, the other
+ * allocations is handled by standard allocator. This is the way how the storage is protected. 
+ */
+class reusable_storage_mtsafe: public reusable_storage {
+public:
+    virtual void *alloc(std::size_t sz) override {
+        if (_busy.exchange(true, std::memory_order_relaxed)) {
+            return coro_promise_base::default_new(sz);
+        } else {
+            return reusable_storage::alloc(sz);
+        }
+    }
+    virtual void dealloc(void *ptr, std::size_t sz) override {
+        if (ptr == _storage.data()) {
+            _busy.store(false, std::memory_order_relaxed);
+        } else {
+            coro_promise_base::default_delete(ptr, sz);
+        }
+    }
+protected:
+    std::atomic<bool> _busy = {false}; 
 };
 
 

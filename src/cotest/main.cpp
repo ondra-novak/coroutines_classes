@@ -275,7 +275,7 @@ cocls::task<void> test_reusable_co(cocls::scheduler<> &sch) {
 
 
 void test_reusable() {
-    cocls::reusable_storage m;
+    cocls::reusable_storage_mtsafe m;
     cocls::thread_pool pool(1);
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block
