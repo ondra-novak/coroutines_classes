@@ -27,6 +27,11 @@ public:
      * @param sz size of memory
      */
     virtual void dealloc(void *ptr, std::size_t sz) = 0;
+    
+    class scope;
+    
+    template<typename Fn>
+    auto call(Fn &&fn) -> decltype(fn()); 
 };
 
 ///Base class for all coroutines that supports the function co_new()
@@ -67,6 +72,19 @@ public:
 };
 
 inline thread_local coro_storage *coro_allocator::coro_next_storage = nullptr;
+
+class coro_storage::scope {
+public:
+    scope(coro_storage *s) {coro_allocator::coro_next_storage = s;}
+    ~scope() {coro_allocator::coro_next_storage = nullptr;}    
+};
+
+template<typename Fn>
+auto coro_storage::call(Fn &&fn) -> decltype(fn()) {
+    scope _(this);
+    return fn();
+}
+
 
 namespace _details {
     template<typename Fn>

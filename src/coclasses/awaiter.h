@@ -198,6 +198,15 @@ public:
      */
     decltype(auto) wait();
     
+    ///Wait synchronously
+    /**
+     * Blocks execution until awaiter is signaled
+     * Doesn't pick neither result nor exception
+     * Useful if you need to synchronize with awaiter without being
+     * affected by the result - for example without need to handle exception
+     */
+    void sync() noexcept ;
+    
     
     ///Subscribe custom awaiter
     /**
@@ -310,6 +319,31 @@ inline decltype(auto) co_awaiter<promise_type, chain>::wait() {
     
     return await_resume();
 }
+
+template<typename promise_type, bool chain>
+inline void co_awaiter<promise_type, chain>::sync() noexcept  {
+    if (await_ready()) return ;
+    
+    class Awaiter: public abstract_awaiter<chain> {
+    public:
+        std::mutex mx;
+        std::condition_variable cond;
+        bool flag = false;        
+        virtual void resume() noexcept override {
+            std::unique_lock _(mx);
+            flag = true;
+            cond.notify_all();
+        }
+    };
+    
+    Awaiter awt;
+    std::unique_lock lk(awt.mx);
+    if (subscribe_awaiter(&awt)) {
+        awt.cond.wait(lk, [&]{return awt.flag;});
+    }
+        
+}
+
 
 template<bool chain>
 inline bool abstract_awaiter<chain>::subscibre_check_ready(std::atomic<abstract_awaiter*> &chain_) {

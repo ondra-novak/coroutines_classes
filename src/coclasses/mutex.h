@@ -73,9 +73,12 @@ public:
     /** By holding this object, you owns an ownership */
     class ownership {
     public:
+        ownership() = default;
         ownership(awaiter &&awt):ownership(awt.wait()) {}
+        ownership(const ownership &) = delete;
+        ownership &operator=(const ownership &) = delete;
         ownership(ownership &&) = default;
-        ownership &operator=(ownership &&) = delete;
+        ownership &operator=(ownership &&) = default;
         ///Release ownership
         /**
          * From now, ownership is not held, even if you still have the object

@@ -155,6 +155,16 @@ public:
         return aw.wait();
     }
     
+    
+    ///Join the task synchronously, but do not pick result
+    /**
+     * Allows to synchronize code, waiting for task to finish, but
+     * doesn't pick any result nor exception.
+     */
+    void sync() noexcept {
+        co_awaiter<promise_type_base, true> aw(*_promise);
+        return aw.sync();
+    }
     ///Join the task asynchronously with specified resumption policy
     /**
      * @param policy instance of resumption policy
