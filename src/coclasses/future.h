@@ -24,11 +24,81 @@
 
 namespace cocls {
 
+/*
+ *     │                                │
+ *     │owner──────────┐                │owner ──┐
+ *     │               ▼                │        │
+ *     │           ┌────────┐           ▼        │
+ *     ▼           │        │      ┌─────────┐   │
+ * co_await ◄──────┤ Future │◄─────┤ Promise │◄──┘
+ *     │           │        │      └────┬────┘
+ *     │           └────────┘           │
+ *     │                                │
+ *     │                                │
+ *     ▼                                ▼
+ */
 
+///Future variable
+/** Future variable is variable, which receives value in a future.
+ * 
+ *  This class implements awaitable future variable. You can co_await on the variable,
+ *  the coroutine is resumed, once the variable is set. 
+ *  
+ *  To se the variable, you need to retrieve a promise object as first. There can
+ *  be only one promise object. It is movable only. Once the promise object is created,
+ *  the future must be resolved before its destruction. The reason for such ordering is
+ *  that neither future nor promise performs any kind of allocation. While future
+ *  sits in coroutine's frame, the promise is just pointer which can be moved around,
+ *  until it is used to set the value, which also invalidates the promise to prevent further
+ *  attempts to set value. 
+ *  
+ *  Neither promise, nor future are MT Safe. Only guaranteed MT safety is for setting
+ *  the value, which can be done from different thread, it also assumes, that value
+ *  is not read before it is resolved.
+ *  
+ *  If you need to copyable, MT safe promises which allows to set value independently from
+ *  different threads, to achieve for example a race, where first attempt resolves the
+ *  future and other addepts are just ignored, you need to use shared_promise
+ * 
+ */
 template<typename T>
 class future;
+///Promise 
+/**
+ * Promise is movable only object which serves as pointer to future to be set.
+ * Its content is valid until the object is used to set the value, then it becomes
+ * invalid. If this object is destroyed without setting the value of the associated
+ * future, the future is resolved with the exception "await_canceled_exception"
+ */
 template<typename T>
 class promise;
+
+
+/*
+ *     │                                                       ┌────────────────┐
+ *     │owner──────────┐                         ┌─shared_ptr──┤ shared_promise │
+ *     │               ▼                         │             └────────────────┘
+ *     │           ┌────────┐       allocated    │
+ *     ▼           │        │      ┌─────────┐   │             ┌────────────────┐
+ * co_await ◄──────┤ future │◄─────┤ promise │◄──┼─shared_ptr──┤ shared_promise │
+ *     │           │        │      │         │   │             └────────────────┘
+ *     │           └────────┘      └─────────┘   │
+ *     │                                         │             ┌────────────────┐
+ *     │                                         └─shared_ptr──┤ shared_promise │
+ *     ▼                                                       └────────────────┘
+ */
+
+///Shared promise
+/**
+ * Shared promise acts as promise, but allows to be copied. Multiple threads can
+ * try to set value, only the first attempt is used, others are ignored.
+ * 
+ * The shared promise allocates shared space on heap,
+ */
+template<typename T, typename shared_place = promise<T>>
+class shared_promise;
+template<typename T, typename shared_place >
+class shared_promise_base;
 template<typename T>
 class promise_base;
 
@@ -43,18 +113,33 @@ public:
     
     ///Create a promise
     /**
-     * @return a associated promise object. This object can be moved, copied,
-     * assigned, etc. 
+     * @return a associated promise object. This object can be moved but not copied
      * 
-     * @note you have to destroy all created/copied instances to allow future
-     * to resume the awaiting coroutine. So it is not a good idea to store
-     * the future object in variable declared in current coroutine frame. Move the
-     * variable out! 
+     * @note only one promise can be created. If you need to create copyable object, use
+     * get_shared_promise() 
      * 
      */
     promise<T> get_promise() {
-        return promise<T>(*static_cast<future<T> *>(this));
+        assert(_state == State::init);
+        State old = State::init;
+        if (_state.compare_exchange_strong(old, State::has_promise, std::memory_order_relaxed)) {
+            return promise<T>(*static_cast<future<T> *>(this));
+        } else {
+            return promise<T>();
+        }
     }
+
+    ///Create a shared promise
+    /**
+     * Creates copyable promise. Only one promise can be created by this way. However you
+     * can copy the resulting object many times as you want.
+     * 
+     * @note This function performs extra stack allocation to hold the shared state
+     * 
+     * @return copyable opromise
+     */
+    shared_promise<T> get_shared_promise();
+
     
     ///Starts waiting for a result
     co_awaiter<future<T> >  operator co_await() {
@@ -68,6 +153,7 @@ public:
     decltype(auto) wait() {
         return co_awaiter<future<T> >(*static_cast<future<T> *>(this)).wait();
     }
+
     
     ///get value
     /**
@@ -87,35 +173,35 @@ public:
     decltype(auto) get() const {
         return _value.get();
     }
+
+    ~future_base() {
+        assert(_state != State::has_promise);
+    }
+
     
 protected:
-    
-    std::atomic<unsigned int> _pcount = 0;
-    abstract_awaiter<> *_awaiter = nullptr;
-    future_var<T> _value;    
 
-    void add_ref() {
-        _pcount.fetch_add(1, std::memory_order_relaxed);
-    }
-   
-    void release_ref() {
-        unsigned int x = _pcount.fetch_sub(1, std::memory_order_release)-1;
-        assert(x < static_cast<unsigned int>(-10));
-        if (x == 0) {            
-            if (_awaiter) {
-                _awaiter->resume();
-            }
-        }
-    }
+    enum class State {
+        init,
+        has_promise,
+        has_value
+    };
+    
+    std::atomic<State> _state = State::init;
+    std::atomic<abstract_awaiter<> *> _awaiter = nullptr;
+    future_var<T> _value;    
     
     bool is_ready() {
-        return _value.has_value() &&  _pcount == 0;        
+        return _state.load(std::memory_order_acquire) != State::has_promise;        
     }
     
     bool subscribe_awaiter(abstract_awaiter<> *x) {
-        ++_pcount;
-        _awaiter = x;
-        return  (--_pcount > 0 || !_value.has_value());
+        _awaiter.store(x, std::memory_order_relaxed);
+        if (is_ready()) {
+            auto awt = _awaiter.exchange(nullptr, std::memory_order_relaxed);
+            if (awt) return false;
+        } 
+        return true;
     }
     
     decltype(auto) get_result() {
@@ -130,63 +216,40 @@ protected:
     
     void unhandled_exception() {
         _value.unhandled_exception();
+    }      
+    void set_value_finish() {
+        this->_state.store(State::has_value, std::memory_order_release);
+        auto awt = this->_awaiter.exchange(nullptr, std::memory_order_relaxed);
+        if (awt) awt->resume();        
     }
 };
 
 
 
-///Future object
-/**
- * Future object - future variable - is variable which will have a value in
- * future. The object has two states. The first state, when the value is not
- * yet known, and second state, when value is already known and the future is 
- * "resolved".
- * 
- * @tparam T type of stored value
- * 
- * The future can also store exception if the value cannot be obtained. This
- * allows to propagate an exception from the producer to the consument.
- * 
- * Future object can be awaited.
- * 
- * Along with the future object, there is a promise object. Promise is
- * a satellite object, which can be passed to the procuder and which can
- * collect the result for the future. To obtain promise object call get_promise()
- * 
- * Future is fundamental part of coroutine library, as it provides connection
- * between non-coroutine producers and coroutine consuments, because producers
- * can be more system-oreinted code, where coroutines are not allowed. For example
- * you can have a network monitor, which notifies about network events. Once such
- * event is notified, am associated awaiting coroutine can be resumed and retrieve
- * such an event.
- * 
- * @note Futures are one-shot and they can't be rearmed. You need to destroy
- * and create new instance to 'rearm' the future
- * 
- * 
- * @see make_promise
- * 
- */
 template<typename T>
 class future: public future_base<T> {
 public:
-    
+protected:
+    friend class promise_base<T>;
+    friend class promise<T>;
+
     template<typename X>
     auto set_value(X &&x) -> decltype(std::declval<future_var<T> >().emplace(x)) {
         this->_value.emplace(std::forward<X>(x));
+        this->set_value_finish();
     }
 };
 
-///Future object without value, it just records 'happening' of an event
-/**
- * @copydoc future<T>
- */
 template<>
 class future<void>: public future_base<void> {
 public:
-    
+protected:
+    friend class promise_base<void>;
+    friend class promise<void>;
+
     void set_value() {
         this->_value.emplace();
+        this->set_value_finish();
     }
 };
 
@@ -196,35 +259,31 @@ template<typename T>
 class promise_base {
 public:
     promise_base():_owner(nullptr) {}
-    explicit promise_base(future<T> &fut):_owner(&fut) {_owner->add_ref();}
-    promise_base(const promise_base &other):_owner(other._owner) {if (_owner) _owner->add_ref();}
-    promise_base(promise_base &&other):_owner(other._owner) {other._owner = nullptr;}
+    explicit promise_base(future<T> &fut):_owner(&fut) {}
+    promise_base(const promise_base &other) =delete;
+    promise_base(promise_base &&other):_owner(other.claim()) {}
     ~promise_base() {
         release();
     }
-    promise_base &operator=(const promise_base &other) {
-        if (this != &other) {
-            if (_owner) _owner->release_ref();
-            _owner = other._owner;
-            if (_owner) _owner->add_ref();
-                    
-        }
-        return *this;
-    }
+    promise_base &operator=(const promise_base &other) = delete;
     promise_base &operator=(promise_base &&other) {
         if (this != &other) {
-            if (_owner) _owner->release_ref();
-            _owner = other._owner;
-            other._owner = nullptr;
+            if (_owner) release();
+            _owner = other.claim();
         }
         return *this;
     }
     
-    ///Release promise object, decreases count of references, can resume associated coroutine
+    ///Releases promise without setting a value;
     void release() {
-        auto m = _owner;
-        _owner = nullptr;
-        if (m) m->release_ref();        
+        auto m = claim();
+        if (m) {
+            try {
+                throw await_canceled_exception();
+            } catch (...) {
+                m->unhandled_exception();
+            }
+        }
     }
 
 
@@ -240,26 +299,24 @@ public:
     }
 
     ///capture current exception
-    void unhandled_exception() const {
-        this->_owner->unhandled_exception();
+    void unhandled_exception()  {
+        auto m = claim();
+        if (m) {
+           m->unhandled_exception();
+        }
+    }
+
+    ///claim this future as pointer to promise - used often internally
+    future<T> *claim() {
+        return _owner.exchange(nullptr, std::memory_order_relaxed);
     }
 
     
 protected:
-    future<T> *_owner;
+    
+    std::atomic<future<T> *>_owner;
 };
 
-///Promise object
-/**
- * Promise object acts as some reference to its future. You can copy and move promise object. 
- * You can have multiple promise objects at time, but only one such object can accept value at 
- * the time - this is not MT Safe.
- * 
- * Note that awaiting coroutine is resumed when last promise is destroyed. Setting value doesn't
- * perform resumption, only sets value
- * 
- * @tparam T
- */
 template<typename T>
 class promise: public promise_base<T> {
 public:
@@ -269,38 +326,30 @@ public:
     /**
      * @param x value to be set
      */
-    void set_value(T &&x) const {
-        this->_owner->set_value(std::move(x));
+    void set_value(T &&x)  {
+        auto m = this->claim();
+        if (m) m->set_value(std::move(x));
     }
     
     ///set value
     /**
      * @param x value to be set
      */
-    void set_value(const T &x) const {
-        this->_owner->set_value(x);
+    void set_value(const T &x) {
+        auto m = this->claim();
+        if (m) m->set_value(x);
     }
     
     
     ///promise can be used as callback function
-    void operator()(T &&x) const {
+    void operator()(T &&x)  {
         set_value(std::move(x));
     }
     ///promise can be used as callback function
-    void operator()(const T &x) const {
+    void operator()(const T &x)  {
         set_value(x);
     }
 };
-
-///Promise object
-/**
- * Promise object acts as some reference to its future. You can copy and move promise object. 
- * You can have multiple promise objects at time, but only one such object can accept value at 
- * the time - this is not MT Safe.
- * 
- * Note that awaiting coroutine is resumed when last promise is destroyed. Setting value doesn't
- * perform resumption, only sets value
- */
 
 template<>
 class promise<void>: public promise_base<void> {
@@ -311,16 +360,33 @@ public:
     ///makes future ready
     /**
      */
-    void set_value() const {
-        _owner->set_value();
+    void set_value() {
+        auto m = this->claim();
+        if (m) m->set_value();
     }
     ///you can call promise as callback
-    void operator()() const{
+    void operator()() {
         set_value();
     }
 
 };
 
+///Promise with default value
+template<typename T>
+class promise_with_default: public promise<T> {
+public:
+    using promise<T>::promise;
+    
+    template<typename ... Args>
+    promise_with_default(promise<T> &&prom, Args &&... args)
+        :promise<T>(std::move(prom)),def(std::forward<Args>(args)...) {}
+    ~promise_with_default() {
+        this->set_value(std::move(def));
+    }
+protected:
+    T def;
+    
+};
 
 ///Futures with callback function
 /**
@@ -414,83 +480,134 @@ promise<T> make_promise(Fn &&fn, Storage &storage) {
 /**@}*/
 
 
-///Future object, which can be resolved from multiple sources - first source resolves future, others are ignored
+///Shared promise
 /**
- * 
  * @tparam T
  */
-template<typename T>
-class multi_source_future {
-public:
-        
-    multi_source_future();
-    multi_source_future(multi_source_future &&) = default;
-    multi_source_future(const multi_source_future &) = delete;
-    multi_source_future &operator=(const multi_source_future &) = delete;
-    multi_source_future &operator=(multi_source_future &&) = delete;
-    
-    ///await for result - only one awaiter is allowed
-    co_awaiter<future<T> > operator co_await();
+template<typename T, typename shared_place  >
+class shared_promise_base {
 
-    ///wait synchronously, return result
-    decltype(auto) wait() {
-        return operator co_await().wait();
+public:    
+    void release() {
+        _ptr->release();
+    }
+    
+    operator bool() const {
+        return _ptr && _ptr->_fut.load(std::memory_order_relaxed) != nullptr;
     }
 
-    ///Retrieve promise object
-    /**
-     * @note Object can be copied or moved, but it still belongs to one
-     * source. If you need to get promise for two sources, you need to call this function
-     * twice.
-     * 
-     * Setting value is MT safe if it set for different source simultaneously. It is not
-     * MT safe to set value to promises from single source.  
-     * 
-     * @return
+    ///Returns true, if the promise is not valid
+    bool operator !() const {
+        return !operator bool();
+    }
+
+    ///capture current exception
+    void unhandled_exception() const {
+        _ptr->unhandled_exception();
+    }
+
+    shared_promise_base();
+    template<typename ... Args>
+    explicit shared_promise_base(promise<T> &&p, Args && ... args)
+        :_ptr(std::make_shared<shared_place>(std::move(p), std::forward<Args>(args)...)) {}
+
+    /*
+     *     │                                                       ┌────────────────┐
+     *     │owner──────────┐                         ┌─shared_ptr──┤ shared_promise │
+     *     │               ▼                         │             └────────────────┘
+     *     │           ┌────────┐       allocated    │
+     *     ▼           │        │      ┌─────────┐   │             ┌────────────────┐
+     * co_await ◄──────┤ future │◄─────┤ promise │◄──┼─shared_ptr──┤ shared_promise │
+     *     │           │        │      │         │   │             └────────────────┘
+     *     │           └────────┘      └─────────┘   │
+     *     │                                         │            ┌──────────────────┐
+     *     │                                         │            │┌────────────────┐│
+     *     ▼                                         └─shared_ptr─││ shared_promise ││
+     *                                                            │└────────────────┘│
+     *                                                            │       ▲          │
+     *                                                            │       │          │   ┌─────────┐
+     *                                                            │     future    ◄──┼───┤ promise │
+     *                                                            └──────────────────┘   └─────────┘
+     *                                                                      allocated
      */
-    promise<T> get_promise();
- 
+
 protected:
+    std::shared_ptr<shared_place > _ptr;
+};
+
+template<typename T, typename shared_place >
+class shared_promise: public shared_promise_base<T, shared_place> {
+public:
+    using shared_promise_base<T, shared_place>::shared_promise_base;
     
-    struct storage {
-        future<T> _fut;
-        std::atomic<bool> _loading;        
-    };
+    void set_value(T &&x)  {
+        this->_ptr->set_value(std::move(x));
+    }
     
+    ///set value
+    /**
+     * @param x value to be set
+     */
+    void set_value(const T &x) {
+        this->_ptr->set_value(x);
+    }
     
-    using storage_p = std::shared_ptr<storage>;
-    storage_p _ptr;
+    ///promise can be used as callback function
+    void operator()(T &&x)  {
+        set_value(std::move(x));
+    }
+    ///promise can be used as callback function
+    void operator()(const T &x)  {
+        set_value(x);
+    }
+
+    explicit operator promise<T>() {
+        return make_promise<T>([p = *this>(this)](cocls::future<T> &f){
+            try {
+                p.set_value(std::move(f.get()));
+            } catch (...) {
+                p.unhandled_exception();
+            }
+        });
+    }
+    
+};
+
+template<typename shared_place>
+class shared_promise<void, shared_place>: public shared_promise_base<void, shared_place> {
+public:
+    
+    using shared_promise_base<void , shared_place>::shared_promise_base;
+
+    ///makes future ready
+    /**
+     */
+    void set_value() {
+        this->_ptr->set_value();
+    }
+    ///you can call promise as callback
+    void operator()() {
+        set_value();
+    }
+    explicit operator promise<void>() {
+        return make_promise<void>([p = *this](cocls::future<void> &f){
+            try {
+                p.set_value();
+            } catch (...) {
+                p.unhandled_exception();
+            }
+        });
+    }
     
 };
 
 
 
 template<typename T>
-inline multi_source_future<T>::multi_source_future()
-:_ptr(std::make_shared<storage>())
-{
-}
-
-template<typename T>
-inline co_awaiter<future<T> > multi_source_future<T>::operator co_await() {
-    return _ptr->_fut.operator co_await();
-}
-
-template<typename T>
-inline promise<T> multi_source_future<T>::get_promise() {
-    return make_promise<T>([ptr = this->_ptr](future<T> &f){
-        if (ptr->_loading.exchange(true) == false) {
-            promise<T> p = ptr->_fut.get_promise();
-            try {
-                p.set_value(std::move(f.get()));
-            } catch (...) {
-                p.unhandled_exception();
-            }
-        }
-    });
+inline shared_promise<T> cocls::future_base<T>::get_shared_promise() {
+    return shared_promise<T>(get_promise());
 }
 
 }
-
 #endif /* SRC_COCLASSES_FUTURE_H_ */
 

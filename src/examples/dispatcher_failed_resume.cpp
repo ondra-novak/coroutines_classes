@@ -32,7 +32,7 @@ int main(int, char **) {
     cocls::future<void> f;
     
     
-    std::thread thr1([l, p = f.get_promise()]{
+    std::thread thr1([l, p = f.get_promise()]() mutable{
         cocls::dispatcher::init();
         auto t1 = task1();
         disp_task<int> t2 = task2(cocls::lazy<int> (l));

@@ -35,7 +35,7 @@ cocls::task<int> co_test() {
     auto cbp = cocls::make_promise<int>([](cocls::future<int> &x){
        std::cout << "(make_promise) called:" << x.get() << std::endl; 
     });    
-    std::thread thr([p = f.get_promise(), p2 = cbp]{
+    std::thread thr([p = f.get_promise(), p2 = std::move(cbp)]() mutable {
         std::cout << "(co_test) thread started" << std::endl;    
         std::this_thread::sleep_for(std::chrono::seconds(2));
         std::cout << "(co_test) promise being set" << std::endl;  
@@ -88,7 +88,7 @@ cocls::generator<int> co_async_fib(int count, int delay = 100) {
     int b = 1;
     for(int i = 0;i < count; i++) {
         cocls::future<int> cf;
-        std::thread thr([&a,&b,&delay, cp = cf.get_promise()]{
+        std::thread thr([&a,&b,&delay, cp = cf.get_promise()]() mutable {
             int c = a+b;
             cp.set_value(c);
             a = b;

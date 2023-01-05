@@ -80,7 +80,6 @@ template<typename X>
 using has_join = std::negation<std::is_same<std::monostate, decltype(_details::test_has_join(std::declval<X>()))> >;
 
 
-
 ///definition of various resumption policies
 namespace resumption_policy {
 

@@ -17,11 +17,11 @@ cocls::generator<int> co_fib(cocls::thread_pool &pool, int count) {
 }
 
 
-void test_cb(cocls::generator<int> &gen, cocls::promise<void> p) {
-    gen >> [&,p] {
+void test_cb(cocls::generator<int> &gen, cocls::promise<void> &&p) {
+    gen >> [&,p = std::move(p)]() mutable {
         if (!gen.done()) {
             std::cout << gen.value() << std::endl;
-            test_cb(gen,p);
+            test_cb(gen,std::move(p));
         } else{
             std::cout << "Done" << std::endl;
             p.set_value();

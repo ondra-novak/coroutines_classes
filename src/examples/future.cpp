@@ -5,7 +5,7 @@
 //task returning void
 cocls::task<int> cofn1() {
     cocls::future<int> fut;
-    std::thread thr([p = fut.get_promise()]{
+    std::thread thr([p = fut.get_promise()]() mutable {
        p.set_value(42); 
     });
     thr.detach();
