@@ -383,10 +383,55 @@ public:
     ~promise_with_default() {
         this->set_value(std::move(def));
     }
+    promise_with_default(promise_with_default &&other) = default;
+    promise_with_default &operator=(promise_with_default &&other) {
+        if (this != &other) {
+            promise<T>::operator=(std::move(other));
+            def = std::move(def);
+        }
+        return *this;
+    }
 protected:
     T def;
     
 };
+
+///Promise with default value
+/**
+ * @tparam T type, must be integral type
+ * @tparam val default value
+ */
+template<typename T, T val>
+class promise_with_default_v: public promise<T> {
+public:
+    using promise<T>::promise;
+    promise_with_default_v() = default;
+    promise_with_default_v(promise_with_default_v &&other) = default;
+    promise_with_default_v &operator=(promise_with_default_v &&other) = default;
+    ~promise_with_default_v() {
+        this->set_value(val);
+    }
+    promise_with_default_v(promise<T> &&p):promise<T>(std::move(p)) {}
+};
+
+///Promise with default value - constant is specified in template paramater
+/**
+ * @tparam T type 
+ * @tparam val const pointer to default value, must have external linkage
+ */
+template<typename T, const T *val>
+class promise_with_default_vp: public promise<T> {
+public:
+    using promise<T>::promise;
+    promise_with_default_vp() = default;
+    promise_with_default_vp(promise_with_default_vp &&other) = default;
+    promise_with_default_vp &operator=(promise_with_default_vp &&other) = default;
+    ~promise_with_default_vp() {
+        this->set_value(*val);
+    }
+    promise_with_default_vp(promise<T> &&p):promise<T>(std::move(p)) {}
+};
+
 
 ///Futures with callback function
 /**
