@@ -90,10 +90,10 @@ cocls::generator<int> co_async_fib(int count, int delay = 100) {
         cocls::future<int> cf;
         std::thread thr([&a,&b,&delay, cp = cf.get_promise()]() mutable {
             int c = a+b;
-            cp.set_value(c);
             a = b;
             b = c;
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            cp.set_value(c);
         });
         thr.detach();
         int c = co_await cf;
@@ -230,11 +230,13 @@ void threadpool_test() {
 
 cocls::task<> scheduler_test_task(cocls::scheduler<> &sch) {
     std::cout << "(scheduler_test_task) started "<< std::endl;
-    auto gen = sch.interval(std::chrono::milliseconds(100));    
-    auto n = co_await gen;
-    while (*n != 20) {        
-        std::cout << "(scheduler_test_task) interval generator tick: " << (*n) << std::endl;
-        n = co_await gen;        
+    auto gen = sch.interval(std::chrono::milliseconds(100));
+    co_await gen.next();
+    auto n = gen.value();
+    while (n != 10) {        
+        std::cout << "(scheduler_test_task) interval generator tick: " << (n) << std::endl;
+        co_await gen.next();
+        n = gen.value();
     }
     std::cout << "(scheduler_test_task) exiting "<< std::endl;
     

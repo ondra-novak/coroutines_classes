@@ -1,5 +1,6 @@
-#include <coclasses/generator.h>
 #include <coclasses/generator_aggregator.h>
+
+#include <coclasses/generator.h>
 
 #include <iostream>
 

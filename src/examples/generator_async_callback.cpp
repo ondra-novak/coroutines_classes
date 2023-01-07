@@ -1,4 +1,6 @@
 #include <coclasses/generator.h>
+#include <coclasses/future.h>
+
 #include <coclasses/thread_pool.h>
 
 #include <iostream>

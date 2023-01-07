@@ -4,7 +4,7 @@
 #pragma once
 #ifndef SRC_COCLASSES_SCHEDULER_H_
 #define SRC_COCLASSES_SCHEDULER_H_
-#include "generator.h"
+
 #include "lazy.h"
 
 #include "thread_pool.h"
@@ -12,6 +12,7 @@
 #include "lazy.h"
 
 #include "queued_resumption_policy.h"
+#include "generator.h"
 
 #include <chrono>
 #include <condition_variable>

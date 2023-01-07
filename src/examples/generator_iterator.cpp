@@ -1,4 +1,5 @@
 #include <coclasses/generator.h>
+
 #include <iostream>
 
 cocls::generator<int> co_fib2(int count) {
