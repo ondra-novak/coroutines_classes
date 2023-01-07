@@ -7,11 +7,10 @@
 #define SRC_COCLASSES_TASK_H_
 
 #include "awaiter.h"
+#include "co_alloc.h"
 #include "common.h" 
 #include "exceptions.h"
 #include "debug.h"
-#include "future_var.h"
-#include "co_new.h"
 #include "resumption_policy.h"
 
 #include <atomic>
@@ -193,19 +192,6 @@ public:
         return _promise!=nullptr;
     }
     
-    template<typename Fn>
-    auto then(Fn &&fn);
-    
-    template<typename Fn, typename ExceptFn>
-    auto then(Fn &&fn, ExceptFn &&efn);
-
-    template<typename Fn, typename ExceptFn>
-    auto except(ExceptFn &&efn);
-
-    template<typename Fn>
-    auto operator >> (Fn &&fn) {
-        return then(std::forward<Fn>(fn));
-    }
     
     
     
@@ -246,24 +232,19 @@ class task_promise_base: public coro_allocator  {
 public:
     using AW = abstract_awaiter<true>;
 
+    using Result = std::add_lvalue_reference_t<T>;
+    
     std::atomic<AW *> _awaiter_chain;
     std::atomic<unsigned int> _ref_count;
-    future_var<T> _value;
-
+    
     task_promise_base():_ref_count(0) {}          
 
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
-    virtual ~task_promise_base() {
-        if (!AW::is_processed(_awaiter_chain)) {
-            std::exception_ptr e = _value.exception_ptr();
-            if (e) debug_reporter::get_instance()
-                    .report_exception(e, typeid(task<T>));
-        }
-    }
 
-//    virtual std::coroutine_handle<> get_handle()  = 0;
-    //destroy this promise (coroutine)
+    virtual ~task_promise_base() = default;
+    
+    
     virtual void destroy() =0;
     
     ///handles final_suspend
@@ -304,21 +285,9 @@ public:
     bool subscribe_awaiter(AW *aw) {
         return aw->subscibre_check_ready(_awaiter_chain);
     }
-    
-    decltype(auto) get_result() {
-        if (AW::mark_processed(_awaiter_chain)) {
-            return _value.get();
-        } else {
-            throw value_not_ready_exception();
-        }
-        
-    }
 
-    
-    void unhandled_exception() {
-        _value.unhandled_exception();
-        AW::mark_ready_resume(_awaiter_chain);
-    }
+    virtual Result get_result() = 0;
+
     
 };
 
@@ -363,11 +332,19 @@ class task_promise_with_policy<T, void>: public task_promise_with_policy<T, resu
 template<typename T, typename Policy>
 class task_promise: public task_promise_with_policy<T, Policy> {
 public:
+    
+    task_promise() {}
+    
+    union {
+        T _v;
+        std::exception_ptr _e;
+    };
+    
     using AW = typename task_promise_with_policy<T, Policy>::AW;
     template<typename X>
-    auto return_value(X &&val)->decltype(std::declval<future_var<T> >().emplace(std::forward<X>(val))) {
-        this->_value.emplace(std::forward<X>(val));
-        AW::mark_ready_resume(this->_awaiter_chain);
+    auto return_value(X &&val)->std::enable_if_t<std::is_convertible_v<X,T> >{
+        new(&_v) T(std::forward<X>(val));
+        AW::mark_ready_data_resume(this->_awaiter_chain);
     }
     task<T, Policy> get_return_object() {
         return task<T, Policy>(static_cast<task_promise_base<T> *>(this));
@@ -376,15 +353,42 @@ public:
         auto h = std::coroutine_handle<task_promise>::from_promise(*this);
         h.destroy();
     }
+    virtual T &get_result() override {
+        if (AW::mark_processed_data(this->_awaiter_chain)) {
+            return _v;
+        }
+        if (AW::mark_processed_exception(this->_awaiter_chain)) {
+            std::rethrow_exception(_e);
+        }
+        throw value_not_ready_exception();
+    }
+
+    void unhandled_exception() {
+        new(&_e) std::exception_ptr(std::current_exception());
+        AW::mark_ready_exception_resume(this->_awaiter_chain);
+    }
+    
+    ~task_promise() {       
+        AW::cleanup_by_mark(this->_awaiter_chain,
+                [this]{_v.~T();}, [this]{
+                    if (!AW::is_processed(this->_awaiter_chain)) {
+                        if (_e) debug_reporter::get_instance()
+                                .report_exception(_e, typeid(task<T, Policy>));
+                    }
+                    _e.~exception_ptr();
+                });
+    }
 };
 
 template<typename Policy>
 class task_promise<void, Policy>: public task_promise_with_policy<void, Policy> {
 public:
+    
+    std::exception_ptr _e;
+    
     using AW = typename task_promise_with_policy<void, Policy>::AW;
     auto return_void() {
-        this->_value.emplace();
-        AW::mark_ready_resume(this->_awaiter_chain);
+        AW::mark_ready_data_resume(this->_awaiter_chain);
     }
     task<void, Policy> get_return_object() {
         return task<void, Policy>(this);
@@ -393,6 +397,24 @@ public:
         auto h = std::coroutine_handle<task_promise>::from_promise(*this);
         h.destroy();
     }
+    void unhandled_exception() {
+        _e =  std::current_exception();
+        AW::mark_ready_exception_resume(this->_awaiter_chain);
+    }
+    void get_result() override {
+        if (AW::mark_processed_data(this->_awaiter_chain)) {
+            return ;
+        }
+        if (AW::mark_processed_exception(this->_awaiter_chain)) {
+            std::rethrow_exception(_e);
+        }
+        throw value_not_ready_exception();
+    }
+
+    ~task_promise() {
+        if (_e) debug_reporter::get_instance()
+                .report_exception(_e, typeid(task<void, Policy>));
+    }
 };
 
 template<typename T>
@@ -400,21 +422,42 @@ class task_manual_resolve: public task_promise_base<T> {
 public:
     using AW = typename task_promise_base<T>::AW;
     
-    enum _resolve {resolve};
     
     template<typename ... Args>
-    explicit task_manual_resolve(_resolve, Args &&...args ) {
-        emplace(std::forward<Args>(args)...);
+    task_manual_resolve(Args &&...args ):_value(std::forward<Args>(args)...) {
+        AW::mark_ready_data_resume(this->_awaiter_chain);
     }
-    
-    template<typename ... Args>
-    void emplace(Args && ... args) {
-        this->_value.emplace(std::forward<Args>(args)...);
-        AW::mark_ready_resume(this->_awaiter_chain);
-    }
+            
     virtual void destroy() override {
         delete this;
     }
+
+    T &get_result() override {
+        return _value;
+    }
+    
+    T _value;
+    
+};
+
+template<>
+class task_manual_resolve<void>: public task_promise_base<void> {
+public:
+    using AW = typename task_promise_base<void>::AW;
+    
+    
+    template<typename ... Args>
+    task_manual_resolve() {
+        AW::mark_ready_data_resume(this->_awaiter_chain);
+    }
+            
+    virtual void destroy() override {
+        delete this;
+    }
+
+    void get_result() override {}
+    
+    
 };
 
 template<typename T>
@@ -431,41 +474,6 @@ public:
 };
 
 
-template<typename T, typename Task, typename Fn, typename ExceptFn>
-class task_transform_promise: public task_promise_base<T>, public abstract_awaiter<true> {
-public:
-    using AW = typename task_promise_base<T>::AW;
-
-    task_transform_promise(Task t, Fn &&fn, ExceptFn &&exceptFn)
-        :_t(std::move(t))
-        , _fn(std::forward<Fn>(fn))
-        , _except(std::forward<ExceptFn>(exceptFn)){}
-    
-    virtual void resume() noexcept override {
-        auto awt = _t.operator co_await();
-        try {
-            this->_value.transform(std::forward<Fn>(_fn),awt.await_resume());
-            AW::mark_ready_resume(this->_awaiter_chain);            
-        } catch (...) {
-            try {
-                this->_value.transform(std::forward<ExceptFn>(_except));
-                AW::mark_ready_resume(this->_awaiter_chain);            
-            } catch (...) {
-                this->unhandled_exception();
-            }            
-        }
-    }
-    virtual void destroy() override {
-        delete this;
-    }
-protected:
-    Task _t;
-    Fn _fn;
-    ExceptFn _except;
-};
-
-
-
 template<typename T, typename P>
 template<std::convertible_to<T> X>
 inline task<T,P>::task(X &&x) {
@@ -476,22 +484,22 @@ inline task<T,P>::task(X &&x) {
     }
     else if constexpr(std::is_same<X,bool>::value) {
         if (x) {
-            static task<T,P> inst(new task_manual_static_resolve<bool>(task_manual_resolve<bool>::resolve, true));
+            static task<T,P> inst(new task_manual_static_resolve<bool>(true));
             *this = inst;
         } else {
-            static task<T,P> inst(new task_manual_static_resolve<bool>(task_manual_resolve<bool>::resolve, false));
+            static task<T,P> inst(new task_manual_static_resolve<bool>(false));
             *this = inst;
         }
     } 
     else {
-        *this = task<T,P>(new task_manual_resolve<T>(task_manual_resolve<T>::resolve, std::forward<X>(x)));
+        *this = task<T,P>(new task_manual_resolve<T>(std::forward<X>(x)));
     }
 }
 
 template<typename T, typename P>
 task<T,P>::task():_promise(nullptr) {
     if constexpr(std::is_void<T>::value) {
-        static task<T,P> inst(new task_manual_static_resolve<void>(task_manual_resolve<void>::resolve));
+        static task<T,P> inst(new task_manual_static_resolve<void>());
         *this = inst;
     }
 }
@@ -511,38 +519,7 @@ struct task_from_return_value<void, Fn> {
 template<typename T, typename Fn>
 using task_from_return_value_t = typename task_from_return_value<T,Fn>::type;
 
-
 }
-
-template<typename T, typename P>
-template<typename Fn>
-auto task<T,P>::then(Fn &&fn) {
-    using mytask = _details::task_from_return_value_t<T, Fn>;
-    using newT = typename mytask::value_type;
-    auto exceptFn = []()->newT {throw;};
-    return then(std::forward<Fn>(fn), std::move(exceptFn));
-}
-
-template<typename T, typename P>
-template<typename Fn, typename ExceptFn>
-auto task<T,P>::then(Fn &&fn, ExceptFn &&efn) {
-    using mytask = _details::task_from_return_value_t<T, Fn>;
-    auto t = new task_transform_promise<typename mytask::value_type, task<T,P>, Fn, ExceptFn>(*this,std::forward<Fn>(fn), std::forward<ExceptFn>(efn));
-    if (!_promise->subscribe_awaiter(t)) {
-        t->resume();
-    }
-    return mytask(t);
-}
-
-template<typename T, typename P>
-template<typename Fn, typename ExceptFn>
-auto task<T,P>::except(ExceptFn &&efn) {
-    return then([](auto &&x)->decltype(auto) {
-        using X = decltype(x);
-        return std::forward<X>(x);
-    }, std::forward<ExceptFn>(efn));
-}
-
 
 
 template<typename T> 

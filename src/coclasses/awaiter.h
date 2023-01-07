@@ -39,7 +39,9 @@ public:
         return std::noop_coroutine();
     }
     virtual ~abstract_awaiter_base() = default;
+    
 };
+
 
 template<bool chain = false>
 class abstract_awaiter: public abstract_awaiter_base {
@@ -56,23 +58,44 @@ public:
      * @param chain chain to resume
      * @param skip skip specified awaiter
      */
-    static void mark_ready_resume(std::atomic<abstract_awaiter *> &chain_);
+    static void mark_ready_data_resume(std::atomic<abstract_awaiter *> &chain_);
+    
+    ///Mark object exceptional and resume chain 
+    /**
+     * @param chain chain to resume
+     * @param skip skip specified awaiter
+     */
+    static void mark_ready_exception_resume(std::atomic<abstract_awaiter *> &chain_);
     ///Check whether ready
     /**
      * @param chain chain to check
      * @return
      */
     static bool is_ready(const std::atomic<abstract_awaiter *> &chain_);
-    ///mark object processed (must be ready);
+    
+    ///mark object processed (must be ready_data);
     /**
      * @param chain chain to check
      * @retval true marked
      * @retval false object is not ready
      */
-    static bool mark_processed(std::atomic<abstract_awaiter *> &chain_);
+    static bool mark_processed_data(std::atomic<abstract_awaiter *> &chain_);
+    ///mark object processed (must be ready_exception);
+    /**
+     * @param chain chain to check
+     * @retval true marked
+     * @retval false object is not ready
+     */
+    static bool mark_processed_exception(std::atomic<abstract_awaiter *> &chain_);
 
     static bool is_processed(const std::atomic<abstract_awaiter *> &chain_);
-};
+    
+    template<typename Fn1, typename Fn2>
+    static void cleanup_by_mark(
+            const std::atomic<abstract_awaiter *> &chain_, Fn1 &&data, Fn2 &&exception);
+    
+    
+ };
 
 template<>
 class abstract_awaiter<true>: public abstract_awaiter_base {
@@ -115,7 +138,13 @@ public:
      * @param chain chain to resume
      * @param skip skip specified awaiter
      */
-    static void mark_ready_resume(std::atomic<abstract_awaiter *> &chain);
+    static void mark_ready_data_resume(std::atomic<abstract_awaiter *> &chain);
+    ///Mark object exceptional and resume chain 
+    /**
+     * @param chain chain to resume
+     * @param skip skip specified awaiter
+     */
+    static void mark_ready_exception_resume(std::atomic<abstract_awaiter *> &chain_);
     ///Check whether ready
     /**
      * @param chain chain to check
@@ -123,16 +152,27 @@ public:
      */
     static bool is_ready(const std::atomic<abstract_awaiter *> &chain);
     
-    ///mark object processed (must be ready);
+    ///mark object processed (must be ready_data);
     /**
      * @param chain chain to check
      * @retval true marked
      * @retval false object is not ready
      */
-    static bool mark_processed(std::atomic<abstract_awaiter *> &chain);
+    static bool mark_processed_data(std::atomic<abstract_awaiter *> &chain_);
+    ///mark object processed (must be ready_exception);
+    /**
+     * @param chain chain to check
+     * @retval true marked
+     * @retval false object is not ready
+     */
+    static bool mark_processed_exception(std::atomic<abstract_awaiter *> &chain_);
     
     static bool is_processed(const std::atomic<abstract_awaiter *> &chain);
 
+    template<typename Fn1, typename Fn2>
+    static void cleanup_by_mark(
+            const std::atomic<abstract_awaiter *> &chain_, Fn1 &&data, Fn2 &&exception);
+    
     abstract_awaiter *_next = nullptr;
 protected:
 };
@@ -140,18 +180,49 @@ protected:
 template<bool chain>
 class empty_awaiter: public abstract_awaiter<chain> {
 public:
-    ///marks awaiter pointer as "ready" which prevents to register awaiter and reporting that object is ready
-    static empty_awaiter<chain> ready;
+    ///marks awaiter pointer as "ready" (contains data) which prevents to register awaiter and reporting that object is ready
+    static empty_awaiter<chain> ready_data;
+    ///marks awaiter pointer as "ready" (contains exception) which prevents to register awaiter and reporting that object is ready
+    static empty_awaiter<chain> ready_exception;
     ///mark awaiter pointer as "processed" - same as ready, but value has been read
-    static empty_awaiter<chain> processed;
+    static empty_awaiter<chain> processed_data;
+    ///mark awaiter pointer as "processed" - same as ready, but value has been read
+    static empty_awaiter<chain> processed_exception;
+    ///mark awaiter pointer as "disabled" - general purpose value which occupies awaiter slot but with no real awaiter inside. Prevents to set awaiter 
+    static empty_awaiter<chain> disabled;
     virtual void resume() noexcept {}
+    
+    static bool is_ready(abstract_awaiter<chain> *p)  {
+        return p == &ready_data 
+             || p == &ready_exception
+             || p == &processed_data
+             || p == &processed_exception;
+    }
+    static bool is_processed(abstract_awaiter<chain> *p)  {
+        return  p == &processed_data
+             || p == &processed_exception;
+    }
+    static bool is_exception(abstract_awaiter<chain> *p)  {
+        return  p == &ready_exception
+             || p == &processed_exception;
+    }
+    static bool is_data(abstract_awaiter<chain> *p)  {
+        return  p == &ready_data
+             || p == &processed_data;
+    }
 };
 
 ///useful to set other than null
 template<bool chain>
-empty_awaiter<chain> empty_awaiter<chain>::ready;
+inline empty_awaiter<chain> empty_awaiter<chain>::disabled;
 template<bool chain>
-empty_awaiter<chain> empty_awaiter<chain>::processed;
+inline empty_awaiter<chain> empty_awaiter<chain>::ready_data;
+template<bool chain>
+inline empty_awaiter<chain> empty_awaiter<chain>::ready_exception;
+template<bool chain>
+inline empty_awaiter<chain> empty_awaiter<chain>::processed_data;
+template<bool chain>
+inline empty_awaiter<chain> empty_awaiter<chain>::processed_exception;
 
 ///
 template<typename promise_type, bool chain = false>
@@ -354,21 +425,26 @@ inline bool abstract_awaiter<chain>::subscibre_check_ready(std::atomic<abstract_
 }
 
 template<bool chain>
-inline void abstract_awaiter<chain>::mark_ready_resume(std::atomic<abstract_awaiter*> &chain_) {
-    abstract_awaiter *h = chain_.exchange(empty_awaiter<chain>::instance, std::memory_order_seq_cst);
+inline void abstract_awaiter<chain>::mark_ready_data_resume(std::atomic<abstract_awaiter *> &chain_) {
+    abstract_awaiter *h = chain_.exchange(&empty_awaiter<chain>::ready_data, std::memory_order_seq_cst);
+    if (h) h->resume();
+}
+template<bool chain>
+inline void abstract_awaiter<chain>::mark_ready_exception_resume(std::atomic<abstract_awaiter *> &chain_) {
+    abstract_awaiter *h = chain_.exchange(&empty_awaiter<chain>::ready_exception, std::memory_order_seq_cst);
     if (h) h->resume();
 }
 
 template<bool chain>
 inline bool abstract_awaiter<chain>::is_ready(const std::atomic<abstract_awaiter*> &chain_) {
-    auto st = chain_.load(std::memory_order_relaxed); 
-    return  st == &empty_awaiter<true>::ready || st == &empty_awaiter<true>::processed;
+    auto st = chain_.load(std::memory_order_relaxed);
+    return empty_awaiter<chain>::is_ready(st);
 }
 
 template<bool chain>
 inline bool abstract_awaiter<chain>::is_processed(const std::atomic<abstract_awaiter*> &chain_) {
     auto st = chain_.load(std::memory_order_relaxed); 
-    return  st == &empty_awaiter<true>::processed;
+    return empty_awaiter<chain>::is_processed(st);
 }
 
 inline bool abstract_awaiter<true>::subscibre_check_ready(std::atomic<abstract_awaiter<true> *>& chain_) {
@@ -376,7 +452,7 @@ inline bool abstract_awaiter<true>::subscibre_check_ready(std::atomic<abstract_a
     while (!chain_.compare_exchange_strong(_next, this, std::memory_order_relaxed)) {
         //failed because _chain != _next
         //see what is there (stored to _next)  - if it is ready or processed, we can't register
-        if (_next == &empty_awaiter<true>::ready || _next == &empty_awaiter<true>::processed) {
+        if (empty_awaiter<true>::is_ready(_next)) {
             //reset _next to be able detect it again
             _next = nullptr;
             //return false
@@ -387,9 +463,18 @@ inline bool abstract_awaiter<true>::subscibre_check_ready(std::atomic<abstract_a
     return true;
 }
 
-inline void abstract_awaiter<true>::mark_ready_resume(std::atomic<abstract_awaiter*>& chain)
+inline void abstract_awaiter<true>::mark_ready_data_resume(std::atomic<abstract_awaiter*>& chain)
 {
-    abstract_awaiter *a = chain.exchange(&empty_awaiter<true>::ready, std::memory_order_seq_cst);
+    abstract_awaiter *a = chain.exchange(&empty_awaiter<true>::ready_data, std::memory_order_seq_cst);
+    while (a) {
+        auto b = a;
+        a = a->_next;
+        b->resume();
+    }
+}
+inline void abstract_awaiter<true>::mark_ready_exception_resume(std::atomic<abstract_awaiter*>& chain)
+{
+    abstract_awaiter *a = chain.exchange(&empty_awaiter<true>::ready_exception, std::memory_order_seq_cst);
     while (a) {
         auto b = a;
         a = a->_next;
@@ -399,33 +484,68 @@ inline void abstract_awaiter<true>::mark_ready_resume(std::atomic<abstract_await
 
 inline bool abstract_awaiter<true>::is_ready(const std::atomic<abstract_awaiter*>& chain)
 {
-    auto st = chain.load(std::memory_order_relaxed); 
-    return  st == &empty_awaiter<true>::ready || st == &empty_awaiter<true>::processed;
+    auto st = chain.load(std::memory_order_relaxed);
+    return empty_awaiter<true>::is_ready(st);
+    
 }
 
 inline bool abstract_awaiter<true>::is_processed(const std::atomic<abstract_awaiter*>& chain) {
     auto st = chain.load(std::memory_order_relaxed); 
-    return  st == &empty_awaiter<true>::processed;    
+    return empty_awaiter<true>::is_processed(st);    
 }
 
 
 template<bool chain>
-inline bool abstract_awaiter<chain>::mark_processed(std::atomic<abstract_awaiter*> &chain_) {
-    abstract_awaiter *n = &empty_awaiter<chain>::ready;
-    chain_.compare_exchange_strong(n, &empty_awaiter<chain>::processed, std::memory_order_relaxed);
-    return n == &empty_awaiter<chain>::ready || n == &empty_awaiter<chain>::processed;
+inline bool abstract_awaiter<chain>::mark_processed_data(std::atomic<abstract_awaiter*> &chain_) {
+    abstract_awaiter *n = &empty_awaiter<chain>::ready_data;
+    chain_.compare_exchange_strong(n, &empty_awaiter<chain>::processed_data, std::memory_order_relaxed);
+    return n == &empty_awaiter<chain>::ready_data || n == &empty_awaiter<chain>::processed_data;
 
 }
 
+template<bool chain>
+inline bool abstract_awaiter<chain>::mark_processed_exception(std::atomic<abstract_awaiter*> &chain_) {
+    abstract_awaiter *n = &empty_awaiter<chain>::ready_exception;
+    chain_.compare_exchange_strong(n, &empty_awaiter<chain>::processed_exception, std::memory_order_relaxed);
+    return n == &empty_awaiter<chain>::ready_exception || n == &empty_awaiter<chain>::processed_exception;
 
-inline bool abstract_awaiter<true>::mark_processed(std::atomic<abstract_awaiter*>& chain)
+}
+
+inline bool abstract_awaiter<true>::mark_processed_data(std::atomic<abstract_awaiter*>& chain)
 {
-    abstract_awaiter *n = &empty_awaiter<true>::ready;
-    chain.compare_exchange_strong(n, &empty_awaiter<true>::processed, std::memory_order_relaxed);
-    return n == &empty_awaiter<true>::ready || n == &empty_awaiter<true>::processed;
+    abstract_awaiter *n = &empty_awaiter<true>::ready_data;
+    chain.compare_exchange_strong(n, &empty_awaiter<true>::processed_data, std::memory_order_relaxed);
+    return n == &empty_awaiter<true>::ready_data || n == &empty_awaiter<true>::processed_data;
+}
+inline bool abstract_awaiter<true>::mark_processed_exception(std::atomic<abstract_awaiter*>& chain)
+{
+    abstract_awaiter *n = &empty_awaiter<true>::ready_exception;
+    chain.compare_exchange_strong(n, &empty_awaiter<true>::processed_exception, std::memory_order_relaxed);
+    return n == &empty_awaiter<true>::ready_exception || n == &empty_awaiter<true>::processed_exception;
 }
 
 
+
+
+
+template<bool chain>
+template<typename Fn1, typename Fn2>
+inline void abstract_awaiter<chain>::cleanup_by_mark(
+        const std::atomic<abstract_awaiter*> &chain_, Fn1 &&data,
+        Fn2 &&exception) {
+    auto st = chain_.load(std::memory_order_relaxed);
+    if (empty_awaiter<chain>::is_data(st)) data();
+    else if (empty_awaiter<chain>::is_exception(st)) exception();
+}
+
+
+template<typename Fn1, typename Fn2>
+inline void abstract_awaiter<true>::cleanup_by_mark(const std::atomic<abstract_awaiter*>& chain_, Fn1&& data, Fn2&& exception)
+{
+    auto st = chain_.load(std::memory_order_relaxed);
+    if (empty_awaiter<true>::is_data(st)) data();
+    else if (empty_awaiter<true>::is_exception(st)) exception();
+}
 }
 #endif /* SRC_COCLASSES_AWAITER_H_ */
 

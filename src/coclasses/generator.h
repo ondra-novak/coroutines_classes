@@ -313,7 +313,6 @@ public:
         State chk = _state.exchange(State::done, std::memory_order_acquire);
         if (chk == State::running_promise_set) {
             _wait_promise.set_value(State::done);
-            _wait_promise.release();
         }
        
         auto h = _awaiter;
@@ -325,7 +324,6 @@ public:
         State chk = _state.exchange(State::data_ready, std::memory_order_acquire);
         if (chk == State::running_promise_set) {
             _wait_promise.set_value(State::data_ready);
-            _wait_promise.release();
         }
         auto h = _awaiter;
         _awaiter = nullptr;
@@ -368,7 +366,7 @@ public:
             if (_state.compare_exchange_strong(chk, State::running_promise_set, std::memory_order_release)) {
                 _state = f.wait();                
             } else {
-                _wait_promise.release();
+                _wait_promise.set_value(chk);   //just cleanup future
             }            
         }
         return _state == State::data_ready;

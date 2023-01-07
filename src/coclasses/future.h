@@ -8,7 +8,7 @@
 #include "awaiter.h"
 #include "common.h"
 #include "exceptions.h"
-#include "future_var.h"
+
 
 
 
@@ -106,8 +106,11 @@ class promise_base;
 template<typename T>
 class future_base {
 public:
+    using awaiter = abstract_awaiter<false>;
     
-    future_base() {}
+    future_base()
+        :_awaiter(&empty_awaiter<false>::disabled)
+    {}
     future_base(const future_base &) = delete;
     future_base &operator=(const future_base &) = delete;
     
@@ -120,9 +123,8 @@ public:
      * 
      */
     promise<T> get_promise() {
-        assert(_state == State::init);
-        State old = State::init;
-        if (_state.compare_exchange_strong(old, State::has_promise, std::memory_order_relaxed)) {
+        abstract_awaiter<false> *p  = &empty_awaiter<false>::disabled;
+        if (_awaiter.compare_exchange_strong(p, nullptr, std::memory_order_relaxed)) {
             return promise<T>(*static_cast<future<T> *>(this));
         } else {
             return promise<T>();
@@ -155,57 +157,23 @@ public:
     }
 
     
-    ///get value
-    /**
-     * 
-     * @return value of the future
-     * @exception value_not_ready_exception when value is not ready
-     */
-    decltype(auto) get() {
-        return _value.get();
-    }
-    ///get value
-    /**
-     * 
-     * @return value of the future
-     * @exception value_not_ready_exception when value is not ready
-     */
-    decltype(auto) get() const {
-        return _value.get();
-    }
 
-    ~future_base() {
-        assert(_state != State::has_promise);
-    }
 
     
 protected:
-
-    enum class State {
-        init,
-        has_promise,
-        has_value
-    };
     
-    std::atomic<State> _state = State::init;
-    std::atomic<abstract_awaiter<> *> _awaiter = nullptr;
-    future_var<T> _value;    
+    mutable std::atomic<awaiter *> _awaiter = nullptr;
     
     bool is_ready() {
-        return _state.load(std::memory_order_acquire) != State::has_promise;        
+        return awaiter::is_ready(_awaiter);        
     }
     
     bool subscribe_awaiter(abstract_awaiter<> *x) {
-        _awaiter.store(x, std::memory_order_relaxed);
-        if (is_ready()) {
-            auto awt = _awaiter.exchange(nullptr, std::memory_order_relaxed);
-            if (awt) return false;
-        } 
-        return true;
+        return x->subscibre_check_ready(_awaiter);
     }
     
     decltype(auto) get_result() {
-        return _value.get();
+        return static_cast<future<T> *>(this)->get(); 
     }
     
     
@@ -214,14 +182,6 @@ protected:
     friend class abstract_owned_awaiter<future<T> >;
     friend class co_awaiter<future<T> >;
     
-    void unhandled_exception() {
-        _value.unhandled_exception();
-    }      
-    void set_value_finish() {
-        this->_state.store(State::has_value, std::memory_order_release);
-        auto awt = this->_awaiter.exchange(nullptr, std::memory_order_relaxed);
-        if (awt) awt->resume();        
-    }
 };
 
 
@@ -229,27 +189,97 @@ protected:
 template<typename T>
 class future: public future_base<T> {
 public:
+    future() {}
 protected:
+    friend class future_base<T>;
     friend class promise_base<T>;
     friend class promise<T>;
+    using awaiter = typename future_base<T>::awaiter;
 
+    
+    union {
+        T _v;
+        std::exception_ptr _e;
+    };
+
+    void unhandled_exception() {
+        new(&_e) std::exception_ptr(std::current_exception());
+        awaiter::mark_ready_exception_resume(this->_awaiter);
+    }      
+    
     template<typename X>
-    auto set_value(X &&x) -> decltype(std::declval<future_var<T> >().emplace(x)) {
-        this->_value.emplace(std::forward<X>(x));
-        this->set_value_finish();
+    auto set_value(X &&x) -> std::enable_if_t<std::is_convertible_v<X, T> > {
+        new(&_v) T(std::forward<X>(x));
+        awaiter::mark_ready_data_resume(this->_awaiter);
     }
+public:
+    ///get value
+    /**
+     * 
+     * @return value of the future
+     * @exception value_not_ready_exception when value is not ready
+     */
+    T &get() {
+        if (awaiter::mark_processed_data(this->_awaiter)) return _v;
+        if (awaiter::mark_processed_exception(this->_awaiter)) std::rethrow_exception(_e);
+        throw value_not_ready_exception();
+        
+    }
+    ///get value
+    /**
+     * 
+     * @return value of the future
+     * @exception value_not_ready_exception when value is not ready
+     */
+    const T & get() const {
+        if (awaiter::mark_processed_data(this->_awaiter)) return _v;
+        if (awaiter::mark_processed_exception(this->_awaiter)) std::rethrow_exception(_e);
+        throw value_not_ready_exception();
+    }
+
+    
+    ~future() {
+        awaiter::cleanup_by_mark(this->_awaiter,[this](){
+                _v.~T();
+            },[this](){
+                _e.~exception_ptr();
+            });
+    }
+
 };
 
 template<>
 class future<void>: public future_base<void> {
 public:
+    future() {}
 protected:
+    friend class future_base<void>;
     friend class promise_base<void>;
     friend class promise<void>;
 
+    
+    std::exception_ptr _e;
+    
     void set_value() {
-        this->_value.emplace();
-        this->set_value_finish();
+        awaiter::mark_ready_data_resume(_awaiter);
+    }
+
+    void unhandled_exception() {
+        _e = std::exception_ptr(std::current_exception());
+        awaiter::mark_ready_exception_resume(_awaiter);
+    }      
+public:
+    ///get value
+    /**
+     * 
+     * @return value of the future
+     * @exception value_not_ready_exception when value is not ready
+     */
+    void get() const {
+        if (awaiter::mark_processed_data(_awaiter)) return ;
+        if (awaiter::mark_processed_exception(_awaiter)) std::rethrow_exception(_e);
+        throw value_not_ready_exception();
+        
     }
 };
 
@@ -412,6 +442,9 @@ public:
     virtual void resume() noexcept override {
         _fn(*this);
         delete this;
+    }
+    promise<T> get_promise() {
+        return promise<T>(*this);
     }
 
     virtual ~future_with_cb() = default;

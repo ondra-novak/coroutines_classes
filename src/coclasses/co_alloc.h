@@ -2,8 +2,8 @@
  * @file co_new.h 
  * handles custom coroutine allocation controlled by the caller
  */
-#ifndef SRC_COCLASSES_CO_NEW_H_
-#define SRC_COCLASSES_CO_NEW_H_
+#ifndef SRC_COCLASSES_CO_ALLOC_H_
+#define SRC_COCLASSES_CO_ALLOC_H_
 #include "poolalloc.h"
 namespace cocls {
 
@@ -172,4 +172,4 @@ auto co_new(coro_storage &stor, Obj &&obj, Fn &&fn) {
 
 
 
-#endif /* SRC_COCLASSES_CO_NEW_H_ */
+#endif /* SRC_COCLASSES_CO_ALLOC_H_ */
