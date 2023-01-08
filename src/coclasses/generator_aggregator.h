@@ -59,7 +59,6 @@ generator<T> generator_aggregator(std::vector<generator<T> > list__) {
     std::vector<generator<T> > list(std::move(list__));
     Queue queue(list.size());
     controller cnt(list.size(), queue);
-        
     
     for (auto &x: list) {
         x >> [&x,&queue]{
