@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.2) 
+cmake_minimum_required(VERSION 3.2)
 
 add_executable (task  task.cpp)
 add_executable (future  future.cpp)
@@ -38,9 +38,11 @@ add_executable (dispatcher_failed_resume dispatcher_failed_resume.cpp)
 add_executable (multi_source_future multi_source_future.cpp)
 add_executable (nocoroutine nocoroutine.cpp)
 add_executable (callback_generator callback_generator.cpp)
-add_executable (blocking_limited_queue blocking_limited_queue.cpp)  
+add_executable (blocking_limited_queue blocking_limited_queue.cpp)
 add_executable (dispatcher_timers dispatcher_timers.cpp)
 add_executable (async async.cpp)
+add_executable (detached detached.cpp)
+add_executable (detached_thread_pool detached_thread_pool.cpp)
 
 
 
