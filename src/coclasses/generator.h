@@ -458,6 +458,35 @@ protected:
     
 };
 
+
+///Not actual generator, just an interface
+/**
+ * @tparam T type of generator
+ * 
+ * stoppable generator can be stopped anytime from outside. Result of stopping could
+ * be marking generator finished.
+ * 
+ * This is better solution than force destroying the generator, because you can't stop
+ * it when it is pending.
+ * 
+ * Using this interface is simple. The backend should create two functions. The first
+ * function is actual generator while other function is function which starts the generator
+ * passing a stopping singaling object into the generator. Then it pack generator
+ * and stop function into instance of this object
+ * 
+ */
+template<typename T>
+class stoppable_generator: public generator<T> {
+public:
+    using stop_fn = std::function<void()>;
+    stop_fn stop;
+    stoppable_generator(generator<T> &&gen, stop_fn &&fn)
+        :generator<T>(std::move(gen))
+        ,stop(std::move(fn)) {}    
+    stoppable_generator(stoppable_generator &&) = default;
+    stoppable_generator(const stoppable_generator &) = delete;
+};
+
 }
 
 #endif /* SRC_COCLASSES_GENERATOR2_H_ */
