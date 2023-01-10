@@ -44,7 +44,7 @@ namespace cocls {
  *  This class implements awaitable future variable. You can co_await on the variable,
  *  the coroutine is resumed, once the variable is set. 
  *  
- *  To se the variable, you need to retrieve a promise object as first. There can
+ *  To set the variable, you need to retrieve a promise object as first. There can
  *  be only one promise object. It is movable only. Once the promise object is created,
  *  the future must be resolved before its destruction. The reason for such ordering is
  *  that neither future nor promise performs any kind of allocation. While future
@@ -59,6 +59,18 @@ namespace cocls {
  *  If you need to copyable, MT safe promises which allows to set value independently from
  *  different threads, to achieve for example a race, where first attempt resolves the
  *  future and other addepts are just ignored, you need to use shared_promise
+ *  
+ *  Future can be awaited by multiple awaiters. However you need to ensure MT
+ *  safety by proper synchronization. For example when there are multiple awaiters,
+ *  ensure, that no awaiter wants to move the result outside of future. Also ensure,
+ *  that future can't be destroyed after it is awaited. For multiple awaiting
+ *  is recommended to use make_shared
+ *  
+ *  
+ *  @note Once promise is obtained, the future must be resolved. Destroying the
+ *  future in such case is UB - will probably ends by crashing code during
+ *  setting the value of such promise. 
+ *  
  * 
  */
 template<typename T>
@@ -106,10 +118,10 @@ class promise_base;
 template<typename T>
 class future_base {
 public:
-    using awaiter = abstract_awaiter<false>;
+    using awaiter = abstract_awaiter<true>;
     
     future_base()
-        :_awaiter(&empty_awaiter<false>::disabled)
+        :_awaiter(&empty_awaiter<true>::disabled)
     {}
     future_base(const future_base &) = delete;
     future_base &operator=(const future_base &) = delete;
@@ -123,7 +135,7 @@ public:
      * 
      */
     promise<T> get_promise() {
-        abstract_awaiter<false> *p  = &empty_awaiter<false>::disabled;
+        abstract_awaiter<true> *p  = &empty_awaiter<true>::disabled;
         if (_awaiter.compare_exchange_strong(p, nullptr, std::memory_order_relaxed)) {
             return promise<T>(*static_cast<future<T> *>(this));
         } else {
@@ -138,13 +150,13 @@ public:
      * 
      * @note This function performs extra stack allocation to hold the shared state
      * 
-     * @return copyable opromise
+     * @return copyable promise
      */
     shared_promise<T> get_shared_promise();
 
     
     ///Starts waiting for a result
-    co_awaiter<future<T> >  operator co_await() {
+    co_awaiter<future<T>,true>  operator co_await() {
         return *static_cast<future<T> *>(this);
     }
     
@@ -153,14 +165,16 @@ public:
      * @return the value of the future
      */
     decltype(auto) wait() {
-        return co_awaiter<future<T> >(*static_cast<future<T> *>(this)).wait();
+        return co_awaiter<future<T>,true >(*static_cast<future<T> *>(this)).wait();
     }
 
-    
-
+        
 
     
 protected:
+
+    friend class co_awaiter<future<T>, true>;
+
     
     mutable std::atomic<awaiter *> _awaiter = nullptr;
     
@@ -168,7 +182,7 @@ protected:
         return awaiter::is_ready(_awaiter);        
     }
     
-    bool subscribe_awaiter(abstract_awaiter<> *x) {
+    bool subscribe_awaiter(abstract_awaiter<true> *x) {
         return x->subscibre_check_ready(_awaiter);
     }
     
@@ -179,8 +193,6 @@ protected:
     
     friend class promise_base<T>;
     friend class promise<T>;
-    friend class abstract_owned_awaiter<future<T> >;
-    friend class co_awaiter<future<T> >;
     
 };
 
@@ -239,6 +251,9 @@ public:
 
     
     ~future() {
+        //future must be not initialized or resolved to be destroyed
+        assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled 
+                || awaiter::is_ready(this->_awaiter));
         awaiter::cleanup_by_mark(this->_awaiter,[this](){
                 _v.~T();
             },[this](){
@@ -267,7 +282,9 @@ protected:
     void unhandled_exception() {
         _e = std::exception_ptr(std::current_exception());
         awaiter::mark_ready_exception_resume(_awaiter);
-    }      
+    }
+    
+    
 public:
     ///get value
     /**
@@ -281,6 +298,13 @@ public:
         throw value_not_ready_exception();
         
     }
+    
+    ~future() {
+        //future must be not initialized or resolved to be destroyed
+        assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled 
+                || awaiter::is_ready(_awaiter));
+    }
+
 };
 
 
@@ -305,7 +329,7 @@ public:
     }
     
     ///Releases promise without setting a value;
-    void release() {
+    void release() const {
         auto m = claim();
         if (m) {
             try {
@@ -337,14 +361,14 @@ public:
     }
 
     ///claim this future as pointer to promise - used often internally
-    future<T> *claim() {
+    future<T> *claim() const {
         return _owner.exchange(nullptr, std::memory_order_relaxed);
     }
 
     
 protected:
     
-    std::atomic<future<T> *>_owner;
+    mutable std::atomic<future<T> *>_owner;
 };
 
 template<typename T>
@@ -356,7 +380,7 @@ public:
     /**
      * @param x value to be set
      */
-    void set_value(T &&x)  {
+    void set_value(T &&x) const  {
         auto m = this->claim();
         if (m) m->set_value(std::move(x));
     }
@@ -365,18 +389,18 @@ public:
     /**
      * @param x value to be set
      */
-    void set_value(const T &x) {
+    void set_value(const T &x) const {
         auto m = this->claim();
         if (m) m->set_value(x);
     }
     
     
     ///promise can be used as callback function
-    void operator()(T &&x)  {
+    void operator()(T &&x)  const {
         set_value(std::move(x));
     }
     ///promise can be used as callback function
-    void operator()(const T &x)  {
+    void operator()(const T &x)  const {
         set_value(x);
     }
 };
@@ -390,12 +414,12 @@ public:
     ///makes future ready
     /**
      */
-    void set_value() {
+    void set_value() const {
         auto m = this->claim();
         if (m) m->set_value();
     }
     ///you can call promise as callback
-    void operator()() {
+    void operator()() const {
         set_value();
     }
 
@@ -477,7 +501,7 @@ public:
  * @see make_promise()
  */
 template<typename T, typename Fn>
-class future_with_cb: public future<T>, public abstract_awaiter<false>, public coro_promise_base {
+class future_with_cb: public future<T>, public abstract_awaiter<true>, public coro_promise_base {
 public:
     
     ///Construct a future and pass a callback function
@@ -685,6 +709,7 @@ template<typename T>
 inline shared_promise<T> cocls::future_base<T>::get_shared_promise() {
     return shared_promise<T>(get_promise());
 }
+
 
 }
 #endif /* SRC_COCLASSES_FUTURE_H_ */

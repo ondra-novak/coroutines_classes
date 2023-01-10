@@ -40,7 +40,6 @@ add_executable (nocoroutine nocoroutine.cpp)
 add_executable (callback_generator callback_generator.cpp)
 add_executable (blocking_limited_queue blocking_limited_queue.cpp)
 add_executable (dispatcher_timers dispatcher_timers.cpp)
-add_executable (async async.cpp)
 add_executable (detached detached.cpp)
 add_executable (detached_thread_pool detached_thread_pool.cpp)
 
