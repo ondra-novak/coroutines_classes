@@ -297,30 +297,28 @@ void test_reusable() {
 
 cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
     cocls::subscriber<int> src(pub);    
-    for(;;) {
-        std::optional<int> x = co_await src;
-        if (!x.has_value()) break;
-        std::cout<<"(subscriber_1) value ." << *x << std::endl;
+    while (co_await src.next()) {
+        int x = src.value();
+        std::cout<<"(subscriber_1) value ." << x << std::endl;
     }
 }
 
 cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
     cocls::subscriber<int> src(pub);
-    for(;;) {
-        std::optional<int> x = co_await src;
-        if (!x.has_value()) break;
-        std::cout<<"(subscriber_2) value ..." << *x << std::endl;
+    while (co_await src.next()) {
+        int x = src.value();                
+        std::cout<<"(subscriber_2) value ..." << x << std::endl;
         co_await sch.sleep_for(std::chrono::milliseconds(100));
     } 
 }
 
 cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
-    cocls::subscriber<int> src(pub, cocls::subscribtion_type::skip_to_recent);
-    for(;;) {
-        std::optional<int> x = co_await src;
-        if (!x.has_value()) break;
-        std::cout<<"(subscriber_3) value ..." << *x << std::endl;
+    cocls::subscriber<int> src(pub);
+    while (co_await src.next()) {
+        int x = src.value();
+        std::cout<<"(subscriber_3) value ..." << x << std::endl;
         co_await sch.sleep_for(std::chrono::milliseconds(100));
+        while (src.next_ready()); //skip all old values
     } 
 }
 

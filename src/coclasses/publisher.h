@@ -7,6 +7,7 @@
 #define SRC_COCLASSES_PUBLISHER_H_
 #include "future.h"
 
+#include "iterator.h"
 #include <deque>
 #include <map>
 #include <mutex>
@@ -390,12 +391,12 @@ public:
     using read_mode = typename publisher<T>::read_mode;
     
     using queue = typename publisher<T>::queue;
+    using iterator = generator_iterator<subscriber<T> >;
     ///construct subscriber
     /**
      * Subscribes and starts reading recent data
      * 
      * @param pub publisher
-     * @param t type of subscription
      * 
      */
     subscriber(publisher<T> &pub, subscribtion_type t = subscribtion_type::all_values)
@@ -404,7 +405,6 @@ public:
     /**
      * @param pub publisher 
      * @param pos starting position
-     * @param t type of subscription
      */
     subscriber(publisher<T> &pub, std::size_t pos, subscribtion_type t = subscribtion_type::all_values)
     :_q(pub.get_queue()),_h(_q->subscribe(this, pos)),_t(t) {            
@@ -428,24 +428,47 @@ public:
     ~subscriber() {
         _q->leave(_h);
     }
-    
+
+    ///Awaiter for next item
+    /**It allows to use next() function synchronously and asynchronously
+     *
+     * To access synchronously, convert result to boolean. To access
+     * asynchronously, co_await to obtain boolean
+     */
+    class next_awt : public co_awaiter<subscriber> {
+    public:
+        using co_awaiter<subscriber>::co_awaiter;
+        
+        operator bool() {
+            if (!this->await_ready()) {
+                return this->wait();
+            } else {
+                return this->await_resume();
+            }
+        }
+        
+        bool operator !() {
+            return !operator bool();
+        }
+    };
     
 
     ///awaits for next data
     /**
-     * @return a published value
-     * @exception no_longer_avaiable_exception subscriber wants to access a value, which has been outside of available queue window.
-     * @exception no_more_values_exception publisher has been closed
+     * result can be converted to bool directly or through co_await. 
+     *
+     * @retval true next item is available. Use value() to obtain the actual value
+     * @retval false stream ended, no more values are available 
      */
-    co_awaiter<subscriber> operator co_await() {
-        return co_awaiter<subscriber>(*this);
+    next_awt next() {
+        return next_awt(*this);
     }
 
     ///Retrieves current position
-    /** Position start on zero a increases for every published value. 
+    /** Position start on zero a increases for every published value.
      * 
-     * @note because first position is at zero index, reported position before the
-     * first await is -1 
+     * The first item has index 1, because index 0 is reserved to
+     * "no items" 
      * 
      * @return current position
      */
@@ -453,27 +476,18 @@ public:
         return _q->position(_h);
     }
     
-    ///Synchronous wait and get next published item
-    /**
-     * @return next published item. Returns empty container when publisher closed the stream,
-     * or next item is no longer available
-     */
-    std::optional<T> wait() {
-        return std::optional<T>(std::move((operator co_await()).wait()));
-    }
-    
     ///Get next published item 
     /**
-     * Function returns next unprocessed published item. If there is no such item, it returns
-     * empty container. Function will not wait to publish a next item, it just reads already unprocessed
-     * published items.
+     * Function retrieves next item, if such item is available. 
      * 
-     * @return next item or empty if no such item is available
+     * @retval true next item is available, use value() to retrieve item
+     * @retval false no next item is available. It doesn't indicate end
+     * of the stream. You need to call next() to retrieve such a status
      */
-    std::optional<T> next() {
-        auto awt = operator co_await();
-        if (!awt.await_ready()) return {};
-        return std::optional<T>(std::move(awt.await_resume()));
+    bool next_ready() {
+        auto awt = next();
+        if (!awt.await_ready()) return false;
+        return awt.await_resume();
     }
     
     ///Kick this subscriber from the publisher
@@ -486,6 +500,25 @@ public:
         _q->kick(this);
     }
     
+    ///retrieve current value
+    T &value() {
+        return *_val;
+    }
+
+    ///retrieve current value
+    const T &value() const {
+        return *_val;
+    }
+
+    iterator begin() {
+        return iterator(*this, next());
+    }
+    iterator end() {
+        return iterator(*this, false);
+    }
+    
+    
+    
 protected:
     using Handle = typename publisher<T>::queue::Handle;
            
@@ -493,6 +526,7 @@ protected:
     std::shared_ptr<queue> _q;
     Handle _h;
     subscribtion_type _t;
+    std::optional<T> _val;
     
     friend class publisher<T>;
     friend class co_awaiter<subscriber<T> >;
@@ -503,8 +537,9 @@ protected:
     bool subscribe_awaiter(abstract_awaiter<> *awt) {
         return _q->advance_suspend(_h, awt);
     }
-    std::optional<T> get_result() {
-        return _q->get_value(_h,_t);
+    bool get_result() {
+        _val = _q->get_value(_h,_t);        
+        return _val.has_value();
     }
     
 

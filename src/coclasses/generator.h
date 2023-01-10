@@ -6,6 +6,9 @@
 #include "co_alloc.h"
 
 #include "coro_storage.h"
+
+#include "iterator.h"
+
 #include <memory>
 #include <optional>
 
@@ -69,47 +72,7 @@ public:
     using promise_type = generator_promise<T>;
   
 
-        ///Iterator
-    struct iterator {
-    public:
-        ///construct uninitialized iterator
-        iterator():_g(0),_end(true) {}
-        ///construct and initialize iterator
-        /**
-         * @param g pointer to generator object
-         * @param end set this is end iterator 
-         */
-        iterator(generator *g, bool end):_g(g),_end(end) {}
-        ///Copy
-        iterator(const iterator &other) = default;
-        ///Assign
-        iterator &operator=(const iterator &other) = default;
-        
-        ///compare iterators
-        bool operator==(const iterator &other) const {
-            return _g == other._g && _end == other._end;
-        } 
-        ///compare iterators
-        bool operator!=(const iterator &other) const {
-            return !operator==(other);
-        } 
-        
-        ///access item
-        T &operator *() const {return *_g->_promise->get();}
-        ///access item
-        T *operator ->() const {return _g->_promise->get();}
-        ///move to next item
-        iterator &operator++() {
-            _end = !_g->_promise->next();
-            return *this;
-        }
-        
-        
-    protected:
-        generator *_g;
-        bool _end;
-    };
-
+    using iterator = generator_iterator<generator<T> >;
     
     ///Object returned by next() function
     /** it can be awaited by co_await, or accessed directly 
@@ -205,11 +168,11 @@ public:
      *
      */
     iterator begin() {
-        return iterator(this, !_promise->next());
+        return iterator(*this, next());
     }
     ///Returns iterator which represents end of iteration
     iterator end() {
-        return iterator(this, true);
+        return iterator(*this, false);
     }
     ///Runs generator and waits to generation of next item
     /**
