@@ -5,33 +5,40 @@
 #include <coclasses/scheduler.h>
 
 cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
-    cocls::subscriber<int> src(pub);    
-    for(;;) {
-        std::optional<int> x = co_await src;
-        if (!x.has_value()) break;
-        std::cout<<"\t" << *x << std::endl;
+    cocls::subscriber<int> src(pub);
+    while (co_await src.next()) {
+        int x = src.value();
+        std::cout<<"\t" << x << std::endl;
     }
+    
 }
 
 cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
     cocls::subscriber<int> src(pub);
-    for(;;) {
-        std::optional<int> x = co_await src;
-        if (!x.has_value()) break;
-        std::cout<<"\t\t" << *x << std::endl;
+    while (co_await src.next()) {
+        int x = src.value();
+        std::cout<<"\t\t" << x << std::endl;
         co_await sch.sleep_for(std::chrono::milliseconds(100));
     } 
 }
 
 cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
-    cocls::subscriber<int> src(pub, cocls::subscribtion_type::skip_to_recent);
-    for(;;) {
-        std::optional<int> x = co_await src;
-        if (!x.has_value()) break;
-        std::cout<<"\t\t\t" << *x << std::endl;
+    cocls::subscriber<int> src(pub);
+    while (co_await src.next()) {
+        int x = src.value();
+        std::cout<<"\t\t\t" << x << std::endl;
         co_await sch.sleep_for(std::chrono::milliseconds(200));
+        while (src.next_ready()); //skip all old values
     } 
 }
+
+void subscriber_sync(cocls::publisher<int> &pub) {
+    cocls::subscriber<int> src(pub,0);
+    for(auto &x: src) {
+        std::cout<<"\t\t\t\t" << x << std::endl;
+    }
+}
+
 
 void publisher_test() {
     cocls::publisher<int> pub;
@@ -41,6 +48,9 @@ void publisher_test() {
     auto s1 = subscriber_fast(pub);
     auto s2 = subscriber_slow(pub, sch);;
     auto s3 = subscriber_slow2(pub, sch);;
+    auto s4 = std::thread([&]{
+        subscriber_sync(pub);
+    });
     for (int i = 0; i < 100; i++) {
         pub.publish(i);
         std::this_thread::sleep_for(std::chrono::milliseconds(200-i*2));
@@ -49,6 +59,7 @@ void publisher_test() {
     s1.join();
     s2.join();
     s3.join();
+    s4.join();
     
 }
 
