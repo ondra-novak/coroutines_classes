@@ -202,6 +202,13 @@ template<typename T>
 class future: public future_base<T> {
 public:
     future() {}
+
+    ///construct future and use it in callback function
+    template<typename Fn, typename = decltype(std::declval<Fn>()(std::declval<future<T> &>()))>
+    future(Fn &&fn) {
+        fn(*this);
+    }
+    
 protected:
     friend class future_base<T>;
     friend class promise_base<T>;
@@ -267,6 +274,13 @@ template<>
 class future<void>: public future_base<void> {
 public:
     future() {}
+
+    ///construct future and use it in callback function
+    template<typename Fn, typename = decltype(std::declval<Fn>()(std::declval<future<void> &>()))>
+    future(Fn &&fn) {
+        fn(*this);
+    }
+
 protected:
     friend class future_base<void>;
     friend class promise_base<void>;
