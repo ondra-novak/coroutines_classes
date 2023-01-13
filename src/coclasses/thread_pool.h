@@ -154,7 +154,7 @@ public:
     /**
      * @param aw awaiter to start in thread pool
      */
-    void start(abstract_awaiter<> *aw) {
+    void enqueue(abstract_awaiter<> *aw) {
         bool ok = subscribe_awaiter(aw);
         if (!ok) {
             aw->resume();
@@ -168,7 +168,7 @@ public:
      * @retval false can't be started, already running or already scheduled
      */
     template<typename T, typename _P>
-    bool start(lazy<T,_P> t) {
+    bool enqueue(lazy<T,_P> t) {
         
         class awaiter: public abstract_owned_awaiter<thread_pool> {
         public:
@@ -343,13 +343,13 @@ struct thread_pool {
         }
         void set_handle(std::coroutine_handle<> h) {
             _h = h;
-            if (_cur_pool != nullptr) _cur_pool->start(this);
+            if (_cur_pool != nullptr) _cur_pool->enqueue(this);
         }
         void set_pool(shared_thread_pool pool) {
             bool start = _cur_pool == nullptr;
             _cur_pool = pool;
             if (start) [[likely]] {
-                _cur_pool->start(this);
+                _cur_pool->enqueue(this);
             }
         }
     };
