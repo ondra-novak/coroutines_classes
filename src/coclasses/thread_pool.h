@@ -279,6 +279,24 @@ public:
             thread_pool *c = _current;
             return !c || c->is_stopped();
         }
+        
+        ///run enqueued task
+        /**
+         * @retval true a task has been run
+         * @retval false no task was in queue
+         */
+        static bool give_way() {
+            thread_pool *c = _current;
+            if (c) return c->give_way();
+            return false;
+        }
+        ///returns true if there is still enqueued task
+        static bool any_enqueued() {
+            thread_pool *c = _current;
+            if (c) return c->any_enqueued();
+            return false;
+            
+        }
 
     };
     
@@ -286,7 +304,26 @@ public:
         std::lock_guard _(_mx);
         return _exit;
     }
+
     
+    bool give_way() {
+        std::unique_lock lk(_mx);
+        if (!_exit && !_queue.empty()) {
+            auto h = _queue.front();
+            _queue.pop();
+            lk.unlock();
+            resumption_policy::queued::resume(h->resume_handle());
+            return true;
+        }       
+        return false;
+    }
+    
+    ///returns true if there is still enqueued task
+    bool any_enqueued() {
+        std::unique_lock lk(_mx);
+        return _exit || !_queue.empty();
+    }
+
 protected:
     mutable std::mutex _mx;
     std::condition_variable _cond;
@@ -309,6 +346,7 @@ protected:
         _cond.notify_one();
         return true;
     }
+    
 
 };
 
