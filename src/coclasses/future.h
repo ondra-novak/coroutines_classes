@@ -199,7 +199,7 @@ protected:
 
 
 template<typename T>
-class future: public future_base<T> {
+class [[nodiscard]] future: public future_base<T> {
 public:
     future() {}
 
