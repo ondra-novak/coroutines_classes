@@ -244,7 +244,7 @@ class co_awaiter_policy;
 
 ///Generic awaiter used in most object to handle co_await
 template<typename promise_type, bool chain = false>
-class co_awaiter: public abstract_owned_awaiter<promise_type, chain> {
+class [[nodiscard]] co_awaiter: public abstract_owned_awaiter<promise_type, chain> {
 public:
     using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
 
@@ -326,7 +326,7 @@ protected:
 
 ///Awaiter with policy
 template<typename parent, typename policy>
-class co_awaiter_policy: public std::remove_reference<parent>::type {
+class [[nodiscard]] co_awaiter_policy: public std::remove_reference<parent>::type {
 public:    
     using super = typename std::remove_reference<parent>::type;
     co_awaiter_policy(policy &&p, parent &&owner)
