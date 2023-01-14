@@ -162,7 +162,7 @@ public:
      */
     void sync() noexcept {
         co_awaiter<promise_type_base, true> aw(*_promise);
-        return aw.sync();
+        aw.sync();
     }
     ///Join the task asynchronously with specified resumption policy
     /**

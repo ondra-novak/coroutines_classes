@@ -4,6 +4,7 @@
 
 
 
+
 cocls::task<> coro(cocls::Counter &x, long val) {
         std::cout << "Awaiting counter - value: " << val << std::endl;
         co_await x;
@@ -13,8 +14,9 @@ cocls::task<> coro(cocls::Counter &x, long val) {
 
 
 
-int main(int, char **) {
+int main(int, char **) {    
     cocls::Counter x(10);
+    
     long lv = x.get_value();
     for (int i = 0; i < 20; i++) {        
         coro(x, lv);
