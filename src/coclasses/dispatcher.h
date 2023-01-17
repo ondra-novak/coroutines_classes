@@ -369,7 +369,23 @@ namespace resumption_policy {
                   _st = d;
               }
           }
+          std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
+              if (_st.index() == 1) [[likely]] {
+                  auto l = std::get<dispatcher_ptr>(_st).lock();
+                  if (l)  [[likely]] {
+                      auto k = dispatcher::get_dispatcher().lock();
+                      if (k == l) return h;
+                      l->schedule(h);
+                      return std::noop_coroutine();
+                  }
+                  throw home_thread_already_ended_exception();
+              } 
+              _st = h;
+              return std::noop_coroutine();
+          }
+              
           
+                  
 
     };
     

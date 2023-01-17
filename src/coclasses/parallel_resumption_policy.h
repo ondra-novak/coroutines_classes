@@ -20,6 +20,15 @@ namespace resumption_policy {
             });
             thr.detach();
         }
+        ///symmetric transfer on parallel is performed directly with no thread creation
+        /**
+         * This assumes, that coroutine at current thread is finishing, so thread
+         * is no longer occupuid and can be reused by awaiting coroutine. This
+         * saves resource
+         */
+        std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
+            return h;
+        }
         
     };
 }

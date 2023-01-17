@@ -323,6 +323,10 @@ public:
         std::unique_lock lk(_mx);
         return _exit || !_queue.empty();
     }
+    
+    friend bool is_current(const thread_pool &pool) {
+        return _current == &pool;
+    }
 
 protected:
     mutable std::mutex _mx;
@@ -383,6 +387,14 @@ struct thread_pool {
             _h = h;
             if (_cur_pool != nullptr) _cur_pool->enqueue(this);
         }
+        std::coroutine_handle<> set_handle_resume_handle(std::coroutine_handle<> h) {
+            _h = h;
+            if (_cur_pool != nullptr) {
+                if (is_current(*_cur_pool)) return _h;
+                _cur_pool->enqueue(this);                
+            }
+            return std::noop_coroutine();
+        }
         void set_pool(shared_thread_pool pool) {
             bool start = _cur_pool == nullptr;
             _cur_pool = pool;
@@ -398,6 +410,10 @@ struct thread_pool {
     void resume(std::coroutine_handle<> h) {
         _resumer.set_handle(h);
     }
+    std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
+        return _resumer.set_handle_resume_handle(h);
+    }
+
     ///Initializes policy
     /**
      * @param pool shared thread pool

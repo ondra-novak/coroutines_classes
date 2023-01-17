@@ -6,6 +6,7 @@
  */
 
 #include <iostream>
+#include <cassert>
 #include <coclasses/task.h>
 
 cocls::task<> co_main() {

@@ -13,6 +13,7 @@
 #include "task.h"
 
 #include <vector>
+#include <cassert>
 
 namespace cocls {
 

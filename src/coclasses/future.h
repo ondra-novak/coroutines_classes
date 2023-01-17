@@ -173,13 +173,20 @@ public:
     
 protected:
 
+    enum class Status {
+        not_ready,
+        data,
+        exception
+    };
+    
     friend class co_awaiter<future<T>, true>;
 
     
     mutable std::atomic<awaiter *> _awaiter = nullptr;
+    Status _status=Status::not_ready;
     
     bool is_ready() {
-        return awaiter::is_ready(_awaiter);        
+        return _status != Status::not_ready;        
     }
     
     bool subscribe_awaiter(abstract_awaiter<true> *x) {
@@ -187,6 +194,7 @@ protected:
     }
     
     decltype(auto) get_result() {
+        assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled);
         return static_cast<future<T> *>(this)->get(); 
     }
     
@@ -223,13 +231,15 @@ protected:
 
     void unhandled_exception() {
         new(&_e) std::exception_ptr(std::current_exception());
-        awaiter::mark_ready_exception_resume(this->_awaiter);
+        this->_status = future_base<T>::Status::exception;
+        awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }      
     
     template<typename X>
     auto set_value(X &&x) -> std::enable_if_t<std::is_convertible_v<X, T> > {
         new(&_v) T(std::forward<X>(x));
-        awaiter::mark_ready_data_resume(this->_awaiter);
+        this->_status = future_base<T>::Status::data;
+        awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }
 public:
     ///get value
@@ -239,10 +249,13 @@ public:
      * @exception value_not_ready_exception when value is not ready
      */
     T &get() {
-        if (awaiter::mark_processed_data(this->_awaiter)) return _v;
-        if (awaiter::mark_processed_exception(this->_awaiter)) std::rethrow_exception(_e);
-        throw value_not_ready_exception();
-        
+        //just acquire
+        this->_awaiter.load(std::memory_order_acquire);
+        switch (this->_status) {
+            case future_base<T>::Status::data: return _v;
+            case future_base<T>::Status::exception: std::rethrow_exception(_e);
+            default: throw value_not_ready_exception();
+        }
     }
     ///get value
     /**
@@ -251,21 +264,24 @@ public:
      * @exception value_not_ready_exception when value is not ready
      */
     const T & get() const {
-        if (awaiter::mark_processed_data(this->_awaiter)) return _v;
-        if (awaiter::mark_processed_exception(this->_awaiter)) std::rethrow_exception(_e);
-        throw value_not_ready_exception();
+        //just acquire
+        this->_awaiter.load(std::memory_order_acquire);
+        switch (this->_status) {
+            case future_base<T>::Status::data: return _v;
+            case future_base<T>::Status::exception: std::rethrow_exception(_e);
+            default: throw value_not_ready_exception();
+        }
     }
 
     
-    ~future() {
+    ~future() {        
         //future must be not initialized or resolved to be destroyed
-        assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled 
-                || awaiter::is_ready(this->_awaiter));
-        awaiter::cleanup_by_mark(this->_awaiter,[this](){
-                _v.~T();
-            },[this](){
-                _e.~exception_ptr();
-            });
+        assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled);
+        switch (this->_status) {
+            case future_base<T>::Status::data: _v.~T();break;
+            case future_base<T>::Status::exception: _e.~exception_ptr();break;
+            default: break;
+        }
     }
 
 };
@@ -290,12 +306,14 @@ protected:
     std::exception_ptr _e;
     
     void set_value() {
-        awaiter::mark_ready_data_resume(_awaiter);
+        this->_status = future_base<void>::Status::data;
+        awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }
 
     void unhandled_exception() {
         _e = std::exception_ptr(std::current_exception());
-        awaiter::mark_ready_exception_resume(_awaiter);
+        this->_status = future_base<void>::Status::exception;
+        awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }
     
     
@@ -307,16 +325,19 @@ public:
      * @exception value_not_ready_exception when value is not ready
      */
     void get() const {
-        if (awaiter::mark_processed_data(_awaiter)) return ;
-        if (awaiter::mark_processed_exception(_awaiter)) std::rethrow_exception(_e);
-        throw value_not_ready_exception();
+        //just acquire
+        this->_awaiter.load(std::memory_order_acquire);
+        switch (this->_status) {
+            case future_base<void>::Status::data: return;
+            case future_base<void>::Status::exception: std::rethrow_exception(_e);
+            default: throw value_not_ready_exception();
+        }
         
     }
     
     ~future() {
         //future must be not initialized or resolved to be destroyed
-        assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled 
-                || awaiter::is_ready(_awaiter));
+        assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled);
     }
 
 };

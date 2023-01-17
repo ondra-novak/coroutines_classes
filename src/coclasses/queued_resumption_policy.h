@@ -82,6 +82,9 @@ struct queued {
     static void resume(std::coroutine_handle<> h) {
         _details::queued_resumption_control::instance.resume(h);
     }
+    static constexpr auto resume_handle(std::coroutine_handle<> h) {
+        return h;
+    }
 };
 
 }

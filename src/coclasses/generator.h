@@ -11,6 +11,7 @@
 
 #include <memory>
 #include <optional>
+#include <functional>
 
 namespace cocls {
 

@@ -91,6 +91,21 @@ struct _policy_concept {
     struct initial_awaiter;
     ///mandatory - handles resumption
     void resume(std::coroutine_handle<> h);
+    ///mandatory - handles symmetric transfer
+    /**
+     * This called when symmetric transfer is possible. Coroutine is resumed when
+     * other coroutine is suspended or finished. Function can return argument
+     * to continue in symmetric transfer, or call resume() to perform standard resume.
+     * In this case, it must return std::noop_coroutine as result;
+     * 
+     * It is also possible to resume another coroutine which handle resumption of 
+     * a coroutine requested by argument
+     * 
+     * @param h handle to be resumed
+     * @return handle of coroutine to resume for symmetric transfer.
+     */
+    static std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) noexcept;
+
     ///optional - allows to initialize the polici on a task
     /**
      * Tasks can be created with resumption policy, however, there is now way how
@@ -158,6 +173,7 @@ struct initial_resume_by_policy: public std::suspend_always {
     struct immediate {
         using initial_awaiter = initial_suspend_never;
         static void resume(std::coroutine_handle<> h) noexcept {h.resume();}
+        static std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) noexcept {return h;}
     };    
     struct queued;
     struct parallel;

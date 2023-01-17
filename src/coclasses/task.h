@@ -7,19 +7,18 @@
 #define SRC_COCLASSES_TASK_H_
 
 #include "awaiter.h"
+#include "common.h"
 #include "co_alloc.h"
-#include "common.h" 
-#include "exceptions.h"
 #include "debug.h"
+#include "exceptions.h"
 #include "resumption_policy.h"
 
 #include <atomic>
-#include <cassert>
 #include <coroutine>
-#include <future>
-#include <optional>
+#include <cstddef>
+#include <exception>
+#include <new>
 #include <type_traits>
-#include <concepts>
 
 namespace cocls {
 
@@ -56,6 +55,7 @@ template<std::size_t space> class static_storage;
  * this template to void to change own default_resumption_polici
  * 
  * @see resumption_policy
+ * 
  */
 template<typename T = void, typename Policy = void> 
 class task {
@@ -235,9 +235,16 @@ public:
     using Result = std::add_lvalue_reference_t<T>;
     
     std::atomic<AW *> _awaiter_chain;
-    std::atomic<unsigned int> _ref_count;
+    std::atomic<std::size_t> _status_ref_count;
     
-    task_promise_base():_ref_count(0) {}          
+    static constexpr std::size_t data_mask = (static_cast<std::size_t>(1)<<(sizeof(std::size_t)*8-1));
+    static constexpr std::size_t except_mask = (static_cast<std::size_t>(1)<<(sizeof(std::size_t)*8-2));
+    static constexpr std::size_t processed_mask = (static_cast<std::size_t>(1)<<(sizeof(std::size_t)*8-3));
+    static constexpr std::size_t ready_mask = data_mask | except_mask | processed_mask;
+    static constexpr std::size_t counter_mask = static_cast<std::size_t>(-1) ^ ready_mask;
+    
+    
+    task_promise_base():_status_ref_count(1) {}          
 
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
@@ -256,34 +263,63 @@ public:
         final_awaiter &operator=(const final_awaiter &prom) = delete;
         
         bool await_ready() noexcept {
-            return _owner._ref_count == 0;
+            return (_owner._status_ref_count & counter_mask) == 0;
         }
-        static void await_suspend(std::coroutine_handle<>) noexcept {}
+        //awaiting coroutine is resumed during this suspend
+        //using symmetric transfer
+        //this speeds up returning from coroutine to coroutine
+        //and safes walk through the queue
+        //however it ignores resumption policy
+        
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept {
+            auto awt = _owner._awaiter_chain.exchange(&empty_awaiter<true>::disabled);
+            if (awt) {
+                auto transfer = awt;
+                awt = awt->_next;
+                awt->resume_chain_lk(awt, nullptr);
+                return transfer->resume_handle();
+            } else {
+                return std::noop_coroutine();
+            }
+            
+        }
         constexpr void await_resume() const noexcept {}        
     protected:
         task_promise_base &_owner;
     };
     
     final_awaiter final_suspend() noexcept {
-        --_ref_count;        
+        --_status_ref_count;        
         return *this;
     }
     
     void add_ref() {
-        _ref_count++;
+        _status_ref_count.fetch_add(1,std::memory_order_relaxed);
     }
     void release_ref() {
-        if (--_ref_count == 0) {
+        if (((_status_ref_count.fetch_sub(1, std::memory_order_release) -1 ) & counter_mask) == 0) {
             destroy();
         }
-    }
-
-    bool is_ready() const {
-        return AW::is_ready(_awaiter_chain);
     }
     
     bool subscribe_awaiter(AW *aw) {
         return aw->subscibre_check_ready(_awaiter_chain);
+    }
+    
+    auto set_ready_data() {
+        return _status_ref_count.fetch_or(data_mask);
+    }
+
+    auto set_ready_exception() {
+        return _status_ref_count.fetch_or(except_mask);
+    }
+    
+    auto set_processed() {
+        return _status_ref_count.fetch_or(processed_mask);
+    }
+    
+    bool is_ready() const {
+        return (_status_ref_count.load(std::memory_order_relaxed) & ready_mask) != 0; 
     }
 
     virtual Result get_result() = 0;
@@ -313,7 +349,6 @@ public:
     using initial_awaiter = typename std::remove_reference<Policy>::type::initial_awaiter;
 
     initial_awaiter initial_suspend()  noexcept {
-        ++this->_ref_count;
         return initial_awaiter(_policy);
     }
 
@@ -333,6 +368,8 @@ template<typename T, typename Policy>
 class task_promise: public task_promise_with_policy<T, Policy> {
 public:
     
+    using super = task_promise_with_policy<T, Policy>;
+    
     task_promise() {}
     
     union {
@@ -344,7 +381,7 @@ public:
     template<typename X>
     auto return_value(X &&val)->std::enable_if_t<std::is_convertible_v<X,T> >{
         new(&_v) T(std::forward<X>(val));
-        AW::mark_ready_data_resume(this->_awaiter_chain);
+        this->set_ready_data();
     }
     task<T, Policy> get_return_object() {
         return task<T, Policy>(static_cast<task_promise_base<T> *>(this));
@@ -354,29 +391,39 @@ public:
         h.destroy();
     }
     virtual T &get_result() override {
-        if (AW::mark_processed_data(this->_awaiter_chain)) {
+        auto status = this->set_processed();
+        if (status & this->data_mask) {
             return _v;
         }
-        if (AW::mark_processed_exception(this->_awaiter_chain)) {
+        if (status & this->except_mask) {
             std::rethrow_exception(_e);
         }
         throw value_not_ready_exception();
     }
+        
 
     void unhandled_exception() {
         new(&_e) std::exception_ptr(std::current_exception());
-        AW::mark_ready_exception_resume(this->_awaiter_chain);
+        this->set_ready_exception();
     }
     
     ~task_promise() {       
-        AW::cleanup_by_mark(this->_awaiter_chain,
-                [this]{_v.~T();}, [this]{
-                    if (!AW::is_processed(this->_awaiter_chain)) {
-                        if (_e) debug_reporter::get_instance()
-                                .report_exception(_e, typeid(task<T, Policy>));
-                    }
-                    _e.~exception_ptr();
-                });
+        auto status = this->_status_ref_count.load(std::memory_order_acquire);
+        switch (status & this->ready_mask) {
+            case super::data_mask:
+            case super::data_mask | super::processed_mask:
+                _v.~T();
+                break;
+            case super::except_mask:
+                debug_reporter::get_instance().report_exception(_e, typeid(task<T, Policy>));
+                [[fallthrough]];
+            case super::except_mask | super::processed_mask:
+                _e.~exception_ptr();
+                break;
+            default:
+                break;
+                
+        }
     }
 };
 
@@ -388,7 +435,7 @@ public:
     
     using AW = typename task_promise_with_policy<void, Policy>::AW;
     auto return_void() {
-        AW::mark_ready_data_resume(this->_awaiter_chain);
+        this->set_ready_data();
     }
     task<void, Policy> get_return_object() {
         return task<void, Policy>(this);
@@ -399,23 +446,27 @@ public:
     }
     void unhandled_exception() {
         _e =  std::current_exception();
-        AW::mark_ready_exception_resume(this->_awaiter_chain);
+        this->set_ready_data();
     }
     void get_result() override {
-        if (AW::mark_processed_data(this->_awaiter_chain)) {
-            return ;
+        auto status = this->set_processed();
+        if (status & this->data_mask) {
+            return;
         }
-        if (AW::mark_processed_exception(this->_awaiter_chain)) {
+        if (status & this->except_mask) {
             std::rethrow_exception(_e);
         }
         throw value_not_ready_exception();
     }
 
     ~task_promise() {
-        if (_e) debug_reporter::get_instance()
-                .report_exception(_e, typeid(task<void, Policy>));
+        auto status = this->_status_ref_count.load(std::memory_order_acquire);
+        if ((status & this->ready_mask) == this->except_mask) {
+                debug_reporter::get_instance().report_exception(_e, typeid(task<void, Policy>));
+        }
     }
 };
+
 
 template<typename T>
 class task_manual_resolve: public task_promise_base<T> {
@@ -425,7 +476,8 @@ public:
     
     template<typename ... Args>
     task_manual_resolve(Args &&...args ):_value(std::forward<Args>(args)...) {
-        AW::mark_ready_data_resume(this->_awaiter_chain);
+        this->set_ready_data();
+        this->_awaiter_chain = &empty_awaiter<true>::disabled;
     }
             
     virtual void destroy() override {
@@ -448,7 +500,8 @@ public:
     
     template<typename ... Args>
     task_manual_resolve() {
-        AW::mark_ready_data_resume(this->_awaiter_chain);
+        this->set_ready_data();
+        this->_awaiter_chain = &empty_awaiter<true>::disabled;
     }
             
     virtual void destroy() override {
