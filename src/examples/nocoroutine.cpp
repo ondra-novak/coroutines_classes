@@ -9,22 +9,33 @@
 #include <cassert>
 #include <coclasses/task.h>
 
+template <typename T> 
+__attribute__((optimize("O0"))) inline void doNotOptimizeAway(T&& x)  {
+    (void)x;
+}
+
 cocls::task<> co_main() {
-    cocls::task<void> always_ready;
+    auto always_ready = cocls::task<void>::set_result();
     
     co_await always_ready;  //never suspend here
 
-    cocls::task<bool> task_true(true);//true and false are preallocated
-    cocls::task<bool> task_false(false);
+    auto task_true = cocls::task<bool>::set_result(true);
+    auto task_false = cocls::task<bool>::set_result(false);
     
-    assert(co_await task_true == true);
-    assert(co_await task_false == false);
+    bool b1 = co_await task_true;
+    bool b2 = co_await task_false;
     
-    cocls::task<int> preinit(42); //initialize directly by result
+    assert(b1 == true);
+    assert(b2 == false);
+    
+    auto preinit = cocls::task<int>::set_result(42); //initialize directly by result
     
     int r = co_await preinit;  //co_await this task
     
+    
     std::cout<<r<<std::endl;
+    std::cout<<b1<<std::endl;
+    std::cout<<b2<<std::endl;
     
     co_return;
 }

@@ -75,39 +75,6 @@ protected:
     char _buffer[adjspace];
 };
 
-///Reusable storage for tasks.
-/** Pass reference to this storage as first argument of coroutine, and the task will be allocated using this storage
- * 
- * @note The storage will not receive notification about deallocation. You
- * need to destroy storage manually. Because it is an object, it would be easy
- * to handle the lifetime of the object
- * 
- * @code 
- * task<int> example(reusable_task_storage &, int args) {
- *  co_return args;
- * }
- * 
- * {
- *    reusable_task_storage storage;
- *    int res = example(storage, 42).join();
- *    //...
- * }
- * @endcode
- * 
- */
-class reusable_storage: public coro_storage {
-public:
-    virtual void *alloc(std::size_t sz) override {
-        _storage.resize(sz);
-        return _storage.data();
-    }
-    virtual void dealloc(void *, std::size_t) override {}
-    
-    std::size_t capacity() const {return _storage.size();}
-
-protected:
-    std::vector<char> _storage;
-};
 
 ///Similar to placement new for coroutines
 /**

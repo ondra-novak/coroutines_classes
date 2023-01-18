@@ -15,6 +15,7 @@
 
 #include <atomic>
 #include <coroutine>
+#include <cassert>
 #include <cstddef>
 #include <exception>
 #include <new>
@@ -29,6 +30,7 @@ namespace cocls {
 template<typename T, typename Policy> class task_promise;
 
 template<typename T> class task_promise_base;
+template<typename T> class task_promise_value;
 
 
 template<std::size_t space> class static_storage;
@@ -62,27 +64,39 @@ class task {
 public:
     
     using promise_type = task_promise<T, Policy>;
-    using promise_type_base = task_promise_base<T>;
+    using promise_type_base = task_promise_value<T>;
     using value_type = T;
 
     ///You can create empty task, which can be initialized later by assign
     /** For the task<void>, the object is already initialized and co_await on such task
      * is always resolved
      */ 
-    task();
-    
-    ///Initializes task future with direct value
+    task() = default;
+
+    ///Create task which has already result
     /**
-     * @param x value to initialize the task future
-     * 
-     * This allows to generate task<> result without executing coroutine
-     * 
-     * @note There will be always a coroutine which is executed to handle this
-     * feature, there is no much optimization. 
+     * Function is useful when result is already known. F
+     * @param args arguments are used to construct the result
+     * @return finished task 
      */
+    template<typename ... Args>
+    static task set_result(Args && ... args);
+
+    ///Create task which has already result - in exception state
+    /**
+     * Function captures current exception
+     * @return finished task 
+     */
+    static task set_exception();
     
-    template<std::convertible_to<T> X>
-    explicit task(X &&x);
+    ///Create task which has already result - in exception state
+    /**
+     * @param e exception
+     * Function captures current exception
+     * @return finished task 
+     */
+    static task set_exception(std::exception_ptr e);
+
     
     ///task is internaly constructed from pointer to a promise  
     task(promise_type_base *p): _promise(p) {
@@ -221,10 +235,22 @@ public:
     
     
 protected:
-    promise_type_base *_promise;
+    
+    template<typename A, typename B>
+    friend class task;
+    
+    promise_type_base *_promise = nullptr;
     
     promise_type_base * get_promise() const {return _promise;}
+
+    template<typename X, typename ... Args>
+    static decltype(auto) get_first(X &&x, Args && ...) {
+         return std::forward<X>(x);
+    }
+
+
 };
+
 
 
 template<typename T>
@@ -232,10 +258,10 @@ class task_promise_base: public coro_allocator  {
 public:
     using AW = abstract_awaiter<true>;
 
-    using Result = std::add_lvalue_reference_t<T>;
     
     std::atomic<AW *> _awaiter_chain;
     std::atomic<std::size_t> _status_ref_count;
+    std::coroutine_handle<> _my_handle;
     
     static constexpr std::size_t data_mask = (static_cast<std::size_t>(1)<<(sizeof(std::size_t)*8-1));
     static constexpr std::size_t except_mask = (static_cast<std::size_t>(1)<<(sizeof(std::size_t)*8-2));
@@ -249,10 +275,13 @@ public:
     task_promise_base(const task_promise_base &) = delete;
     task_promise_base &operator=(const task_promise_base &) = delete;
 
-    virtual ~task_promise_base() = default;
+    ~task_promise_base() = default;
     
     
-    virtual void destroy() =0;
+    void destroy() {
+        assert("Attempt to destroy a running task. Missing co_await <task>?" && !!_my_handle);
+        _my_handle.destroy();
+    }
     
     ///handles final_suspend
     class final_awaiter {
@@ -271,7 +300,8 @@ public:
         //and safes walk through the queue
         //however it ignores resumption policy
         
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept {
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> myhandle) noexcept {
+            _owner._my_handle = myhandle;
             auto awt = _owner._awaiter_chain.exchange(&empty_awaiter<true>::disabled);
             if (awt) {
                 auto transfer = awt;
@@ -321,14 +351,114 @@ public:
     bool is_ready() const {
         return (_status_ref_count.load(std::memory_order_relaxed) & ready_mask) != 0; 
     }
-
-    virtual Result get_result() = 0;
+    
+    decltype(auto) get_result() {
+        return static_cast<task_promise_value<T> *>(this)->get_result();
+    }
 
     
 };
 
+template<typename T>
+class task_promise_value: public task_promise_base<T> {
+public:
+    using super = task_promise_base<T>;
+    
+    task_promise_value() {}
+    
+    union {
+        T _v;
+        std::exception_ptr _e;
+    };
+    
+    using AW = typename task_promise_base<T>::AW;
+    template<typename X>
+    auto return_value(X && val)->std::enable_if_t<std::is_convertible_v<X,T> >{
+        new(&_v) T(std::forward<X>(val));
+        this->set_ready_data();
+    }
+    T &get_result() {
+        auto status = this->set_processed();
+        if (status & this->data_mask) {
+            return _v;
+        }
+        if (status & this->except_mask) {
+            std::rethrow_exception(_e);
+        }
+        throw value_not_ready_exception();
+    }
+        
+    template<typename ... X>
+    void emplace(X && ... x) {
+        new(&_v) T(std::forward<X>(x)...);
+        this->set_ready_data();        
+    }
+    
+
+    void unhandled_exception() {
+        new(&_e) std::exception_ptr(std::current_exception());
+        this->set_ready_exception();
+    }
+    
+    ~task_promise_value() {       
+        auto status = this->_status_ref_count.load(std::memory_order_acquire);
+        switch (status & this->ready_mask) {
+            case super::data_mask:
+            case super::data_mask | super::processed_mask:
+                _v.~T();
+                break;
+            case super::except_mask:
+                debug_reporter::get_instance().report_exception(_e, typeid(task<T>));
+                [[fallthrough]];
+            case super::except_mask | super::processed_mask:
+                _e.~exception_ptr();
+                break;
+            default:
+                break;
+                
+        }
+    }
+
+};
+
+template<>
+class task_promise_value<void>: public task_promise_base<void> {
+public:
+    
+    std::exception_ptr _e;
+    
+    using AW = typename task_promise_base<void>::AW;
+    auto return_void() {
+        this->set_ready_data();
+    }
+    void unhandled_exception() {
+        _e =  std::current_exception();
+        this->set_ready_data();
+    }
+    void get_result()  {
+        auto status = this->set_processed();
+        if (status & this->data_mask) {
+            return;
+        }
+        if (status & this->except_mask) {
+            std::rethrow_exception(_e);
+        }
+        throw value_not_ready_exception();
+    }
+
+    ~task_promise_value() {
+        auto status = this->_status_ref_count.load(std::memory_order_acquire);
+        if ((status & this->ready_mask) == this->except_mask) {
+                debug_reporter::get_instance().report_exception(_e, typeid(task<void>));
+        }
+    }
+};
+
+
+
+
 template<typename T, typename Policy>
-class task_promise_with_policy: public task_promise_base<T> {
+class task_promise: public task_promise_value<T> {
 public:
 
     template<typename Awt>
@@ -358,221 +488,15 @@ public:
     }
 
     [[no_unique_address]]  Policy _policy;
+    
+    auto get_return_object() {
+        return task<T, Policy>(this);
+    }
 };
 
 template<typename T>
-class task_promise_with_policy<T, void>: public task_promise_with_policy<T, resumption_policy::unspecified<void> > {
+class task_promise<T, void>: public task_promise<T, resumption_policy::unspecified<void> > {
 };
-
-template<typename T, typename Policy>
-class task_promise: public task_promise_with_policy<T, Policy> {
-public:
-    
-    using super = task_promise_with_policy<T, Policy>;
-    
-    task_promise() {}
-    
-    union {
-        T _v;
-        std::exception_ptr _e;
-    };
-    
-    using AW = typename task_promise_with_policy<T, Policy>::AW;
-    template<typename X>
-    auto return_value(X &&val)->std::enable_if_t<std::is_convertible_v<X,T> >{
-        new(&_v) T(std::forward<X>(val));
-        this->set_ready_data();
-    }
-    task<T, Policy> get_return_object() {
-        return task<T, Policy>(static_cast<task_promise_base<T> *>(this));
-    }
-    virtual void destroy() override {
-        auto h = std::coroutine_handle<task_promise>::from_promise(*this);
-        h.destroy();
-    }
-    virtual T &get_result() override {
-        auto status = this->set_processed();
-        if (status & this->data_mask) {
-            return _v;
-        }
-        if (status & this->except_mask) {
-            std::rethrow_exception(_e);
-        }
-        throw value_not_ready_exception();
-    }
-        
-
-    void unhandled_exception() {
-        new(&_e) std::exception_ptr(std::current_exception());
-        this->set_ready_exception();
-    }
-    
-    ~task_promise() {       
-        auto status = this->_status_ref_count.load(std::memory_order_acquire);
-        switch (status & this->ready_mask) {
-            case super::data_mask:
-            case super::data_mask | super::processed_mask:
-                _v.~T();
-                break;
-            case super::except_mask:
-                debug_reporter::get_instance().report_exception(_e, typeid(task<T, Policy>));
-                [[fallthrough]];
-            case super::except_mask | super::processed_mask:
-                _e.~exception_ptr();
-                break;
-            default:
-                break;
-                
-        }
-    }
-};
-
-template<typename Policy>
-class task_promise<void, Policy>: public task_promise_with_policy<void, Policy> {
-public:
-    
-    std::exception_ptr _e;
-    
-    using AW = typename task_promise_with_policy<void, Policy>::AW;
-    auto return_void() {
-        this->set_ready_data();
-    }
-    task<void, Policy> get_return_object() {
-        return task<void, Policy>(this);
-    }
-    virtual void destroy() override {
-        auto h = std::coroutine_handle<task_promise>::from_promise(*this);
-        h.destroy();
-    }
-    void unhandled_exception() {
-        _e =  std::current_exception();
-        this->set_ready_data();
-    }
-    void get_result() override {
-        auto status = this->set_processed();
-        if (status & this->data_mask) {
-            return;
-        }
-        if (status & this->except_mask) {
-            std::rethrow_exception(_e);
-        }
-        throw value_not_ready_exception();
-    }
-
-    ~task_promise() {
-        auto status = this->_status_ref_count.load(std::memory_order_acquire);
-        if ((status & this->ready_mask) == this->except_mask) {
-                debug_reporter::get_instance().report_exception(_e, typeid(task<void, Policy>));
-        }
-    }
-};
-
-
-template<typename T>
-class task_manual_resolve: public task_promise_base<T> {
-public:
-    using AW = typename task_promise_base<T>::AW;
-    
-    
-    template<typename ... Args>
-    task_manual_resolve(Args &&...args ):_value(std::forward<Args>(args)...) {
-        this->set_ready_data();
-        this->_awaiter_chain = &empty_awaiter<true>::disabled;
-    }
-            
-    virtual void destroy() override {
-        delete this;
-    }
-
-    T &get_result() override {
-        return _value;
-    }
-    
-    T _value;
-    
-};
-
-template<>
-class task_manual_resolve<void>: public task_promise_base<void> {
-public:
-    using AW = typename task_promise_base<void>::AW;
-    
-    
-    template<typename ... Args>
-    task_manual_resolve() {
-        this->set_ready_data();
-        this->_awaiter_chain = &empty_awaiter<true>::disabled;
-    }
-            
-    virtual void destroy() override {
-        delete this;
-    }
-
-    void get_result() override {}
-    
-    
-};
-
-template<typename T>
-class task_manual_static_resolve: public task_manual_resolve<T> {
-public:
-    using task_manual_resolve<T>::task_manual_resolve;
-    
-    void *operator new(std::size_t sz) {
-        return ::operator new(sz);
-    }
-    void operator delete(void *ptr, std::size_t sz) {
-        ::operator delete(ptr);
-    }
-};
-
-
-template<typename T, typename P>
-template<std::convertible_to<T> X>
-inline task<T,P>::task(X &&x) {
-
-    if constexpr(std::is_base_of_v<task_promise_base<T>, std::remove_pointer_t<X> >) {
-        _promise = x;
-        if (_promise) _promise->add_ref();
-    }
-    else if constexpr(std::is_same<X,bool>::value) {
-        if (x) {
-            static task<T,P> inst(new task_manual_static_resolve<bool>(true));
-            *this = inst;
-        } else {
-            static task<T,P> inst(new task_manual_static_resolve<bool>(false));
-            *this = inst;
-        }
-    } 
-    else {
-        *this = task<T,P>(new task_manual_resolve<T>(std::forward<X>(x)));
-    }
-}
-
-template<typename T, typename P>
-task<T,P>::task():_promise(nullptr) {
-    if constexpr(std::is_void<T>::value) {
-        static task<T,P> inst(new task_manual_static_resolve<void>());
-        *this = inst;
-    }
-}
-
-namespace _details {
-
-template<typename T, typename Fn>
-struct task_from_return_value {
-    using type = task<decltype(std::declval<Fn>()(std::declval<T>()))>;
-};
-
-template<typename Fn>
-struct task_from_return_value<void, Fn> {
-    using type = task<decltype(std::declval<Fn>()())>;
-};
-
-template<typename T, typename Fn>
-using task_from_return_value_t = typename task_from_return_value<T,Fn>::type;
-
-}
 
 
 template<typename T> 
@@ -584,12 +508,62 @@ template<typename T>
 template<typename T, typename P> 
     struct task_result<task<T,P> > {using type = T;};
 
-
-
-
-
-
+namespace _details {
+    struct BoolInit{
+        reusable_storage stor_true;
+        reusable_storage stor_false;
+        task<bool, resumption_policy::immediate> res_true;
+        task<bool, resumption_policy::immediate> res_false;
+        static task<bool, resumption_policy::immediate> coro(bool b) {
+            co_return b;
+        }            
+        BoolInit(): res_true(stor_true.call([]{return coro(true);}))
+                  , res_false(stor_false.call([]{return coro(false);})) {}
+    };
 }
 
 
+
+template<typename T, typename Policy>
+template<typename ... Args>
+inline task<T, Policy> task<T, Policy>::set_result(Args &&... args) {
+    if constexpr (std::is_void_v<T>) {
+        auto coro = [&]() -> task<void, resumption_policy::immediate> {
+            co_return ; 
+        };        
+        static reusable_storage stor;
+        static auto res(stor.call([&]{return coro();}));
+        return task(res.get_promise());      
+    } else if constexpr (std::is_same_v<T, bool>) {
+        
+        static _details::BoolInit val;
+        bool b = get_first(std::forward<Args>(args)...);
+        return task((b?val.res_true:val.res_false).get_promise());
+        
+    } else {
+        auto coro = [&]() -> task<T, resumption_policy::immediate> {
+            co_return T(std::forward<Args>(args)...); 
+        };
+        return task(coro().get_promise());        
+    }
+}
+
+
+
+template<typename T, typename Policy>
+inline task<T, Policy> task<T, Policy>::set_exception() {
+    auto e = std::current_exception();
+    assert("task::set_exception() called outside of catch handler" && !!e);
+    set_exception(e);
+}
+
+template<typename T, typename Policy>
+inline task<T, Policy> task<T, Policy>::set_exception(std::exception_ptr e) {
+    co_await std::suspend_never(); //force this to be coroutine
+    assert("task::set_exception(e) called with no exception" && !!e);
+    std::rethrow_exception(e);
+}
+
+
+}
 #endif /* SRC_COCLASSES_TASK_H_ */
