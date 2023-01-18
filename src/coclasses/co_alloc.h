@@ -108,16 +108,41 @@ auto coro_storage::call(Fn &&fn) -> decltype(fn()) {
  */
 class reusable_storage: public coro_storage {
 public:
+    
+    reusable_storage() = default;
+    reusable_storage(const reusable_storage &other) = delete;
+    reusable_storage &operator=(const reusable_storage &other) = delete;
+    reusable_storage(reusable_storage &&other)
+        :_ptr(std::exchange(other._ptr,nullptr))
+        ,_capacity(std::exchange(other._capacity, 0)) {}
+    reusable_storage &operator=(reusable_storage &&other) {
+        if (this != &other) {
+            ::operator delete (_ptr);
+            _ptr = std::exchange(other._ptr,nullptr);
+            _capacity = std::exchange(other._capacity, 0);            
+        }
+        return *this;
+    }
+    
+    virtual ~reusable_storage() {
+        ::operator delete (_ptr);
+    }
     virtual void *alloc(std::size_t sz) override {
-        _storage.resize(sz);
-        return _storage.data();
+        if (sz > _capacity) {
+            ::operator delete (_ptr);
+            _ptr = ::operator new(sz);
+            _capacity = sz;
+        }
+        return _ptr;
     }
     virtual void dealloc(void *, std::size_t) override {}
     
-    std::size_t capacity() const {return _storage.size();}
+    std::size_t capacity() const {return _capacity;}
 
+    
 protected:
-    std::vector<char> _storage;
+    void *_ptr = nullptr;
+    std::size_t _capacity = 0;
 };
 
 

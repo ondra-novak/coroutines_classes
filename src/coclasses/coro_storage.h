@@ -125,7 +125,7 @@ public:
         }
     }
     virtual void dealloc(void *ptr, std::size_t sz) override {
-        if (ptr == _storage.data()) {
+        if (ptr == _ptr) {
             _busy.store(false, std::memory_order_relaxed);
         } else {
             coro_promise_base::default_delete(ptr, sz);
