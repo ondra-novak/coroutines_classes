@@ -5,7 +5,7 @@ int main(int, char **) {
     std::cout << "Create promise" << std::endl;
     {
         cocls::promise<int> p = cocls::make_promise<int>([](cocls::future<int> &f){
-            std::cout << "Callback called: " << f.get() << std::endl;            
+            std::cout << "Callback called: " << f.value() << std::endl;            
         });
         std::cout<<"Promise resolved." << std::endl;
         p.set_value(42);

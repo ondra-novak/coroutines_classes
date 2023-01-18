@@ -167,8 +167,16 @@ public:
     decltype(auto) wait() {
         return co_awaiter<future<T>,true >(*static_cast<future<T> *>(this)).wait();
     }
+    
 
-        
+    ///For compatible API - same as wait()
+    decltype(auto) join() {return wait();}
+
+    ///Synchronise with the future, but doesn't pick the value
+    /** Just waits for result, but doesn't pick the result including the exception */
+    void sync() {
+        co_awaiter<future<T>,true >(*static_cast<future<T> *>(this)).sync();        
+    }
 
     
 protected:
@@ -195,7 +203,7 @@ protected:
     
     decltype(auto) get_result() {
         assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled);
-        return static_cast<future<T> *>(this)->get(); 
+        return static_cast<future<T> *>(this)->value(); 
     }
     
     
@@ -244,11 +252,12 @@ protected:
 public:
     ///get value
     /**
+     *
      * 
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
-    T &get() {
+    T &value() {
         //just acquire
         this->_awaiter.load(std::memory_order_acquire);
         switch (this->_status) {
@@ -263,7 +272,7 @@ public:
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
-    const T & get() const {
+    const T & value() const {
         //just acquire
         this->_awaiter.load(std::memory_order_acquire);
         switch (this->_status) {
@@ -324,7 +333,7 @@ public:
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
-    void get() const {
+    void value() const {
         //just acquire
         this->_awaiter.load(std::memory_order_acquire);
         switch (this->_status) {
@@ -461,13 +470,15 @@ public:
 };
 
 ///Promise with default value
+/** If the promise is destroyed unresolved, the default value is set to the future */
 template<typename T>
 class promise_with_default: public promise<T> {
 public:
+    using super = promise<T>;
     using promise<T>::promise;
     
     template<typename ... Args>
-    promise_with_default(promise<T> &&prom, Args &&... args)
+    promise_with_default(super &&prom, Args &&... args)
         :promise<T>(std::move(prom)),def(std::forward<Args>(args)...) {}
     ~promise_with_default() {
         this->set_value(std::move(def));
@@ -486,13 +497,15 @@ protected:
 };
 
 ///Promise with default value
-/**
+/**If the promise is destroyed unresolved, the default value is set to the future
+ * 
  * @tparam T type, must be integral type
  * @tparam val default value
  */
 template<typename T, T val>
 class promise_with_default_v: public promise<T> {
 public:
+    using super = promise<T>;
     using promise<T>::promise;
     promise_with_default_v() = default;
     promise_with_default_v(promise_with_default_v &&other) = default;
@@ -500,17 +513,19 @@ public:
     ~promise_with_default_v() {
         this->set_value(val);
     }
-    promise_with_default_v(promise<T> &&p):promise<T>(std::move(p)) {}
+    promise_with_default_v(super &&p):promise<T>(std::move(p)) {}
 };
 
 ///Promise with default value - constant is specified in template paramater
-/**
+/**If the promise is destroyed unresolved, the default value is set to the future
+ * 
  * @tparam T type 
  * @tparam val const pointer to default value, must have external linkage
  */
 template<typename T, const T *val>
 class promise_with_default_vp: public promise<T> {
 public:
+    using super = promise<T>;
     using promise<T>::promise;
     promise_with_default_vp() = default;
     promise_with_default_vp(promise_with_default_vp &&other) = default;
@@ -518,7 +533,7 @@ public:
     ~promise_with_default_vp() {
         this->set_value(*val);
     }
-    promise_with_default_vp(promise<T> &&p):promise<T>(std::move(p)) {}
+    promise_with_default_vp(super &&p):promise<T>(std::move(p)) {}
 };
 
 

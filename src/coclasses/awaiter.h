@@ -54,14 +54,25 @@ public:
      * @retval false failed to register, object is already ready
      */
     bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain_);
+
     
  };
 
+///phony awaiter it is used to signal special value in awaiter's/chain
+/** This awaiter doesn't resume anything */ 
 template<bool chain>
 class empty_awaiter: public abstract_awaiter<chain> {
 public:
     
+    ///Just instance for any usage
     static empty_awaiter<chain> instance;
+    ///Disables awaiter's chain/slot. Any further registrations are impossible
+    /** This allows to atomically replace awaiter with disabled, which can be
+     * interpreted as "value is ready, no further waiting is required" while current
+     * list of awaiters is picked and the awaiters are resumed
+     * 
+     * @see abstract_awaiter<>::resume_chain_set_disabled
+     */ 
     static empty_awaiter<chain> disabled;
 
     virtual void resume() noexcept {}
@@ -88,6 +99,16 @@ public:
     static std::size_t resume_chain(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
         return resume_chain_lk(chain.exchange(nullptr), skip);
     }
+    
+    ///Resume chain and disable it
+    /**
+     * @param chain chain to resume
+     * @param skip awaiter to be skipped, can be nullptr
+     * @return count of awaiters
+     * 
+     * @note It marks chain disabled, so futher registration are rejected with false
+     * @see subscribe_check_ready()
+     */
     static std::size_t resume_chain_set_disabled(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
         return resume_chain_lk(chain.exchange(&empty_awaiter<true>::disabled, std::memory_order_release), skip);
     }
@@ -103,9 +124,11 @@ public:
     }
     ///subscribe this awaiter but at the same time, check, whether it is marked ready
     /**
+     * @note uses empty_awaiter<true>::disabled to mark whether the value is ready.
+     * 
      * @param chain register to chain
      * @retval true registered
-     * @retval false failed to register, object is already ready
+     * @retval false registration unsuccessful, the object is already prepared
      */
     bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain);
     

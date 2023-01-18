@@ -11,7 +11,6 @@
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
 #include <coclasses/publisher.h>
-#include <coclasses/sync_await.h>
 #include <coclasses/cancelable.h>
 #include <coclasses/queued_resumption_policy.h>
 #include <coclasses/pause.h>
@@ -33,7 +32,7 @@ cocls::task<int> co_test() {
     std::cout << "(co_test) started" << std::endl;    
     cocls::future<int> f;    
     auto cbp = cocls::make_promise<int>([](cocls::future<int> &x){
-       std::cout << "(make_promise) called:" << x.get() << std::endl; 
+       std::cout << "(make_promise) called:" << x.value() << std::endl; 
     });    
     std::thread thr([p = f.get_promise(), p2 = std::move(cbp)]() mutable {
         std::cout << "(co_test) thread started" << std::endl;    
@@ -346,10 +345,6 @@ int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
     std::cout << "Version: " << GIT_PROJECT_VERSION << std::endl;
     std::cout << std::endl;
-    std::cout << "(main) starting co_test2" << std::endl;    
-    auto z = co_test2();
-    std::cout << "(main) waiting for future" << std::endl;
-    std::cout << (sync_await z) << std::endl;
  
 
     threadpool_test();
