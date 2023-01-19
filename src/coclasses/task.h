@@ -334,16 +334,33 @@ public:
         //this speeds up returning from coroutine to coroutine        
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> myhandle) noexcept {
             _owner._my_handle = myhandle;
+            auto noop = std::noop_coroutine();
+            //get list of awaiters
             auto awt = _owner._awaiter_chain.exchange(&empty_awaiter<true>::disabled);
-            if (awt) {
-                auto transfer = awt;
+            while (awt) {
+                auto x = awt;
                 awt = awt->_next;
-                awt->resume_chain_lk(awt, nullptr);
-                return transfer->resume_handle();
-            } else {
-                return std::noop_coroutine();
+                //cycle until at least one awaiter returns valid coroutine handle 
+                //from resume_handle()
+                //some awaiters are not coroutines, they perform its own
+                //resume operation and returns noop_coroutine()
+                
+                auto h = x->resume_handle();
+                //if h is not noop, we found coroutine, which will be resumed at current thread
+                if (h != noop) {
+                    //cycle to rest of awaiters
+                    while (awt) {
+                        x = awt;
+                        awt = awt->_next;
+                        //resume them as usual
+                        x->resume();
+                    }
+                    //perform symmetric transfer to chosen coroutine
+                    return h;
+                }
             }
-            
+            //exit to the previous stack frame
+            return std::noop_coroutine(); 
         }
         //called when await_ready - true
         constexpr void await_resume() const noexcept {}        

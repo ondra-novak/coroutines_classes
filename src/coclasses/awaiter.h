@@ -7,9 +7,8 @@
 #include "queued_resumption_policy.h"
 
 #include <algorithm>
-#include <condition_variable>
 #include <coroutine> 
-#include <mutex>
+#include <atomic>
 
 namespace cocls {
 
@@ -295,26 +294,7 @@ protected:
 
 template<typename promise_type, bool chain>
 inline decltype(auto) co_awaiter<promise_type, chain>::wait() {
-    if (await_ready()) return await_resume();
-    
-    class Awaiter: public abstract_awaiter<chain> {
-    public:
-        std::mutex mx;
-        std::condition_variable cond;
-        bool flag = false;        
-        virtual void resume() noexcept override {
-            std::unique_lock _(mx);
-            flag = true;
-            cond.notify_all();
-        }
-    };
-    
-    Awaiter awt;
-    std::unique_lock lk(awt.mx);
-    if (subscribe_awaiter(&awt)) {
-        awt.cond.wait(lk, [&]{return awt.flag;});
-    }
-    
+    sync();
     return await_resume();
 }
 
@@ -324,20 +304,20 @@ inline void co_awaiter<promise_type, chain>::sync() noexcept  {
     
     class Awaiter: public abstract_awaiter<chain> {
     public:
-        std::mutex mx;
-        std::condition_variable cond;
-        bool flag = false;        
+        std::atomic_flag flag;        
+        virtual std::coroutine_handle<> resume_handle() {
+            Awaiter::resume();
+            return std::noop_coroutine();
+        }
         virtual void resume() noexcept override {
-            std::unique_lock _(mx);
-            flag = true;
-            cond.notify_all();
+            flag.test_and_set();
+            flag.notify_all();
         }
     };
     
     Awaiter awt;
-    std::unique_lock lk(awt.mx);
     if (subscribe_awaiter(&awt)) {
-        awt.cond.wait(lk, [&]{return awt.flag;});
+        awt.flag.wait(false);        
     }
         
 }

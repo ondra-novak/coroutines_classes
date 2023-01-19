@@ -345,7 +345,12 @@ int main(int argc, char **argv) {
     std::cout << "MIT License Copyright (c) 2022 Ondrej Novak" << std::endl;
     std::cout << "Version: " << GIT_PROJECT_VERSION << std::endl;
     std::cout << std::endl;
- 
+
+    std::cout << "(main) starting co_test2" << std::endl;    
+    auto z = co_test2();
+    std::cout << "(main) waiting for future" << std::endl;
+    std::cout << z.join() << std::endl;
+
 
     threadpool_test();
     

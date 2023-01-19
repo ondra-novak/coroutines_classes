@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <condition_variable>
 #include <type_traits>
 
 namespace cocls {

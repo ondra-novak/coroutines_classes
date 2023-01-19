@@ -5,6 +5,7 @@
 #define SRC_COCLASSES_PARALLEL_RESUMPTION_POLICY_H_
 
 #include <coroutine>
+#include <thread>
 #include "queued_resumption_policy.h"
 
 namespace cocls {

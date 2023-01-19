@@ -284,25 +284,19 @@ public:
     class syncing_awaiter: public awaiter_base {
     public:
         virtual void resume() noexcept override {
-            {
-            std::lock_guard _(_mx);
-            _ready = true;
-            }
-            _cvar.notify_all();
+            _ready.test_and_set();
+            _ready.notify_all();
         }
         virtual std::coroutine_handle<> resume_handle() override {
-            resume();
+            syncing_awaiter::resume();
             return std::noop_coroutine();
         }
         void wait() {
-            std::unique_lock lk(_mx);
-            _cvar.wait(lk, [&]{return _ready;});
+            _ready.wait(false);
         }
 
     protected:
-        bool _ready = false;
-        std::mutex _mx;
-        std::condition_variable _cvar;
+        std::atomic_flag _ready;
     };
     
     template<typename Fn>
