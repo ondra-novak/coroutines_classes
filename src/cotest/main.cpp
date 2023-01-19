@@ -24,11 +24,13 @@
 
 
 cocls::lazy<int> co_lazy() {
+    COCLS_SET_CORO_NAME();
     std::cout << "(co_lazy) executed" << std::endl;
     co_return 56;
 }
 
 cocls::task<int> co_test() {
+    COCLS_SET_CORO_NAME();
     std::cout << "(co_test) started" << std::endl;    
     cocls::future<int> f;    
     auto cbp = cocls::make_promise<int>([](cocls::future<int> &x){
@@ -51,6 +53,7 @@ cocls::task<int> co_test() {
 }
 
 cocls::task<int> co_test2() {
+    COCLS_SET_CORO_NAME();
     std::cout << "(co_test2) co_lazy() started" << std::endl;
     cocls::lazy<int> lz = co_lazy();
     std::cout << "(co_test2) await" << std::endl;
@@ -61,6 +64,7 @@ cocls::task<int> co_test2() {
 }
 
 cocls::generator<int> co_fib() {
+    COCLS_SET_CORO_NAME();
     int a = 0;
     int b = 1;
     for(;;) {
@@ -72,6 +76,7 @@ cocls::generator<int> co_fib() {
 }
 
 cocls::generator<int> co_fib2(int count) {
+    COCLS_SET_CORO_NAME();
     int a = 0;
     int b = 1;
     for(int i = 0;i < count; i++) {
@@ -83,6 +88,7 @@ cocls::generator<int> co_fib2(int count) {
 }
 
 cocls::generator<int> co_async_fib(int count, int delay = 100) {
+    COCLS_SET_CORO_NAME();
     int a = 0;
     int b = 1;
     for(int i = 0;i < count; i++) {
@@ -101,6 +107,7 @@ cocls::generator<int> co_async_fib(int count, int delay = 100) {
 }
 
 cocls::task<void> co_fib_reader()  {
+    COCLS_SET_CORO_NAME();
     std::cout<< "async gen - co_await: "  << std::flush;
     auto g = co_async_fib(15);
     while (co_await g.next()) {
@@ -109,6 +116,7 @@ cocls::task<void> co_fib_reader()  {
     std::cout<< std::endl;
 }
 cocls::task<void> co_fib2_reader()  {
+    COCLS_SET_CORO_NAME();
     std::cout<< "sync gen - co_await;"  << std::flush;
     auto g = co_fib2(15);
     while (co_await g.next()) {
@@ -117,6 +125,7 @@ cocls::task<void> co_fib2_reader()  {
     std::cout<< std::endl;
 }
 cocls::task<void> co_fib3_reader()  {
+    COCLS_SET_CORO_NAME();
     std::cout<< "sync gen - resume in coroutine: "  << std::flush;
     auto g = co_fib2(15);
     while (g.next()) {
@@ -126,6 +135,7 @@ cocls::task<void> co_fib3_reader()  {
     co_return; //need co_return to have this as coroutine
 }
 cocls::task<void> co_multfib_reader()  {
+    COCLS_SET_CORO_NAME();
     std::cout<< "async gen multi - co_await: ";
     std::vector<cocls::generator<int> > glist;
     glist.push_back(co_async_fib(15));
@@ -137,6 +147,7 @@ cocls::task<void> co_multfib_reader()  {
     std::cout<< std::endl;
 }
 cocls::task<void> co_multfib_reader2()  {
+    COCLS_SET_CORO_NAME();
     std::cout<< "async gen multi - sync: ";
     std::vector<cocls::generator<int> > glist;
     glist.push_back(co_fib2(15));
@@ -158,6 +169,7 @@ int test_mutex() {
     std::vector<cocls::task<> > tasks;
     for (int i = 0; i < 20; i++) {
         auto t =([&](int &shr, cocls::mutex &mx, std::default_random_engine &rnd, int idx)->cocls::task<void>{
+            COCLS_SET_CORO_NAME();
             co_await pool;
             std::cout << "Coroutine start:" << idx << std::endl;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -186,6 +198,7 @@ int test_mutex() {
 
 void test_pause() {
     ([]()->cocls::task<>{
+        COCLS_SET_CORO_NAME();
        for (int i = 0; i < 5; i++) {
            ([](int i)->cocls::task<void>{
               for (int j = 0; j < 5; j++) {
@@ -201,6 +214,7 @@ void test_pause() {
 
 
 cocls::task<> threadpool_co(cocls::thread_pool &p) {
+    COCLS_SET_CORO_NAME();
     std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
     co_await p;
     std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
@@ -228,6 +242,7 @@ void threadpool_test() {
 }
 
 cocls::task<> scheduler_test_task(cocls::scheduler<> &sch) {
+    COCLS_SET_CORO_NAME();
     std::cout << "(scheduler_test_task) started "<< std::endl;
     auto gen = sch.interval(std::chrono::milliseconds(100));
     co_await gen.next();
@@ -250,6 +265,7 @@ void scheduler_test() {
 
 using queued_task = cocls::with_queue<cocls::task<void>, int>; 
  queued_task with_queue_task() {
+     COCLS_SET_CORO_NAME();
         int i = co_await queued_task::current_queue();
         while (i) {
             std::cout<<"(with_queue_task) Received from queue: " << i << std::endl;
@@ -268,6 +284,7 @@ void with_queue_test() {
 }
 
 cocls::task<void> test_reusable_co(cocls::scheduler<> &sch) {
+    COCLS_SET_CORO_NAME();
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "(test_reusable_co) finished" << std::endl;
@@ -295,6 +312,7 @@ void test_reusable() {
 }
 
 cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
+    COCLS_SET_CORO_NAME();
     cocls::subscriber<int> src(pub);    
     while (co_await src.next()) {
         int x = src.value();
@@ -303,6 +321,7 @@ cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
 }
 
 cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+    COCLS_SET_CORO_NAME();
     cocls::subscriber<int> src(pub);
     while (co_await src.next()) {
         int x = src.value();                
@@ -312,6 +331,7 @@ cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sc
 }
 
 cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+    COCLS_SET_CORO_NAME();
     cocls::subscriber<int> src(pub);
     while (co_await src.next()) {
         int x = src.value();
@@ -339,6 +359,21 @@ void publisher_test() {
     s3.join();
     
 }
+#ifdef COCLS_DEFINE_SET_CORO_NAME
+void coro_monitor(std::atomic<bool> &exitflag) {
+    cocls::debug_reporter::current_instance->coro_monitor_register();
+    while (!exitflag) {
+        auto coros = cocls::debug_reporter::current_instance->get_running_coros();
+        std::cerr << "\033[2J\033[H";
+        for (auto &[h, info]: coros) {
+            std::cerr << "Running: " << h.address() << " - " << info.loc << ":" << info.fn << " " << info.name << std::endl;
+        }
+        std::cerr << "---------" << std::endl; 
+        cocls::debug_reporter::current_instance->coro_monitor_wait();
+        cocls::debug_reporter::current_instance->coro_monitor_register();
+    }    
+}
+#endif
 
 
 int main(int argc, char **argv) {
@@ -346,11 +381,16 @@ int main(int argc, char **argv) {
     std::cout << "Version: " << GIT_PROJECT_VERSION << std::endl;
     std::cout << std::endl;
 
-    std::cout << "(main) starting co_test2" << std::endl;    
-    auto z = co_test2();
-    std::cout << "(main) waiting for future" << std::endl;
-    std::cout << z.join() << std::endl;
-
+#ifdef COCLS_DEFINE_SET_CORO_NAME
+    std::atomic<bool> mon_exit = false;
+    std::thread mon_thread([&]{coro_monitor(mon_exit);});
+#endif
+    {
+        std::cout << "(main) starting co_test2" << std::endl;    
+        auto z = co_test2();
+        std::cout << "(main) waiting for future" << std::endl;
+        std::cout << z.join() << std::endl;
+    }
 
     threadpool_test();
     
@@ -362,39 +402,46 @@ int main(int argc, char **argv) {
 
     publisher_test();
     
-    auto fib = co_fib();
-    std::cout<< "infinite gen: " << std::flush;    
-    for (int i = 0; i < 15; i++) {
-        auto iter = fib.begin();
-        if (iter != fib.end()) {
-            std::cout << *iter << " " ;
+    {
+        auto fib = co_fib();
+        std::cout<< "infinite gen: " << std::flush;    
+        for (int i = 0; i < 15; i++) {
+            auto iter = fib.begin();
+            if (iter != fib.end()) {
+                std::cout << *iter << " " ;
+            }
         }
+        std::cout<< std::endl;
     }
-    std::cout<< std::endl;
 
-    auto fib2 = co_fib2(15);
-    std::cout<< "finite gen - range for: "  << std::flush;
-    for (int &i: fib2) {
-        std::cout << i << " ";
+    {
+        auto fib2 = co_fib2(15);
+        std::cout<< "finite gen - range for: "  << std::flush;
+        for (int &i: fib2) {
+            std::cout << i << " ";
+        }
+        std::cout<< std::endl;
     }
-    std::cout<< std::endl;
 
-    auto fib3 = co_fib2(15);
-    std::cout<< "finite gen - next/read: "  << std::flush;
-    while (fib3.next()) {
-        std::cout << fib3.value() << " ";
+    {
+        auto fib3 = co_fib2(15);
+        std::cout<< "finite gen - next/read: "  << std::flush;
+        while (fib3.next()) {
+            std::cout << fib3.value() << " ";
+        }
+        std::cout<< std::endl;
     }
-    std::cout<< std::endl;
 
     co_fib_reader().join();
 
-
-    auto fib4 = co_async_fib(15);
-    std::cout<< "async gen2 - next/read (sync): "  << std::flush;
-    while (fib4.next()) {
-        std::cout << fib4.value() << " ";
+    {
+        auto fib4 = co_async_fib(15);
+        std::cout<< "async gen2 - next/read (sync): "  << std::flush;
+        while (fib4.next()) {
+            std::cout << fib4.value() << " ";
+        }
+        std::cout<< std::endl;
     }
-    std::cout<< std::endl;
 
     co_fib2_reader().join();
     
@@ -407,7 +454,13 @@ int main(int argc, char **argv) {
     test_mutex();
     std::cout << "Pause test" << std::endl;
     test_pause();
-    
+
+#ifdef COCLS_DEFINE_SET_CORO_NAME
+    mon_exit.store(true);
+    cocls::coro_monitor_event();
+    mon_thread.join();
+#endif
+
 }
 
 

@@ -349,6 +349,27 @@ inline bool abstract_awaiter<true>::subscibre_check_ready(std::atomic<abstract_a
 }
 
 
+///Retrieves handle to currently running coroutine
+/**
+ * @code
+ * std::coroutine_handle<> my_handle = co_await self();
+ */
+class self {
+public:
+    static bool await_ready() noexcept {return false;}
+    bool await_suspend(std::coroutine_handle<> h) noexcept {
+        _h = h;
+        return false;
+    }
+    std::coroutine_handle<> await_resume() {
+        return _h;
+    }
+    
+protected:
+    std::coroutine_handle<> _h;
+};
+
+
 }
 #endif /* SRC_COCLASSES_AWAITER_H_ */
 

@@ -104,6 +104,11 @@ public:
         start(start_policy);
         return task<T, Policy>::join(policy);
     }
+protected:
+    lazy(promise_type_base &h):task<T, Policy>(h) {}
+    
+    friend class lazy_promise<T, Policy>;
+
 
 };
 
@@ -142,12 +147,14 @@ public:
     }
     
     lazy<T> get_return_object() {
-        return lazy<T>(this);
+        return lazy<T>(*this);
     }
 protected:
     std::atomic<bool> _started;
     bool _canceled = false;
 
+
+    
     template<typename, typename> friend class lazy;
     
 };;

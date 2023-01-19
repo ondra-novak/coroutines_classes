@@ -18,6 +18,15 @@
 #endif
 #endif
 
+#ifndef NDEBUG
+#ifndef COCLS_DEFINE_SET_CORO_NAME
+#define COCLS_DEFINE_SET_CORO_NAME
+#endif
+#endif
+
+
+
+
 namespace cocls {
 
 
@@ -75,29 +84,106 @@ public:
 #endif
     }
 
+    static debug_reporter inst;
+    static debug_reporter *current_instance;
+
+#ifdef COCLS_DEFINE_SET_CORO_NAME
+    struct CoroInfo {
+        std::string name;
+        const char *loc;
+        const char *fn;
+    };
     
-    ///change debug's reporter instance
-    static void set_instance(debug_reporter *inst) {
-        get_instance_ptr() = inst;
+    virtual void set_coro_name(std::coroutine_handle<> h, const char *loc, const char *fn, std::string name = std::string()) {
+        std::lock_guard _(_name_map_lock);
+        _name_map[h] = CoroInfo {
+            std::move(name), loc, fn
+        };
+        coro_monitor_event();
     }
-    ///get current instance of debug reporter
-    static debug_reporter &get_instance() {
-        return *get_instance_ptr();
+    virtual void coro_destroyed(std::coroutine_handle<> h) noexcept {
+        std::lock_guard _(_name_map_lock);
+        _name_map.erase(h);
+        coro_monitor_event();
     }
+    auto get_running_coros() const {
+        std::lock_guard _(_name_map_lock);
+        return _name_map;
+    }
+    
+    void coro_monitor_register() {
+        _flag.clear();
+    }
+    void coro_monitor_wait() {
+        _flag.wait(false);
+    }
+    void coro_monitor_event() {
+        if (!_flag.test_and_set()) {
+            _flag.notify_all();
+        }
+    }
+    
+#endif     
     
 protected:
+#ifdef COCLS_DEFINE_SET_CORO_NAME
+    mutable std::mutex _name_map_lock;
+    std::atomic_flag _flag;
+    struct HandleHash {std::size_t operator()(std::coroutine_handle<> h) const {
+       return reinterpret_cast<std::size_t>(h.address()); 
+    }};
+    std::unordered_map<std::coroutine_handle<>, CoroInfo, HandleHash> _name_map;    
+#endif
     
-    static debug_reporter *& get_instance_ptr() {
-        static debug_reporter inst;
-        static debug_reporter *inst_ptr = &inst;
-        return inst_ptr;
+};
+
+inline debug_reporter debug_reporter::inst;
+inline debug_reporter *debug_reporter::current_instance = &inst;
+}
+
+#ifdef COCLS_DEFINE_SET_CORO_NAME
+
+namespace cocls {
+
+void coro_monitor_register() {
+    debug_reporter::current_instance->coro_monitor_register();    
+}
+void coro_monitor_wait() {
+    debug_reporter::current_instance->coro_monitor_wait();    
+}
+void coro_monitor_event() {
+    debug_reporter::current_instance->coro_monitor_event();    
+}
+
+class set_coro_name { // @suppress("Miss copy constructor or assignment operator")
+public:
+    static bool await_ready() noexcept {return false;}
+    bool await_suspend(std::coroutine_handle<> h) noexcept {
+        debug_reporter::current_instance->set_coro_name(h, loc, fun, std::move(desc));
+        return false;
     }
+    static void await_resume() noexcept {};
+    
+    set_coro_name(const char *loc, const char *fun, std::string desc = std::string())
+        :loc(loc),fun(fun),desc(std::move(desc)) {}
+    
+protected:
+    const char *loc;
+    const char *fun;
+    std::string desc;
+    std::coroutine_handle<> _h;
 };
 
 
+#define COCLS_SET_CORO_NAME(...) co_await ::cocls::set_coro_name(__FILE__, __FUNCTION__ __VA_OPT__(,) __VA_ARGS__)
+
 
 }
+#else 
+#define COCLS_SET_CORO_NAME(...)
+#endif
 
 
 
 #endif /* SRC_COCLASSES_SRC_COCLASSES_DEBUG_H_ */
+
