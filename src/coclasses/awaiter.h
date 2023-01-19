@@ -305,7 +305,7 @@ inline void co_awaiter<promise_type, chain>::sync() noexcept  {
     class Awaiter: public abstract_awaiter<chain> {
     public:
         std::atomic_flag flag;        
-        virtual std::coroutine_handle<> resume_handle() {
+        virtual std::coroutine_handle<> resume_handle() override {
             Awaiter::resume();
             return std::noop_coroutine();
         }

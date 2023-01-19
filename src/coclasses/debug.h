@@ -24,6 +24,9 @@
 #endif
 #endif
 
+#ifdef COCLS_DEFINE_SET_CORO_NAME
+#include <unordered_map>
+#endif
 
 
 
