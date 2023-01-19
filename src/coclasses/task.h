@@ -241,6 +241,10 @@ public:
     
 protected:
     
+    task(promise_type_base &promise):_promise(&promise) {}
+    
+    friend class task_promise<T, Policy>;
+    
     template<typename A, typename B>
     friend class task;
     
@@ -300,7 +304,9 @@ public:
     static constexpr std::size_t counter_mask = static_cast<std::size_t>(-1) ^ ready_mask;
     
     //task promise is always ref/counted +1 during its execution
-    task_promise_base():_status_ref_count(1) {}          
+    //and additional +1 because get_return_object doesn't increase ref_count
+    //and this saves one extra atomic increment
+    task_promise_base():_status_ref_count(2) {}          
 
     //task promise can't be copied
     task_promise_base(const task_promise_base &) = delete;
@@ -544,7 +550,7 @@ public:
     [[no_unique_address]]  Policy _policy;
     
     auto get_return_object() {
-        return task<T, Policy>(this);
+        return task<T, Policy>(*this);
     }
 };
 
