@@ -304,13 +304,13 @@ inline void co_awaiter<promise_type, chain>::sync() noexcept  {
     
     class Awaiter: public abstract_awaiter<chain> {
     public:
-        std::atomic_flag flag;        
+        std::atomic<bool> flag = {false};        
         virtual std::coroutine_handle<> resume_handle() override {
             Awaiter::resume();
             return std::noop_coroutine();
         }
         virtual void resume() noexcept override {
-            flag.test_and_set();
+            flag.store(true);
             flag.notify_all();
         }
     };
@@ -368,6 +368,45 @@ public:
 protected:
     std::coroutine_handle<> _h;
 };
+
+///Suspends current coroutine and immediate resumes it under different resumption policy
+/**
+ * @note "immediate resume" also depends on the policy. For example, if the coroutine is
+ * resumed under dispatcher's policy, it is enqueued and resumed after the dispatcher finishes
+ * the current task
+ * 
+ * @tparam policy new policy. If you specify void, the current policy is used. This can be useful
+ * for queued resumption policy, which causes that current coroutine is paused and other
+ * queued coroutines can run (cooperative multitasking) 
+ */
+template<typename policy = void>
+class pause;
+
+template<typename policy>
+class pause: private policy {
+public:
+    template<typename ... Args>
+    explicit pause(Args && ... args):policy(std::forward<Args>(args)...) {}
+    
+    static bool await_ready() noexcept {return false;}
+    void await_suspend(std::coroutine_handle<> h) noexcept {
+        policy::resume(h);
+    }
+    static void await_resume() noexcept {}
+
+};
+
+template<>
+class pause<void> {
+public:
+    
+    template<typename policy>
+    static auto set_resumption_policy(pause<void> , policy &&p) {
+        return pause<typename std::remove_reference<policy>::type>(std::forward<policy>(p));
+    }
+    
+};
+
 
 
 }

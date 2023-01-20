@@ -64,7 +64,7 @@ public:
             auto h = _queue.front();
             _queue.pop();
             lk.unlock();
-            resumption_policy::queued::resume(h->resume_handle());
+            resumption_policy::queued::install_queue_and_resume(h->resume_handle());
             //if _current is nullptr, thread_pool has been destroyed 
             if (_current == nullptr) return;
             lk.lock();

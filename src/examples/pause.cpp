@@ -14,7 +14,6 @@
  */
 
 #include <coclasses/task.h>
-#include <coclasses/pause.h>
 #include <coclasses/parallel_resumption_policy.h>
 
 #include <thread>

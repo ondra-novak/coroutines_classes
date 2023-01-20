@@ -135,6 +135,10 @@ public:
             _h = h;
             return _owner._promise->next_async(this);
         }
+        
+        void subscribe_awaiter(abstract_awaiter *awt) {
+            _owner._promise->next_async(awt).resume();
+        }
 
 
     protected:
@@ -236,17 +240,6 @@ public:
     }
     
     
-    ///request next item. Callback is called when item is ready
-    /**
-     * @param fn callback function. Function has no arguments. To retrieve item, use
-     * done() to check, whether generator is done and if not, use value()
-     * 
-     *  
-     */
-    template<typename Fn>
-    auto operator>>(Fn &&fn) -> decltype(fn(), std::terminate()) {
-        _promise->next_cb(std::forward<Fn>(fn));
-    }
     
 protected:
 
@@ -271,54 +264,7 @@ public:
     
     using awaiter = abstract_awaiter<false>;
 
-    class awaiter_base: public awaiter {
-    public:
-        
-        void *operator new(std::size_t sz, reusable_storage &stor) {
-            return stor.alloc(sz);
-        }
-        void operator delete(void *ptr, reusable_storage &stor) {}
-        void operator delete(void *ptr, std::size_t) {}        
-    };
-    
-    class syncing_awaiter: public awaiter_base {
-    public:
-        virtual void resume() noexcept override {
-            _ready.test_and_set();
-            _ready.notify_all();
-        }
-        virtual std::coroutine_handle<> resume_handle() override {
-            syncing_awaiter::resume();
-            return std::noop_coroutine();
-        }
-        void wait() {
-            _ready.wait(false);
-        }
-
-    protected:
-        std::atomic_flag _ready;
-    };
-    
-    template<typename Fn>
-    class callback_awaiter: public awaiter_base { // @suppress("Miss copy constructor or assignment operator")
-    public:
-        callback_awaiter(generator_promise &owner, Fn &&fn):_owner(owner)
-            ,_fn(std::forward<Fn>(fn)) {}
-        virtual void resume() noexcept override {
-            auto fn(std::move(_fn)); //transfer function to the stack frame, because object will be destroyed 
-            _owner.after_callback_resume(this); 
-            delete this;
-            fn();
-            
-        }
-        virtual std::coroutine_handle<> resume_handle() override {
-            resume();
-            return std::noop_coroutine();
-        }
-        generator_promise &_owner;
-        Fn _fn;    
-        
-    };
+;   
     
     void destroy() {
         auto h = std::coroutine_handle<generator_promise<T> >::from_promise(*this);
@@ -334,18 +280,20 @@ public:
 
         bool await_ready() const noexcept {return false;}
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const noexcept {
-            if (_h) {
-                return _h->resume_handle();
-            } else {
-                return std::noop_coroutine();
-            }
+            return _h->resume_handle();
         }
-        void await_resume() const noexcept {};
+        static constexpr void await_resume()  noexcept {};
     };
 
+    static awaiter *load_awaiter(std::atomic<awaiter *> &a) {
+        auto awt = a.exchange(nullptr, std::memory_order_release);
+        a.notify_all();
+        return awt;
+    }
+    
     yield_suspender final_suspend() noexcept {
         _value = nullptr;
-        return yield_suspender{_awaiter};
+        return yield_suspender{load_awaiter(_awaiter)};
     }
     
     void unhandled_exception() {
@@ -354,11 +302,11 @@ public:
 
     yield_suspender yield_value(T &value) noexcept {
         _value = &value;
-        return yield_suspender{_awaiter};
+        return yield_suspender{load_awaiter(_awaiter)};
     }
     yield_suspender yield_value(T &&value) noexcept {
         _value = &value;
-        return yield_suspender{_awaiter};
+        return yield_suspender{load_awaiter(_awaiter)};
     }
 
     generator<T> get_return_object() {
@@ -367,91 +315,51 @@ public:
     
     void return_void() {}
     
+    
     bool done() {
         auto h = std::coroutine_handle<generator_promise<T> >::from_promise(*this);
         return h.done();
     }
     
     bool on_await_resume()  {
-        _awaiter = nullptr;
         if (_e) std::rethrow_exception(_e);
         return !done();
     }
 
     bool next() {
-        //avaiter must be null here
-        assert(_awaiter == nullptr);
+        //use empty awaiter to resume when value is ready
+        //because empty awaiter do nothing for resume 
+        [[maybe_unused]] auto chk = _awaiter.exchange(&empty_awaiter<false>::instance, std::memory_order_acquire);        
+        //previous awaiter must be cleared
+        assert(chk == nullptr);
         //retrieve handle
         auto h = std::coroutine_handle<generator_promise<T> >::from_promise(*this);
         //if coroutine is already done - return false
         if (h.done()) return false;
-        //resume and generate next item 
         //this call block until result is generated or until generator is suspended
         h.resume();
-        //_awaiter is set to non-null when generator is suspended
-        //in this case, result is not ready yet, we must perform synchronously waiting
-        if (_awaiter) {
-            //in this case syncing_awaiter is always there
-            auto s = static_cast<syncing_awaiter *>(_awaiter);
-            //wait for result
-            s->wait();
-            //delete awaiter
-            delete s;
-            //reset awaiter pointer
-            _awaiter = nullptr;
-        }
+        //ensure, that value is ready - synchronously wait
+        _awaiter.wait(&empty_awaiter<false>::instance);
         //check for exception
         if (_e) std::rethrow_exception(_e);
         //return true, if value is non-null
         return _value != nullptr;
     }
     
-    std::coroutine_handle<generator_promise<T> > next_async(awaiter *awt) {
-        assert(_awaiter == nullptr);
-        _awaiter = awt;
+    std::coroutine_handle<generator_promise<T> > next_async(awaiter *awt) {        
+        [[maybe_unused]] auto chk = _awaiter.exchange(awt, std::memory_order_acquire);
+        assert(chk == nullptr);
         return std::coroutine_handle<generator_promise<T> >::from_promise(*this);
-    }
-
-    template<typename X>
-    X &&await_transform(X &&x) {
-        //called when generator calls co_await. 
-        //in this case - regardless on result - generator
-        //can be suspended. If the awaiter is null, we performing sync
-        //reading. So we create syncing_awaiter to able blocking wait
-        
-        //if awaiter is not null, awaiter can solve suspension by own.
-        if (!_awaiter ) {
-            _awaiter = new(_var_storage) syncing_awaiter();
-        }
-        //forward awaiter
-        return std::forward<X>(x);
     }
     
     T *get() {return _value;}
 
-    void after_callback_resume(awaiter *awt) {
-        if (_awaiter == awt) _awaiter = nullptr;
-    }
-    
-    template<typename Fn>
-    void next_cb(Fn &&fn) {
-        auto h = std::coroutine_handle<generator_promise<T> >::from_promise(*this);
-        if (h.done()) {
-            fn();
-            return;
-        }
-        //when next_cb is called, there should be no pending awaiter        
-        assert(_awaiter == nullptr);
-        _awaiter = new (_var_storage) callback_awaiter<Fn>(*this, std::forward<Fn>(fn));
-        h.resume();
-    }
-    
     
 protected:
     T *_value = nullptr;
-    awaiter *_awaiter = nullptr;
+    std::atomic<awaiter *>_awaiter = nullptr;
     std::exception_ptr _e;
-    reusable_storage _var_storage;
+    
     
     
 };

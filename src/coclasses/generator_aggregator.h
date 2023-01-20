@@ -3,10 +3,43 @@
 #define SRC_COCLASSES_GENERATOR_AGGREGATOR_H_
 #include "generator.h"
 #include "limited_queue.h"
+#include "detached.h"
 
 namespace cocls {
 
 namespace _details {
+
+template<typename T>
+class GenCallback;
+
+template<typename T>
+using GenAggrQueue = limited_queue<GenCallback<T> *, primitives::single_item_queue<abstract_awaiter<> * > >; 
+
+template<typename T>
+class GenCallback: public abstract_awaiter<false> {
+public:
+    GenCallback(GenAggrQueue<T> &q,generator<T> gen):_q(q), _gen(std::move(gen)) {}
+    GenCallback(const GenCallback &) =delete;
+    GenCallback(GenCallback &&) =default;
+    GenCallback &operator=(const GenCallback &) = delete;
+    
+    virtual void resume() noexcept override  {
+        _q.push(this);
+    }        
+    virtual std::coroutine_handle<> resume_handle() noexcept override  {
+        GenCallback<T>::resume();
+        return std::noop_coroutine();
+    }
+    void charge() {
+        _gen.next().subscribe_awaiter(this);
+    }
+    generator<T> &get_generator() {
+        return _gen;
+    }
+protected:
+    GenAggrQueue<T> &_q;
+    generator<T> _gen;
+};
 
 
 //tracks count of active generators, handles final destruction
@@ -18,8 +51,7 @@ namespace _details {
  */
 template<typename T>
 struct generator_aggregator_controller {
-    using Queue = limited_queue<generator<T> *, primitives::single_item_queue<abstract_awaiter<> * > >;
-    generator_aggregator_controller(std::size_t count, Queue &queue):_count(count),_queue(queue) {}
+    generator_aggregator_controller(std::size_t count, GenAggrQueue<T> &queue):_count(count),_queue(queue) {}
     generator_aggregator_controller(const generator_aggregator_controller  &) = delete;
     generator_aggregator_controller &operator=(const generator_aggregator_controller  &) = delete;
     ~generator_aggregator_controller() {
@@ -36,8 +68,9 @@ struct generator_aggregator_controller {
     void fin() {_count--;}
     
     std::size_t _count;
-    Queue &_queue;
+    GenAggrQueue<T> &_queue;
 };
+
 
 }
 ///Aggregator of multiple generators
@@ -50,31 +83,32 @@ struct generator_aggregator_controller {
 template<typename T>
 generator<T> generator_aggregator(std::vector<generator<T> > list__) {
     
+    
+    
     std::exception_ptr exp;
     
-    using Queue = limited_queue<generator<T> *, primitives::single_item_queue<abstract_awaiter<> * > >; 
+    using Queue = _details::GenAggrQueue<T>; 
     using controller = _details::generator_aggregator_controller<T>;
+
+    std::vector<_details::GenCallback<T> > cbs;
+    cbs.reserve(list__.size());
+    Queue queue(list__.size());
+    controller cnt(list__.size(), queue);
     
     
-    std::vector<generator<T> > list(std::move(list__));
-    Queue queue(list.size());
-    controller cnt(list.size(), queue);
-    
-    for (auto &x: list) {
-        x >> [&x,&queue]{
-            queue.push(&x);
-        };
+    for (auto &x: list__) {
+        cbs.emplace_back(queue, std::move(x));
+        cbs.back().charge();
     }
     while (cnt) {
-        generator<T> *g = co_await queue.pop();
-        if (g->done()) {
+        _details::GenCallback<T> *gcb = co_await queue.pop();
+        auto &g = gcb->get_generator();
+        if (g.done()) {
             cnt.fin();
         } else {
             try {
-                co_yield g->value();
-                (*g) >> [g,&queue]{
-                    queue.push(g);
-                };
+                co_yield g.value();
+                gcb->charge();
             } catch (...) {
                 exp = std::current_exception();
                 cnt.fin();

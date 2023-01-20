@@ -11,7 +11,7 @@ cocls::generator<int> co_fib(cocls::thread_pool &pool) {
         int c = a+b;        
         co_yield c;        
         co_await pool;
-//        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         a = b;
         b = c;
     }
@@ -30,7 +30,7 @@ void reader(cocls::generator<int> gen) {
 }
 
 int main(int, char **) {
-
+    
     cocls::thread_pool pool(4);
     reader(co_fib(pool));    
     

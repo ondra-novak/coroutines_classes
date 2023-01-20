@@ -10,82 +10,97 @@
 
 namespace cocls {
 
-namespace _details {
-
-class queued_resumption_control {
-public:
-
-    static thread_local queued_resumption_control instance;
-
-    void resume(std::coroutine_handle<> h) {
-        if (!_active) {
-            _active = true;
-            h.resume();
-            while (!_queue.empty()) {
-                h = _queue.front();
-                _queue.pop();
-                h.resume();
-            }
-            _active = false;
-        } else {
-            _queue.push(h);
-        }
-    }
-    
 
 
-    bool is_active() const {return _active;}
-
-protected:
-    bool _active = false;
-    std::queue<std::coroutine_handle<> > _queue;
-
-};
-
-
-inline thread_local queued_resumption_control queued_resumption_control::instance;
-
-}
 
 
 namespace resumption_policy {
 
-///Implements queue on the current thread. If the coroutine is resumed, it is put into queue and resumed after current coroutine is suspended
+///Coroutines are scheduled using queue which is managed in current thread
 /**
- * the rules are - on the first resume, the coroutine is resumed immediately. 
- * Nested resumes are put into queue and resumed after current coroutine is suspended or
- * finished
+ * The queue is initialized when the first coroutine is called and the function
+ * doesn't return until the queue is empty. The queue is active only if there are
+ * running coroutines. When the last coroutine finishes, the queue is destroyed (and
+ * can be reinstalled again)
  * 
- * A task started under this policy is executed immediately.
+ * Coroutines are started immediately (no suspension at the beginning), however the first
+ * coroutine performs temporary suspend needed to initialize the queue. Further coroutines
+ * are started with no temporary suspension 
  * 
- * This resumption policy is recommended and it is default when resumption policy
- * is unspecified
+ * When coroutine is being resumed, its handle is placed to the queue and it is resumed once
+ * the current coroutine is finished or suspended.
  * 
+ * When a coroutine is finished, it performs symmetric transfer to the coroutine which is
+ * waiting on result. This literally skips the queue in favor awaiting coroutine. 
  */
 struct queued {
+    
+    
+    struct queue_impl {
+        
+        queue_impl() = default;
+        queue_impl(const queued &) = delete;
+        queue_impl&operator=(const queued &) = delete;
+        std::queue<std::coroutine_handle<> > _queue;
+
+        void run(std::coroutine_handle<> h) noexcept {
+            h.resume();
+            while (!_queue.empty()) {
+                _queue.front().resume();
+                _queue.pop();
+            }
+        }
+        void push(std::coroutine_handle<> h) noexcept {
+            _queue.push(h);
+        }
+
+    };
+    
+    static bool is_active() {
+        return instance != nullptr;
+    }
+
+    static void install_queue_and_resume(std::coroutine_handle<> h) {
+        queue_impl q;
+        instance = &q;
+        q.run(h);
+        instance = nullptr;        
+    }
+    
+    ///resume in queue
+    static void resume(std::coroutine_handle<> h) noexcept {
+        
+        if (instance) {
+            instance->push(h);
+        } else {
+            install_queue_and_resume(h);
+        }        
+    }
+
     struct initial_awaiter {
+        //initial awaiter is called with instance, however this instance is not used here
+        //because the object is always empty
         initial_awaiter(queued &) {}
-        bool await_ready() noexcept {
-            //check whether queue is already active
-            //awaiter is ready if queue exists, otherwise we need to install queue then return false
-            return _details::queued_resumption_control::instance.is_active();
+        //coroutine don't need to be temporary suspended if there is an instance of the queue
+        static bool await_ready() noexcept {return is_active();}
+        //we need to install queue before the coroutine can run
+        //this is the optimal place
+        //function installs queue and resumes under the queue 
+        static void await_suspend(std::coroutine_handle<> h) noexcept {
+            install_queue_and_resume(h);
         }
-        void await_suspend(std::coroutine_handle<> h) {
-            //this is called only when we need to install queue
-            //this resume does it automatically for us
-            _details::queued_resumption_control::instance.resume(h);
-        }
+        //always empty
         static constexpr void await_resume() noexcept {}
     };
     
-    ///resume in queue
-    static void resume(std::coroutine_handle<> h) {
-        _details::queued_resumption_control::instance.resume(h);
-    }
     static constexpr auto resume_handle(std::coroutine_handle<> h) {
         return h;
     }
+    
+    static thread_local queue_impl *instance;
 };
+
+inline thread_local queued::queue_impl *queued::instance = nullptr;
 
 }
 
