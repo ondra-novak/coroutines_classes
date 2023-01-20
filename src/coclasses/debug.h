@@ -148,13 +148,13 @@ inline debug_reporter *debug_reporter::current_instance = &inst;
 
 namespace cocls {
 
-void coro_monitor_register() {
+inline void coro_monitor_register() {
     debug_reporter::current_instance->coro_monitor_register();    
 }
-void coro_monitor_wait() {
+inline void coro_monitor_wait() {
     debug_reporter::current_instance->coro_monitor_wait();    
 }
-void coro_monitor_event() {
+inline void coro_monitor_event() {
     debug_reporter::current_instance->coro_monitor_event();    
 }
 
