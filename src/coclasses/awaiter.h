@@ -156,14 +156,55 @@ protected:
 
 };
 
+
+
 template<typename parent, typename policy>
 class co_awaiter_policy;
 
-///Generic awaiter used in most object to handle co_await
 template<typename promise_type, bool chain = false>
-class [[nodiscard]] co_awaiter: public abstract_owned_awaiter<promise_type, chain> {
+class co_awaiter_policy_base: public abstract_owned_awaiter<promise_type, chain> {
 public:
     using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
+    
+    ///Allows to change resumption policy.
+    /** This member is called by a task, when await_transform, to supply
+     * own policy. This method is static to able work well on derived awaiters
+     * 
+     * @param _this reference to _this object, but in the most child type
+     * @param p resumption policy
+     * @return awaiter with policy
+     */
+    template<typename _This, typename _Policy>
+    static co_awaiter_policy<_This, _Policy> set_resumption_policy(_This &&_this, _Policy &&p) {
+        return co_awaiter_policy<_This, _Policy>(std::forward<_Policy>(p), std::forward<_This>(_this));
+    }
+    
+#ifdef __CDT_PARSER__
+    //this helps to Eclipse CDT parser to recognize co_await conversion  
+    using ReturnValue = decltype(std::declval<co_awaiter<promise_type,chain> >().await_resume());
+
+    operator ReturnValue();
+#endif
+protected:
+    std::coroutine_handle<> _h;
+
+    virtual std::coroutine_handle<> resume_handle() noexcept  override {
+        return _h;
+    }
+    virtual void resume() noexcept  override {
+        resumption_policy::unspecified<void>::resume(_h);
+    }
+
+    template<typename,typename> friend class co_awaiter_policy;
+    
+};
+
+
+///Generic awaiter used in most object to handle co_await
+template<typename promise_type, bool chain = false>
+class [[nodiscard]] co_awaiter: public co_awaiter_policy_base<promise_type, chain> {
+public:
+    using co_awaiter_policy_base<promise_type, chain>::co_awaiter_policy_base;
 
     ///co_await related function
     bool await_ready() {
@@ -171,7 +212,7 @@ public:
     }
     ///co_await related function
     bool await_suspend(std::coroutine_handle<> h) {
-        _h = h; 
+        this->_h = h; 
         return this->_owner.subscribe_awaiter(this);
     }
     ///co_await related function
@@ -208,36 +249,6 @@ public:
         return this->_owner.subscribe_awaiter(awt);
     }
 
-    ///Allows to change resumption policy.
-    /** This member is called by a task, when await_transform, to supply
-     * own policy. This method is static to able work well on derived awaiters
-     * 
-     * @param _this reference to _this object, but in the most child type
-     * @param p resumption policy
-     * @return awaiter with policy
-     */
-    template<typename _This, typename _Policy>
-    static co_awaiter_policy<_This, _Policy> set_resumption_policy(_This &&_this, _Policy &&p) {
-        return co_awaiter_policy<_This, _Policy>(std::forward<_Policy>(p), std::forward<_This>(_this));
-    }
-    
-#ifdef __CDT_PARSER__
-    //this helps to Eclipse CDT parser to recognize co_await conversion  
-    using ReturnValue = decltype(std::declval<co_awaiter<promise_type,chain> >().await_resume());
-
-    operator ReturnValue();
-#endif
-protected:
-    std::coroutine_handle<> _h;
-
-    virtual std::coroutine_handle<> resume_handle() noexcept  override {
-        return _h;
-    }
-    virtual void resume() noexcept  override {
-        resumption_policy::unspecified<void>::resume(_h);
-    }
-
-    template<typename,typename> friend class co_awaiter_policy;
     
 };
 

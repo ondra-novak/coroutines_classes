@@ -42,6 +42,7 @@ add_executable (dispatcher_timers dispatcher_timers.cpp)
 add_executable (detached detached.cpp)
 add_executable (detached_thread_pool detached_thread_pool.cpp)
 add_executable (task_double_await task_double_await.cpp)
+add_executable (subtask subtask.cpp)
 
 
 
