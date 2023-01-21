@@ -175,10 +175,7 @@ public:
             default: break;
         }
         if (_h) {
- #ifdef COCLS_DEFINE_SET_CORO_NAME
-         debug_reporter::current_instance->coro_destroyed(_h);
- #endif
-       _h.destroy();
+            _h.destroy();
         }
     }
     
@@ -338,10 +335,7 @@ public:
     
     ~subtask() {
        if (_h) {
-#ifdef COCLS_DEFINE_SET_CORO_NAME
-        debug_reporter::current_instance->coro_destroyed(_h);
-#endif
-      _h.destroy();
+           _h.destroy();
        }
     }
     

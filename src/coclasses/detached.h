@@ -68,15 +68,7 @@ public:
               return initial_awaiter(_policy);
           }
           
-          struct final_awaiter: std::suspend_never {
-              #ifdef COCLS_DEFINE_SET_CORO_NAME
-              bool await_suspend(std::coroutine_handle<> h) noexcept {
-                  debug_reporter::current_instance->coro_destroyed(h);
-                  return false;
-              }
-              #endif
-          };
-          final_awaiter final_suspend() noexcept {return {}; }
+          std::suspend_never final_suspend() noexcept {return {}; }
 
           template<typename ... Args>
           void initialize_policy(Args &&... args) {

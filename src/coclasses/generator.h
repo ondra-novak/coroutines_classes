@@ -268,9 +268,6 @@ public:
     
     void destroy() {
         auto h = std::coroutine_handle<generator_promise<T> >::from_promise(*this);
-#ifdef COCLS_DEFINE_SET_CORO_NAME
-        debug_reporter::current_instance->coro_destroyed(h);
-#endif
         h.destroy();
     }
     

@@ -316,9 +316,6 @@ public:
     //destroys coroutine - this is possible after it is finished    
     void destroy() {
         assert("Attempt to destroy a running task. Missing co_await <task>?" && !!_my_handle);
-#ifdef COCLS_DEFINE_SET_CORO_NAME
-        debug_reporter::current_instance->coro_destroyed(_my_handle);
-#endif
         _my_handle.destroy();
     }
     
@@ -338,9 +335,6 @@ public:
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> myhandle) noexcept {
             //we need handle before task is destroyed
             if ((_owner._status_ref_count & counter_mask) == 0) {
-                #ifdef COCLS_DEFINE_SET_CORO_NAME
-                        debug_reporter::current_instance->coro_destroyed(myhandle);
-                #endif
                 return std::noop_coroutine();
             }
             _owner._my_handle = myhandle;            
