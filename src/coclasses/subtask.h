@@ -61,7 +61,7 @@ public:
         struct final_suspender: std::suspend_always { // @suppress("Miss copy constructor or assignment operator")
             final_suspender(promise_type *owner):_owner(owner) {}            
             promise_type *_owner;
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) {
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) noexcept {
                 return _owner->_awaiter->resume_handle();
             }
         };
@@ -143,7 +143,7 @@ public:
     protected:
         std::atomic<bool> flag = {false};
     };    
-    
+        
     ///construct subtask future by the coroutine itself
     /**
      * @param h handle of coroutine
@@ -164,6 +164,13 @@ public:
                 case State::running: assert(!"Running subtask can't be moved");break;
                 default:break;
             }
+    }
+    subtask &operator=(subtask &&other) {
+        if (this != &other) {
+            this->~subtask();
+            new(this) subtask(std::move(other));            
+        }
+        return *this;
     }
     
     ///destructor
@@ -201,7 +208,10 @@ public:
     static subtask set_exception() {
         return subtask(std::current_exception());
     }
-
+    static subtask set_empty() {
+        return subtask((std::coroutine_handle<promise_type>()));
+    }
+    
     ///Run subtask and wait for result
     T &join() {
 
@@ -259,7 +269,7 @@ public:
         struct final_suspender: std::suspend_always { // @suppress("Miss copy constructor or assignment operator")
             final_suspender(promise_type *owner):_owner(owner) {}            
             promise_type *_owner;
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) {
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) noexcept {
                 return _owner->_awaiter->resume_handle();
             }
         };
@@ -325,6 +335,11 @@ public:
         std::atomic<bool> flag = {false};
     };
 
+    ///Retrieves the awaiter
+    awaiter operator co_await() {
+        return *this;
+    }
+
     
     subtask(std::coroutine_handle<promise_type> h):_h(h),_state(State::unused) {}
     subtask(const subtask &) = delete;
@@ -335,7 +350,13 @@ public:
         ,_state(other._state) {
             other._h = {};
     }
-    
+    subtask &operator=(subtask &&other) {
+        if (this != &other) {
+            this->~subtask();
+            new(this) subtask(std::move(other));            
+        }
+        return *this;
+    }    
     ~subtask() {
        if (_h) {
 #ifdef COCLS_DEFINE_SET_CORO_NAME
@@ -345,9 +366,10 @@ public:
        }
     }
     
-    static subtask<void> set_result() {return subtask<void>(State::result, {});}
-    static subtask<void> set_exception() {return subtask<void>(State::exception, std::current_exception());}
-    static subtask<void> set_exception(std::exception_ptr e) {return subtask<void>(State::exception, std::move(e));}
+    static subtask set_result() {return subtask<void>(State::result, {});}
+    static subtask set_exception() {return subtask<void>(State::exception, std::current_exception());}
+    static subtask set_exception(std::exception_ptr e) {return subtask<void>(State::exception, std::move(e));}
+    static subtask set_empty() {return subtask((std::coroutine_handle<promise_type>()));}
 
     void join() {
 
