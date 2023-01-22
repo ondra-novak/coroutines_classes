@@ -27,13 +27,13 @@ namespace cocls {
  * - doesn't contains storage
  * - exceptions are ignored
  *
- * It is supposed to be used along with other synchronzation primitive, such a future.
+ * It is supposed to be used along with other synchronization primitive, such a future.
  * You pass promise as argument. Then counterpart future object can be awaited.
  *
  * For such basic usage, the coroutine doesn't contains storage for the value,
  * and also cannot be awaited. For this reason, you don't need to save coroutine
  * result object. The coroutine is detached. Once coroutine is finished, it automatically
- * destroyes its frame
+ * destroys its frame
  *
  * @tparam _Policy resumption policy. Default value is void - which uses
  * default resumption policy
@@ -70,6 +70,7 @@ public:
           
           struct final_awaiter: std::suspend_never {
               #ifdef COCLS_DEFINE_SET_CORO_NAME
+              static constexpr bool await_ready() noexcept {return false;}
               bool await_suspend(std::coroutine_handle<> h) noexcept {
                   debug_reporter::current_instance->coro_destroyed(h);
                   return false;
