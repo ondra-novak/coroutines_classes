@@ -61,8 +61,11 @@ public:
         struct final_suspender: std::suspend_always { // @suppress("Miss copy constructor or assignment operator")
             final_suspender(promise_type *owner):_owner(owner) {}            
             promise_type *_owner;
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) noexcept {
-                return _owner->_awaiter->resume_handle();
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
+                auto awt =_owner->_awaiter;
+                _owner->_future->_h = {};
+                h.destroy();
+                return awt->resume_handle();
             }
         };
         ///Specifies, that coroutine is started suspended 
@@ -182,10 +185,7 @@ public:
             default: break;
         }
         if (_h) {
- #ifdef COCLS_DEFINE_SET_CORO_NAME
-         debug_reporter::current_instance->coro_destroyed(_h);
- #endif
-       _h.destroy();
+            _h.destroy();
         }
     }
     
@@ -269,8 +269,11 @@ public:
         struct final_suspender: std::suspend_always { // @suppress("Miss copy constructor or assignment operator")
             final_suspender(promise_type *owner):_owner(owner) {}            
             promise_type *_owner;
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) noexcept {
-                return _owner->_awaiter->resume_handle();
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {                
+                auto awt =_owner->_awaiter;
+                _owner->_future->_h = {};
+                h.destroy();
+                return awt->resume_handle();
             }
         };
         std::suspend_always initial_suspend() noexcept {return {};}
@@ -359,10 +362,7 @@ public:
     }    
     ~subtask() {
        if (_h) {
-#ifdef COCLS_DEFINE_SET_CORO_NAME
-        debug_reporter::current_instance->coro_destroyed(_h);
-#endif
-      _h.destroy();
+           _h.destroy();
        }
     }
     

@@ -97,12 +97,18 @@ public:
         const char *fn;
     };
     
-    virtual void set_coro_name(std::coroutine_handle<> h, const char *loc, const char *fn, std::string name = std::string()) {
+    virtual bool set_coro_name(std::coroutine_handle<> h, const char *loc, const char *fn, std::string name = std::string()) {
         std::lock_guard _(_name_map_lock);
-        _name_map[h] = CoroInfo {
+        auto st = _name_map.emplace(h,CoroInfo {
             std::move(name), loc, fn
-        };
+        });
+        if (!st.second) {
+            st.first->second = CoroInfo {
+                std::move(name), loc, fn
+            }; 
+        }        
         coro_monitor_event();
+        return st.second;
     }
     virtual void coro_destroyed(std::coroutine_handle<> h) noexcept {
         std::lock_guard _(_name_map_lock);
@@ -162,10 +168,13 @@ class set_coro_name { // @suppress("Miss copy constructor or assignment operator
 public:
     static bool await_ready() noexcept {return false;}
     bool await_suspend(std::coroutine_handle<> h) noexcept {
-        debug_reporter::current_instance->set_coro_name(h, loc, fun, std::move(desc));
+        _h = h;
+        reg = debug_reporter::current_instance->set_coro_name(h, loc, fun, std::move(desc));
         return false;
     }
-    static void await_resume() noexcept {};
+    std::coroutine_handle<> await_resume() noexcept {
+        return reg?_h:std::coroutine_handle<>();
+    };
     
     set_coro_name(const char *loc, const char *fun, std::string desc = std::string())
         :loc(loc),fun(fun),desc(std::move(desc)) {}
@@ -175,10 +184,26 @@ protected:
     const char *fun;
     std::string desc;
     std::coroutine_handle<> _h;
+    bool reg = false;
 };
 
 
-#define COCLS_SET_CORO_NAME(...) co_await ::cocls::set_coro_name(__FILE__, __FUNCTION__ __VA_OPT__(,) __VA_ARGS__)
+class unset_coro_name {
+public:
+    unset_coro_name (std::coroutine_handle<> h):_h(h) {}
+    unset_coro_name (const unset_coro_name  &) = delete;
+    unset_coro_name &operator=(const unset_coro_name  &) = delete;
+    ~unset_coro_name() {
+        debug_reporter::current_instance->coro_destroyed(_h);
+    }
+protected:
+    std::coroutine_handle<> _h;
+    
+};
+
+#define COCLS_DEBUG_CORO_MONITOR_VARNAME(prefix,id) COCLS_DEBUG_CORO_MONITOR_VARNAME_MERGE(prefix,id)
+#define COCLS_DEBUG_CORO_MONITOR_VARNAME_MERGE(prefix,id) prefix##id
+#define COCLS_SET_CORO_NAME(...) ::cocls::unset_coro_name COCLS_DEBUG_CORO_MONITOR_VARNAME(___cocls_debug_coro_monitor_,__LINE__) (co_await ::cocls::set_coro_name(__FILE__, __FUNCTION__ __VA_OPT__(,) __VA_ARGS__));
 
 
 }
