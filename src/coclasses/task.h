@@ -333,12 +333,9 @@ public:
         //using symmetric transfer
         //this speeds up returning from coroutine to coroutine        
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> myhandle) noexcept {
-            //we need handle before task is destroyed
-            if ((_owner._status_ref_count & counter_mask) == 0) {
-                return std::noop_coroutine();
-            }
-            _owner._my_handle = myhandle;            
+  
             auto noop = std::noop_coroutine();
+            std::coroutine_handle<> ret = noop;
             //get list of awaiters
             auto awt = _owner._awaiter_chain.exchange(&empty_awaiter<true>::disabled);
             while (awt) {
@@ -360,11 +357,17 @@ public:
                         x->resume();
                     }
                     //perform symmetric transfer to chosen coroutine
-                    return h;
+                    ret = h;
                 }
             }
+            
+            if ((_owner._status_ref_count & counter_mask) == 0) {
+                myhandle.destroy();
+            } else {
+                _owner._my_handle = myhandle;            
+            }
             //exit to the previous stack frame
-            return std::noop_coroutine(); 
+            return ret; 
         }
     protected:
         task_promise_base &_owner;
