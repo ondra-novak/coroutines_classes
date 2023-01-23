@@ -26,8 +26,8 @@ int main(int, char **) {
     gens.push_back(co_fib(pool, 30, 50));
     auto gen = cocls::generator_aggregator(std::move(gens));
     for(;;) {
-        std::optional<int> val = gen();
-        if (val.has_value()) {
+        auto val = gen();
+        if (val) {
             std::cout << *val << std::endl;
         } else {
             std::cout << "Done" << std::endl;

@@ -19,8 +19,8 @@ cocls::generator<int> co_fib(cocls::thread_pool &pool) {
 
 void reader(cocls::generator<int> gen) {
     for (int i = 0; i < 20; i++) {
-        std::optional<int> val = gen();
-        if (val.has_value()) {
+        auto val = gen();
+        if (val) {
             std::cout << *val << std::endl;
         } else {
             std::cout << "Done" << std::endl;

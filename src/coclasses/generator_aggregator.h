@@ -30,8 +30,9 @@ public:
         GenCallback<T>::resume();
         return std::noop_coroutine();
     }
-    void charge() {
-        _gen.next().subscribe_awaiter(this);
+    template<typename ... Arg>
+    void charge(Arg && ... args) {
+        _gen.next(std::forward<Arg>(args)...).subscribe_awaiter(this);
     }
     generator<T> &get_generator() {
         return _gen;
@@ -98,7 +99,11 @@ generator<T> generator_aggregator(std::vector<generator<T> > list__) {
     
     for (auto &x: list__) {
         cbs.emplace_back(queue, std::move(x));
-        cbs.back().charge();
+        if constexpr(std::is_void_v<typename generator<T>::arg_type>) {
+            cbs.back().charge();
+        } else {
+            queue.push(&cbs.back());
+        }
     }
     while (cnt) {
         _details::GenCallback<T> *gcb = co_await queue.pop();
@@ -107,8 +112,13 @@ generator<T> generator_aggregator(std::vector<generator<T> > list__) {
             cnt.fin();
         } else {
             try {
-                co_yield g.value();
-                gcb->charge();
+                if constexpr(std::is_void_v<typename generator<T>::arg_type>) {
+                    co_yield g.value();
+                    gcb->charge();
+                } else {
+                    auto arg = co_yield g.value();
+                    gcb->charge(arg);
+                }
             } catch (...) {
                 exp = std::current_exception();
                 cnt.fin();

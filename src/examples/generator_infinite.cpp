@@ -19,7 +19,7 @@ int main(int, char **) {
     auto gen = co_fib();
     for (int i = 0; i < 20; i++) {
         auto val = gen();
-        if (val.has_value()) {
+        if (val) {
             std::cout << *val << std::endl;
         } else {
             std::cout << "Done" << std::endl;

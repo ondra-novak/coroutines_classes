@@ -10,7 +10,6 @@
 #include "iterator.h"
 
 #include <memory>
-#include <optional>
 #include <functional>
 
 namespace cocls {
@@ -69,6 +68,8 @@ class generator_promise;
 template<typename T>
 class generator {
 public:
+    
+    using arg_type = void;
 
     using promise_type = generator_promise<T>;
   
@@ -100,9 +101,9 @@ public:
      * */
     class next_awaiter: public abstract_awaiter<false> {
     public:
-        next_awaiter(generator &owner):_owner(owner) {}
+        next_awaiter(generator *owner):_owner(owner) {}
         next_awaiter(const next_awaiter &) = default;
-        next_awaiter &operator=(const next_awaiter &) = delete;
+        next_awaiter &operator=(const next_awaiter &) = default;
         
         
         ///retrieves whether next item is available
@@ -111,7 +112,7 @@ public:
          * @retval false next item is not available
          */
         operator bool() const {
-            return _owner._promise->next();
+            return _owner->_promise->next();
         }
         ///retrieves whether generator is done
         /**
@@ -125,24 +126,24 @@ public:
 
         
         bool await_ready() noexcept { 
-            return _owner._promise->done();
+            return _owner->_promise->done();
         }
         
         bool await_resume() {
-            return _owner._promise->on_await_resume();
+            return _owner->_promise->on_await_resume();
         }
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
             _h = h;
-            return _owner._promise->next_async(this);
+            return _owner->_promise->next_async(this);
         }
         
         void subscribe_awaiter(abstract_awaiter *awt) {
-            _owner._promise->next_async(awt).resume();
+            _owner->_promise->next_async(awt).resume();
         }
 
 
     protected:
-        generator &_owner;
+        generator *_owner;
         std::coroutine_handle<> _h;
         
         virtual void resume() noexcept override {
@@ -154,6 +155,44 @@ public:
         
         
         
+    };
+    class call_awaiter: public next_awaiter { // @suppress("Miss copy constructor or assignment operator")
+    public:
+        using next_awaiter::next_awaiter;
+        operator bool() const {
+            return _value || this->_owner->done() || fetch();
+        }
+        bool operator !() const {
+            return !operator bool();
+        }
+        T *operator->() const {
+            return *this?_value:nullptr;
+        }
+        T &operator *() const {
+            return *(*this?_value:nullptr);
+        }
+        operator T *() const {
+            return *this?_value:nullptr;;
+        }
+        bool await_ready() {
+            return _value || this->_owner.done();
+        }
+        T *await_resume() {
+            if (this->_owner->_promise->on_await_resume()) {
+                return this->_owner._promise->get();
+            } else {
+                return nullptr;
+            }
+        }
+        
+    protected:
+        mutable T *_value = nullptr;
+        
+        bool fetch() const {
+            bool b = this->_owner->_promise->next();
+            if (b) _value = this->_owner->_promise->get();
+            return b;
+        }
     };
 
     
@@ -195,7 +234,7 @@ public:
      * 
      */
     next_awaiter next() {
-        return *this;
+        return this;
     }
     ///Retrieves current value
     /**
@@ -216,29 +255,20 @@ public:
         return *_promise->get();
     }
 
+    
+    
     ///Run generator and retrieve next item
     /**
-     * @return if the next item is available, function returns optional object with value.
-     * If the generator is done, returns empty value
-     * 
-     * @note function is synchronous. If the generator is asynchronous, function blocks current
-     * thread until the generator is done. If you need co_await the generator, just call co_await on
-     * its object directly
-     * 
+     * @return returns pointer to next item or null, if there is no item available
      */
-    std::optional<T> operator()() {
-        if (_promise->next()) {
-            return std::optional<T>(std::move(*_promise->get()));
-        } else {
-            return {};
-        }
+    call_awaiter operator()() {
+        return this;
     }
     
     ///Checks, whether 
     bool done() const {
         return _promise->done();
     }
-    
     
     
 protected:
@@ -355,6 +385,311 @@ public:
 protected:
     T *_value = nullptr;
     std::atomic<awaiter *>_awaiter = nullptr;
+    std::exception_ptr _e;
+    
+    
+    
+};
+
+///Construct generator which is able to recieve values through the co_yield
+/**
+ * @tparam Ret type of value passed to co_yield and returned by the generator
+ * @tparam Arg type of value passed to the generator and returned by co_yield
+ */
+template<typename Ret, typename Arg>
+class generator<Ret(Arg)> {
+public:
+    using value_type = Ret;
+    
+    using arg_type = Arg;
+
+    using promise_type = generator_promise<Ret(Arg)>;
+
+    ///Allows to ask for next item
+    /**
+     * works as awaiter but it also defines operator bool to perform
+     * synchronous access - so asking whether there is next item executes
+     * the generator
+     */
+    class next_awaiter: public abstract_awaiter<false> {
+    public:        
+        next_awaiter(generator *owner, Arg &arg):_owner(owner),_args(arg) {}
+        next_awaiter(const next_awaiter &) = default;
+        next_awaiter &operator=(const next_awaiter &) = default;
+        
+        
+        ///retrieves whether next item is available
+        /**
+         * @retval true next item is available
+         * @retval false next item is not available
+         */
+        operator bool() const {
+            return _owner->_promise->next();
+        }
+        ///retrieves whether generator is done
+        /**
+         * @retval true generator done
+         * @return false generator is not done yet
+         */
+        bool operator !() const {
+            return !operator bool();
+        }
+        ///await this state
+        
+        bool await_ready() noexcept { 
+            return _owner->_promise->done();
+        }
+        
+        bool await_resume() {
+            return _owner->_promise->on_await_resume();
+        }
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+            _h = h;
+            return _owner->_promise->next_async(this, _args);
+        }
+        
+        void subscribe_awaiter(abstract_awaiter *awt) {
+            _owner->_promise->next_async(awt,_args).resume();
+        }
+    protected:        
+        generator *_owner;
+        std::coroutine_handle<> _h;
+        Arg & _args;
+        
+        virtual void resume() noexcept override {
+            _h.resume();
+        }
+        virtual std::coroutine_handle<void> resume_handle() override {
+            return _h;
+        }
+    };
+
+    ///Awaiter but also can act as a pointer to value
+    /**
+     * If object is used as pointer, it perform synchronous access. 
+     * Use co_await to perform asynchronous access
+     */
+    class call_awaiter: public next_awaiter { // @suppress("Miss copy constructor or assignment operator")
+    public:
+        using next_awaiter::next_awaiter;
+        
+        operator bool() const {
+            return _value || this->_owner->done() || fetch();
+        }
+        bool operator !() const {
+            return !operator bool();
+        }
+        Ret *operator->() const {
+            return *this?_value:nullptr;
+        }
+        Ret &operator *() const {
+            return *(*this?_value:nullptr);
+        }
+        operator Ret *() const {
+            return *this?_value:nullptr;;
+        }
+        bool await_ready() {
+            return _value || this->_owner->done();
+        }
+        Ret *await_resume() {
+            if (this->_owner->_promise->on_await_resume()) {
+                return this->_owner->_promise->get();
+            } else {
+                return nullptr;
+            }
+        }
+        
+    protected:
+        mutable Ret *_value = nullptr;
+        
+        bool fetch() const {
+            bool b = this->_owner->_promise->next(this->_args);
+            if (b) _value = this->_owner->_promise->get();
+            return b;
+        }
+    };
+    
+    ///construct empty generator variable - can be assigned
+    generator() = default;
+    generator(promise_type *promise):_promise(promise) {}
+
+    ///Retrieve ID of this coroutine
+    coro_id get_id() {
+        return std::coroutine_handle<promise_type>::from_promise(*_promise).address();
+    }
+    next_awaiter next(Arg& arg) {
+        return next_awaiter(this, arg);
+    }
+    next_awaiter next(Arg&& arg) {
+        return next_awaiter(this, arg);
+    }
+    ///Retrieves current value
+    /**
+     * @return current value
+     * 
+     * @note you need to call next() or check for done()
+     */
+    Ret &value() {
+        return *_promise->get();
+    }
+    ///Retrieves current value
+    /**
+     * @return current value
+     * 
+     * @note you need to call next() or check for done()
+     */
+    const Ret &value() const {
+        return *_promise->get();
+    }
+
+    ///Run generator and retrieve next item
+    /**
+     * @param arg argument passed to the generator
+     * @return hybrid object, which can be awaiter or can access to the next
+     * item while item is retrieved on the first access if the value is converted
+     *  to Ret *
+     */
+    call_awaiter /* Ret* */ operator()(Arg && arg) {
+        return call_awaiter(this, arg);
+    }
+
+    ///Run generator and retrieve next item
+    /**
+     * @param arg argument passed to the generator
+     * @return hybrid object, which can be awaiter or can access to the next
+     * item while item is retrieved on the first access if the value is converted
+     *  to Ret *
+     */
+    call_awaiter /* Ret* */operator()(Arg & arg) {
+        return call_awaiter(this, arg);
+    }
+
+    ///Checks, whether generator is done 
+    bool done() const {
+        return _promise->done();
+    }
+    
+    
+    
+protected:
+
+    struct Deleter {
+    public:
+        void operator()(promise_type *p) {
+            p->destroy();
+        }
+    };
+    
+    std::unique_ptr<promise_type, Deleter> _promise;    
+    
+    promise_type *get_promise() const {return _promise.get();}
+};
+
+template<typename Ret, typename Arg>
+class generator_promise<Ret(Arg)>: public coro_allocator {
+public:
+    generator_promise() = default;
+    generator_promise(const generator_promise &) = delete;
+    generator_promise &operator=(const generator_promise &) = delete;
+    
+    using awaiter = abstract_awaiter<false>;
+    using argstuple = std::tuple<Arg>;
+
+;   
+    
+    void destroy() {
+        auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
+        h.destroy();
+    }
+    
+    static std::suspend_never initial_suspend() noexcept {return {};}
+    struct yield_suspender { // @suppress("Miss copy constructor or assignment operator")
+        abstract_awaiter<> *_h;
+        Arg **_arg;
+
+        bool await_ready() const noexcept {return false;}
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> ) const noexcept {
+            return _h->resume_handle();
+        }
+        Arg &await_resume()  noexcept {return **_arg;};
+    };
+
+    static awaiter *load_awaiter(std::atomic<awaiter *> &a) {
+        auto awt = a.exchange(nullptr, std::memory_order_release);
+        a.notify_all();
+        return awt;
+    }
+    
+    yield_suspender final_suspend() noexcept {
+        _value = nullptr;
+        return yield_suspender{load_awaiter(_awaiter), &_arg};
+    }
+    
+    void unhandled_exception() {
+        _e= std::current_exception();
+    }
+
+    yield_suspender yield_value(Ret &value) noexcept {
+        _value = &value;
+        return yield_suspender{load_awaiter(_awaiter), &_arg};
+    }
+    yield_suspender yield_value(Ret &&value) noexcept {
+        _value = &value;
+        return yield_suspender{load_awaiter(_awaiter), &_arg};
+    }
+
+    generator<Ret(Arg)> get_return_object() {
+        return generator<Ret(Arg)>(this);
+    }
+    
+    void return_void() {}
+    
+    
+    bool done() {
+        auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
+        return h.done();
+    }
+    
+    bool on_await_resume()  {
+        if (_e) std::rethrow_exception(_e);
+        return !done();
+    }
+
+    bool next(Arg &arg) {
+        //use empty awaiter to resume when value is ready
+        //because empty awaiter do nothing for resume 
+        [[maybe_unused]] auto chk = _awaiter.exchange(&empty_awaiter<false>::instance, std::memory_order_acquire);        
+        //previous awaiter must be cleared
+        assert(chk == nullptr);
+        //retrieve handle
+        auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
+        //if coroutine is already done - return false
+        if (h.done()) return false;
+        _arg = &arg;
+        //this call block until result is generated or until generator is suspended
+        h.resume();
+        //ensure, that value is ready - synchronously wait
+        _awaiter.wait(&empty_awaiter<false>::instance);
+        //check for exception
+        if (_e) std::rethrow_exception(_e);
+        //return true, if value is non-null
+        return _value != nullptr;
+    }
+    
+    std::coroutine_handle<generator_promise> next_async(awaiter *awt, Arg &arg) {        
+        [[maybe_unused]] auto chk = _awaiter.exchange(awt, std::memory_order_acquire);
+        assert(chk == nullptr);
+        _arg = &arg;
+        return std::coroutine_handle<generator_promise>::from_promise(*this);
+    }
+    
+    Ret *get() {return _value;}
+
+    
+protected:
+    Ret *_value = nullptr;
+    Arg *_arg = nullptr;
+    std::atomic<awaiter *>_awaiter = &empty_awaiter<false>::instance;
     std::exception_ptr _e;
     
     
