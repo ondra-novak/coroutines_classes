@@ -18,7 +18,7 @@ int main(int, char **) {
 
     auto gen = co_fib(20);
     auto val = gen();
-    while (val.has_value()) {
+    while (val) {
         std::cout << *val << std::endl;
         val = gen();
     }

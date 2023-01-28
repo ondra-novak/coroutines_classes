@@ -28,7 +28,7 @@ int main(int, char **) {
     
     for (int i = 0; i < 40; i++) {
         auto val = gen();
-        if (val.has_value()) {
+        if (val) {
             std::cout << *val << std::endl;
         } else {
             std::cout << "Done" << std::endl;
