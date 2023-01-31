@@ -8,7 +8,7 @@
 #ifndef SRC_COCLASSES_DETACHED_H_
 #define SRC_COCLASSES_DETACHED_H_
 
-#include "co_alloc.h"
+
 
 #include "debug.h"
 
@@ -44,7 +44,7 @@ public:
 
     using Policy = std::conditional_t<std::is_void_v<_Policy>,resumption_policy::unspecified<void>,_Policy>;
 
-    class promise_type: public coro_allocator {
+    class promise_type: public coro_promise_base {
     public:
 
         template<typename Awt>
@@ -67,7 +67,7 @@ public:
           initial_awaiter initial_suspend()  noexcept {
               return initial_awaiter(_policy);
           }
-          
+
           std::suspend_never final_suspend() noexcept {return {}; }
 
           template<typename ... Args>

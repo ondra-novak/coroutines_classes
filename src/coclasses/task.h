@@ -8,10 +8,11 @@
 
 #include "awaiter.h"
 #include "common.h"
-#include "co_alloc.h"
 #include "debug.h"
 #include "exceptions.h"
 #include "resumption_policy.h"
+#include "poolalloc.h"
+
 
 #include <atomic>
 #include <coroutine>
@@ -25,7 +26,7 @@ namespace cocls {
 
 ///Coroutine promise object - part of coroutine frame
 /** This object is never used directly, but it is essential object to support coroutines
- * 
+ *
  */
 template<typename T, typename Policy> class task_promise;
 
@@ -42,27 +43,27 @@ template<std::size_t space> class static_storage;
  *      co_return 42;
  * }
  * @endcode
- * 
+ *
  * Task is actually a kind of a smart pointer which holds the
- * coroutine frame even if the coroutine is already finished. You 
+ * coroutine frame even if the coroutine is already finished. You
  * can copy this object, or await this object. You can multiple await
  * at the time. Once the result is available, all waiting coroutines
  * are resumed
- * 
+ *
  * @tparam Policy specifies resumption policy for this coroutine. This policy
  * is used for initial resuption and for all co_await when the awaiter supports
- * function resumption_policy::_awaiter_concept::set_resumption_policy(). 
- * 
+ * function resumption_policy::_awaiter_concept::set_resumption_policy().
+ *
  * If void specified, then default_resumption_policy is used. You can specialize
  * this template to void to change own default_resumption_polici
- * 
+ *
  * @see resumption_policy
- * 
+ *
  */
-template<typename T = void, typename Policy = void> 
+template<typename T = void, typename Policy = void>
 class task {
 public:
-    
+
     using promise_type = task_promise<T, Policy>;
     using promise_type_base = task_promise_value<T>;
     using value_type = T;
@@ -70,14 +71,14 @@ public:
     ///You can create empty task, which can be initialized later by assign
     /** For the task<void>, the object is already initialized and co_await on such task
      * is always resolved
-     */ 
+     */
     task() = default;
 
     ///Create task which has already result
     /**
      * Function is useful when result is already known. F
      * @param args arguments are used to construct the result
-     * @return finished task 
+     * @return finished task
      */
     template<typename ... Args>
     static task set_result(Args && ... args);
@@ -85,20 +86,20 @@ public:
     ///Create task which has already result - in exception state
     /**
      * Function captures current exception
-     * @return finished task 
+     * @return finished task
      */
     static task set_exception();
-    
+
     ///Create task which has already result - in exception state
     /**
      * @param e exception
      * Function captures current exception
-     * @return finished task 
+     * @return finished task
      */
     static task set_exception(std::exception_ptr e);
 
-    
-    ///task is internaly constructed from pointer to a promise  
+
+    ///task is internaly constructed from pointer to a promise
     task(promise_type_base *p): _promise(p) {
         _promise->add_ref();
     }
@@ -106,7 +107,7 @@ public:
     ~task() {
         if (_promise) _promise->release_ref();
     }
-    
+
     ///you can copy task, which just increases references
     task(const task &other):_promise(other._promise) {
         _promise->add_ref();
@@ -129,28 +130,28 @@ public:
         if (this != &other) {
             if (_promise) _promise->release_ref();
             _promise = other._promise;
-            other._promise = nullptr;        
+            other._promise = nullptr;
         }
         return *this;
     }
     ///task can be awaited
     /**
      * @return awaiter
-     * 
+     *
      * awaiting the task causes suspend of current coroutine until
      * the awaited task is finished
-     *     
+     *
      */
     co_awaiter<promise_type_base, true> operator co_await() {
         return *_promise;
     }
-    
-    
+
+
     ///Determines whether task is finished and return value is ready
     /**
      * The main purpose of this function is to avoid calling costly coroutine when the
-     * task is already finished.  
-     * 
+     * task is already finished.
+     *
      * @retval true task is finished and return value is ready
      * @retval false task is not finished yet
      */
@@ -161,20 +162,20 @@ public:
     ///Determines whether task is finished and return value is ready
     /**
      * The main purpose of this function is to avoid calling costly coroutine when the
-     * task is already finished.  
-     *    
+     * task is already finished.
+     *
      * @retval true task is finished and return value is ready
      * @retval false task is not finished yet
      */
     bool done() const {
         return is_ready();
     }
-    
+
     ///Retrieve return value of the task
-    /** 
+    /**
      * @return return value
      * @exception value_not_ready_exception requested value while task is still pending
-     * 
+     *
      * @note Useful only when task is already finished. Otherwise use co_await or join()
      */
     std::add_lvalue_reference_t<T> value() {
@@ -191,8 +192,8 @@ public:
         co_awaiter<promise_type_base, true> aw(*_promise);
         return aw.wait();
     }
-    
-    
+
+
     ///Join the task synchronously, but do not pick result
     /**
      * Allows to synchronize code, waiting for task to finish, but
@@ -203,13 +204,13 @@ public:
         aw.sync();
     }
 
-    
+
     ///Retrieve unique coroutine identifier
     coro_id get_id() const {
         return _promise;
     }
-    
-   
+
+
     ///Determines whether object contains a valid task
     bool valid() const {
         return _promise!=nullptr;
@@ -218,9 +219,9 @@ public:
     ///Allows to convert this object to object with unspecified policy
     /**
      * This helps to work with task<> objects, where policy has no meaning
-     * 
+     *
      * Calling initialize_policy() after conversion is UB
-     */ 
+     */
     operator task<T>() {
         return task<T>(_promise);
     }
@@ -229,8 +230,8 @@ public:
     /**
      * For resumption policies with arguments, this allows to pass arguments to
      * the policy associated with the task. Such policies can't execute the task
-     * until the policy is initialized. 
-     * 
+     * until the policy is initialized.
+     *
      * @param args arguments passed to the policy
      */
     template<typename ... Args>
@@ -238,19 +239,19 @@ public:
         static_cast<promise_type *>(_promise)->initialize_policy(std::forward<Args>(args)...);
     }
 
-    
-    
+
+
 protected:
-    
+
     task(promise_type_base &promise):_promise(&promise) {}
-    
+
     friend class task_promise<T, Policy>;
-    
+
     template<typename A, typename B>
     friend class task;
-    
+
     promise_type_base *_promise = nullptr;
-    
+
     promise_type_base * get_promise() const {return _promise;}
 
     template<typename X, typename ... Args>
@@ -263,7 +264,7 @@ protected:
 
 
 
-class task_promise_base: public coro_allocator  {
+class task_promise_base: public coro_promise_base  {
 public:
     using AW = abstract_awaiter<true>;
 
@@ -271,15 +272,15 @@ public:
     std::atomic<AW *> _awaiter_chain;
     //contains status and counter
     /* format DEPCCC..CCCCC
-     * 
+     *
      * - D - data ready
      * - E - exception ready
      * - P - results processed (get_result() called)
      * - C - ref counter;
-     * 
+     *
      * See masks below
-     * 
-     */   
+     *
+     */
     std::atomic<std::size_t> _status_ref_count;
     //Contains handle of this coroutine
     /* We can't use promise address to retrieve handle, because in some cases,
@@ -287,11 +288,11 @@ public:
      * promise pointer is still valid (because it points to base class), function
      * from_promise() calculates offset of the frame from the given class, which
      * which cannot be the base class, but the final class. To avoid using of
-     * virtual functions, the handle is received and stored during final_suspend(), 
-     * becuase we only need the handle to destroy coroutine, otherwise this field is empyu 
+     * virtual functions, the handle is received and stored during final_suspend(),
+     * becuase we only need the handle to destroy coroutine, otherwise this field is empyu
      */
     std::coroutine_handle<> _my_handle;
-    
+
     //masks "data available" bit
     static constexpr std::size_t data_mask = (static_cast<std::size_t>(1)<<(sizeof(std::size_t)*8-1));
     //masks "exception available" bit
@@ -302,38 +303,38 @@ public:
     static constexpr std::size_t ready_mask = data_mask | except_mask | processed_mask;
     //masks the counter
     static constexpr std::size_t counter_mask = static_cast<std::size_t>(-1) ^ ready_mask;
-    
+
     //task promise is always ref/counted +1 during its execution
     //and additional +1 because get_return_object doesn't increase ref_count
     //and this saves one extra atomic increment
-    task_promise_base():_status_ref_count(2) {}          
+    task_promise_base():_status_ref_count(2) {}
 
     //task promise can't be copied
     task_promise_base(const task_promise_base &) = delete;
     //task promise can't be assigned
     task_promise_base &operator=(const task_promise_base &) = delete;
 
-    //destroys coroutine - this is possible after it is finished    
+    //destroys coroutine - this is possible after it is finished
     void destroy() {
         assert("Attempt to destroy a running task. Missing co_await <task>?" && !!_my_handle);
         _my_handle.destroy();
     }
-    
+
     //handles final_suspend
     class final_awaiter: public std::suspend_always {
     public:
         //record ownership
-        final_awaiter(task_promise_base &prom): _owner(prom) {}        
+        final_awaiter(task_promise_base &prom): _owner(prom) {}
         //can't be copied
         final_awaiter(const final_awaiter &prom) = default;
         //can't be assigned
         final_awaiter &operator=(const final_awaiter &prom) = delete;
-        
+
         //awaiting coroutine is resumed during this suspend
         //using symmetric transfer
-        //this speeds up returning from coroutine to coroutine        
+        //this speeds up returning from coroutine to coroutine
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> myhandle) noexcept {
-  
+
             auto noop = std::noop_coroutine();
             std::coroutine_handle<> ret = noop;
             //get list of awaiters
@@ -341,11 +342,11 @@ public:
             while (awt) {
                 auto x = awt;
                 awt = awt->_next;
-                //cycle until at least one awaiter returns valid coroutine handle 
+                //cycle until at least one awaiter returns valid coroutine handle
                 //from resume_handle()
                 //some awaiters are not coroutines, they perform its own
                 //resume operation and returns noop_coroutine()
-                
+
                 auto h = x->resume_handle();
                 //if h is not noop, we found coroutine, which will be resumed at current thread
                 if (h != noop) {
@@ -360,25 +361,25 @@ public:
                     ret = h;
                 }
             }
-            
+
             if ((_owner._status_ref_count & counter_mask) == 0) {
                 myhandle.destroy();
             } else {
-                _owner._my_handle = myhandle;            
+                _owner._my_handle = myhandle;
             }
             //exit to the previous stack frame
-            return ret; 
+            return ret;
         }
     protected:
         task_promise_base &_owner;
     };
-    
+
     //retrieve final awaiter
     final_awaiter final_suspend() noexcept {
-        --_status_ref_count;        
+        --_status_ref_count;
         return *this;
     }
-    
+
     //+1 ref count
     void add_ref() {
         _status_ref_count.fetch_add(1,std::memory_order_relaxed);
@@ -389,12 +390,12 @@ public:
             destroy();
         }
     }
-    
+
     //adds awaiter to the chain
     bool subscribe_awaiter(AW *aw) {
         return aw->subscibre_check_ready(_awaiter_chain);
     }
-    
+
     auto set_ready_data() {
         return _status_ref_count.fetch_or(data_mask);
     }
@@ -402,31 +403,31 @@ public:
     auto set_ready_exception() {
         return _status_ref_count.fetch_or(except_mask);
     }
-    
+
     auto set_processed() {
         return _status_ref_count.fetch_or(processed_mask);
     }
-    
-    bool is_ready() const {
-        return (_status_ref_count.load(std::memory_order_relaxed) & ready_mask) != 0; 
-    }
-    
 
-    
+    bool is_ready() const {
+        return (_status_ref_count.load(std::memory_order_relaxed) & ready_mask) != 0;
+    }
+
+
+
 };
 
 template<typename T>
 class task_promise_value: public task_promise_base {
 public:
     using super = task_promise_base;
-    
+
     task_promise_value() {}
-    
+
     union {
         T _v;
         std::exception_ptr _e;
     };
-    
+
     using AW = typename task_promise_base::AW;
     template<typename X>
     auto return_value(X && val)->std::enable_if_t<std::is_convertible_v<X,T> >{
@@ -443,20 +444,20 @@ public:
         }
         throw value_not_ready_exception();
     }
-        
+
     template<typename ... X>
     void emplace(X && ... x) {
         new(&_v) T(std::forward<X>(x)...);
-        this->set_ready_data();        
+        this->set_ready_data();
     }
-    
+
 
     void unhandled_exception() {
         new(&_e) std::exception_ptr(std::current_exception());
         this->set_ready_exception();
     }
-    
-    ~task_promise_value() {       
+
+    ~task_promise_value() {
         auto status = this->_status_ref_count.load(std::memory_order_acquire);
         switch (status & this->ready_mask) {
             case super::data_mask:
@@ -471,7 +472,7 @@ public:
                 break;
             default:
                 break;
-                
+
         }
     }
 
@@ -480,9 +481,9 @@ public:
 template<>
 class task_promise_value<void>: public task_promise_base {
 public:
-    
+
     std::exception_ptr _e;
-    
+
     using AW = typename task_promise_base::AW;
     auto return_void() {
         this->set_ready_data();
@@ -544,7 +545,7 @@ public:
     }
 
     [[no_unique_address]]  Policy _policy;
-    
+
     auto get_return_object() {
         return task<T, Policy>(*this);
     }
@@ -552,29 +553,32 @@ public:
 
 template<typename T>
 class task_promise<T, void>: public task_promise<T, resumption_policy::unspecified<void> > {
+public:
+
+    auto get_return_object() {
+           return task<T, void>(*this);
+       }
 };
 
 
-template<typename T> 
+template<typename T>
     struct is_task :std::integral_constant<bool, false> {};
-template<typename T, typename P> 
+template<typename T, typename P>
     struct is_task<task<T,P> > : std::integral_constant<bool, true> {};
-template<typename T> 
+template<typename T>
     struct task_result;
-template<typename T, typename P> 
+template<typename T, typename P>
     struct task_result<task<T,P> > {using type = T;};
 
 namespace _details {
     struct BoolInit{
-        reusable_storage stor_true;
-        reusable_storage stor_false;
         task<bool, resumption_policy::immediate> res_true;
         task<bool, resumption_policy::immediate> res_false;
         static task<bool, resumption_policy::immediate> coro(bool b) {
             co_return b;
-        }            
-        BoolInit(): res_true(stor_true.call([]{return coro(true);}))
-                  , res_false(stor_false.call([]{return coro(false);})) {}
+        }
+        BoolInit(): res_true(coro(true))
+                  , res_false(coro(false)) {}
     };
 }
 
@@ -585,22 +589,21 @@ template<typename ... Args>
 inline task<T, Policy> task<T, Policy>::set_result(Args &&... args) {
     if constexpr (std::is_void_v<T>) {
         auto coro = [&]() -> task<void, resumption_policy::immediate> {
-            co_return ; 
-        };        
-        static reusable_storage stor;
-        static auto res(stor.call([&]{return coro();}));
-        return task(res.get_promise());      
+            co_return ;
+        };
+        static auto res(coro());
+        return task(res.get_promise());
     } else if constexpr (std::is_same_v<T, bool>) {
-        
+
         static _details::BoolInit val;
         bool b = get_first(std::forward<Args>(args)...);
         return task((b?val.res_true:val.res_false).get_promise());
-        
+
     } else {
         auto coro = [&]() -> task<T, resumption_policy::immediate> {
-            co_return T(std::forward<Args>(args)...); 
+            co_return T(std::forward<Args>(args)...);
         };
-        return task(coro().get_promise());        
+        return task(coro().get_promise());
     }
 }
 

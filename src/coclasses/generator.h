@@ -3,7 +3,7 @@
 #define SRC_COCLASSES_GENERATOR_H_
 #include "awaiter.h"
 
-#include "co_alloc.h"
+
 
 #include "coro_storage.h"
 
@@ -21,91 +21,91 @@ class generator_promise;
 ///Generic generator
 /**
  * @tparam T type to be generated
- * 
- * 
+ *
+ *
  * Generator supports both synchronous and asynchronous coroutine for generating,
  * and synchronous and asynchronous access from the reader
- * 
+ *
  * - generating routine can use co_await
  * - the generator itself can be co_awaited
- * 
+ *
  * Accessing generator synchronously while it itself running asynchronously is
  * provided via a condition variable, so accessing thread is blocked. It is
  * much better to use co_await to access asynchronous generator.
- * 
+ *
  * It is possible to co_await synchronous generator, which uses symmetric transfer
  * between reading and generating coroutine
- * 
+ *
  * It is possible to use ranged-for to read generated values, however, this
- * way is always synchronous. 
- * 
+ * way is always synchronous.
+ *
  * To asynchronously access the generator, you need to co_await result of method
  * next(), which returns true if there is next item, or false if generation is done
- * 
- * 
+ *
+ *
  * @code
  * generator<int> gen = ...;
  * while (co_await gen.next()) {
  *      int v = gen.value();
  * }
  * @endcode
- * 
+ *
  * Above code can be used for synchronous access (without co_await)
- * 
+ *
  * @code
  * generator<int> gen = ...;
  * while (gen.next()) {
  *      int v = gen.value();
  * }
  * @endcode
- * 
+ *
  * For asynchronous access you can use next_cb to assign a callback which
  * is called when generation is complete. This feature is used by generator_aggregator
- * 
- * 
- 
+ *
+ *
+
  */
 template<typename T>
 class generator {
 public:
-    
+
     using arg_type = void;
 
     using promise_type = generator_promise<T>;
-  
+
 
     using iterator = generator_iterator<generator<T> >;
-    
+
     ///Object returned by next() function
-    /** it can be awaited by co_await, or accessed directly 
-     * 
-     * when accessed directly, it acts as boolean, which contains true 
-     * if there is next item, or false if not. Note accessing this 
+    /** it can be awaited by co_await, or accessed directly
+     *
+     * when accessed directly, it acts as boolean, which contains true
+     * if there is next item, or false if not. Note accessing this
      * virtual value performs getting next item every time the value is
      * retrieved, So it is not recommended to store object anywhere, just
      * immediately convert that temporary object to bool
-     * 
-     * @code 
+     *
+     * @code
      *  while (gen.next()) { //synchronous access
      *          // work with gen.value()
      *  }
      * @endcode
-     *      
-     * @code 
+     *
+     * @code
      *  while (co_await gen.next()) {  //asynchronous access
      *          // work with gen.value()
      *  }
      * @endcode
-     * 
-     *  
+     *
+     *
      * */
     class next_awaiter: public abstract_awaiter<false> {
     public:
         next_awaiter(generator *owner):_owner(owner) {}
         next_awaiter(const next_awaiter &) = default;
         next_awaiter &operator=(const next_awaiter &) = default;
-        
-        
+
+
         ///retrieves whether next item is available
         /**
          * @retval true next item is available
@@ -124,11 +124,11 @@ public:
         }
         ///await this state
 
-        
-        bool await_ready() noexcept { 
+
+        bool await_ready() noexcept {
             return _owner->_promise->done();
         }
-        
+
         bool await_resume() {
             return _owner->_promise->on_await_resume();
         }
@@ -136,7 +136,7 @@ public:
             _h = h;
             return _owner->_promise->next_async(this);
         }
-        
+
         void subscribe_awaiter(abstract_awaiter *awt) {
             _owner->_promise->next_async(awt).resume();
         }
@@ -145,16 +145,16 @@ public:
     protected:
         generator *_owner;
         std::coroutine_handle<> _h;
-        
+
         virtual void resume() noexcept override {
             _h.resume();
         }
         virtual std::coroutine_handle<void> resume_handle() override {
             return _h;
         }
-        
-        
-        
+
+
+
     };
     class call_awaiter: public next_awaiter { // @suppress("Miss copy constructor or assignment operator")
     public:
@@ -184,10 +184,10 @@ public:
                 return nullptr;
             }
         }
-        
+
     protected:
         mutable T *_value = nullptr;
-        
+
         bool fetch() const {
             bool b = this->_owner->_promise->next();
             if (b) _value = this->_owner->_promise->get();
@@ -195,7 +195,7 @@ public:
         }
     };
 
-    
+
     ///construct empty generator variable - can be assigned
     generator() = default;
     generator(promise_type *promise):_promise(promise) {}
@@ -223,7 +223,7 @@ public:
      * @return co_awaitable object. If called from non-coroutine, you need to convert returned
      * object to bool to perform loading of next item and returning true/false whether the
      * next item is available
-     * 
+     *
      * @code
      * if (generator.next()) {
      *      //next item is loaded
@@ -231,7 +231,7 @@ public:
      *      //generator is done
      * }
      * @endcode
-     * 
+     *
      */
     next_awaiter next() {
         return this;
@@ -239,7 +239,7 @@ public:
     ///Retrieves current value
     /**
      * @return current value
-     * 
+     *
      * @note you need to call next() or check for done()
      */
     T &value() {
@@ -248,15 +248,15 @@ public:
     ///Retrieves current value
     /**
      * @return current value
-     * 
+     *
      * @note you need to call next() or check for done()
      */
     const T &value() const {
         return *_promise->get();
     }
 
-    
-    
+
+
     ///Run generator and retrieve next item
     /**
      * @return returns pointer to next item or null, if there is no item available
@@ -264,13 +264,13 @@ public:
     call_awaiter operator()() {
         return this;
     }
-    
-    ///Checks, whether 
+
+    ///Checks, whether
     bool done() const {
         return _promise->done();
     }
-    
-    
+
+
 protected:
 
     struct Deleter {
@@ -279,28 +279,28 @@ protected:
             p->destroy();
         }
     };
-    
-    std::unique_ptr<promise_type, Deleter> _promise;    
-    
+
+    std::unique_ptr<promise_type, Deleter> _promise;
+
     promise_type *get_promise() const {return _promise.get();}
 };
 
 template<typename T>
-class generator_promise: public coro_allocator {
+class generator_promise: public coro_promise_base {
 public:
     generator_promise() = default;
     generator_promise(const generator_promise &) = delete;
     generator_promise &operator=(const generator_promise &) = delete;
-    
+
     using awaiter = abstract_awaiter<false>;
 
-;   
-    
+;
+
     void destroy() {
         auto h = std::coroutine_handle<generator_promise<T> >::from_promise(*this);
         h.destroy();
     }
-    
+
     static std::suspend_always initial_suspend() noexcept {return {};}
     struct yield_suspender { // @suppress("Miss copy constructor or assignment operator")
         abstract_awaiter<> *_h;
@@ -317,12 +317,12 @@ public:
         a.notify_all();
         return awt;
     }
-    
+
     yield_suspender final_suspend() noexcept {
         _value = nullptr;
         return yield_suspender{load_awaiter(_awaiter)};
     }
-    
+
     void unhandled_exception() {
         _e= std::current_exception();
     }
@@ -339,15 +339,15 @@ public:
     generator<T> get_return_object() {
         return generator<T>(this);
     }
-    
+
     void return_void() {}
-    
-    
+
+
     bool done() {
         auto h = std::coroutine_handle<generator_promise<T> >::from_promise(*this);
         return h.done();
     }
-    
+
     bool on_await_resume()  {
         if (_e) std::rethrow_exception(_e);
         return !done();
@@ -355,8 +355,8 @@ public:
 
     bool next() {
         //use empty awaiter to resume when value is ready
-        //because empty awaiter do nothing for resume 
-        [[maybe_unused]] auto chk = _awaiter.exchange(&empty_awaiter<false>::instance, std::memory_order_acquire);        
+        //because empty awaiter do nothing for resume
+        [[maybe_unused]] auto chk = _awaiter.exchange(&empty_awaiter<false>::instance, std::memory_order_acquire);
         //previous awaiter must be cleared
         assert(chk == nullptr);
         //retrieve handle
@@ -372,23 +372,23 @@ public:
         //return true, if value is non-null
         return _value != nullptr;
     }
-    
-    std::coroutine_handle<generator_promise<T> > next_async(awaiter *awt) {        
+
+    std::coroutine_handle<generator_promise<T> > next_async(awaiter *awt) {
         [[maybe_unused]] auto chk = _awaiter.exchange(awt, std::memory_order_acquire);
         assert(chk == nullptr);
         return std::coroutine_handle<generator_promise<T> >::from_promise(*this);
     }
-    
+
     T *get() {return _value;}
 
-    
+
 protected:
     T *_value = nullptr;
     std::atomic<awaiter *>_awaiter = nullptr;
     std::exception_ptr _e;
-    
-    
-    
+
+
+
 };
 
 ///Construct generator which is able to recieve values through the co_yield
@@ -400,7 +400,7 @@ template<typename Ret, typename Arg>
 class generator<Ret(Arg)> {
 public:
     using value_type = Ret;
-    
+
     using arg_type = Arg;
 
     using promise_type = generator_promise<Ret(Arg)>;
@@ -412,12 +412,12 @@ public:
      * the generator
      */
     class next_awaiter: public abstract_awaiter<false> {
-    public:        
+    public:
         next_awaiter(generator *owner, Arg &arg):_owner(owner),_args(arg) {}
         next_awaiter(const next_awaiter &) = default;
         next_awaiter &operator=(const next_awaiter &) = default;
-        
-        
+
+
         ///retrieves whether next item is available
         /**
          * @retval true next item is available
@@ -435,11 +435,11 @@ public:
             return !operator bool();
         }
         ///await this state
-        
-        bool await_ready() noexcept { 
+
+        bool await_ready() noexcept {
             return _owner->_promise->done();
         }
-        
+
         bool await_resume() {
             return _owner->_promise->on_await_resume();
         }
@@ -447,15 +447,15 @@ public:
             _h = h;
             return _owner->_promise->next_async(this, _args);
         }
-        
+
         void subscribe_awaiter(abstract_awaiter *awt) {
             _owner->_promise->next_async(awt,_args).resume();
         }
-    protected:        
+    protected:
         generator *_owner;
         std::coroutine_handle<> _h;
         Arg & _args;
-        
+
         virtual void resume() noexcept override {
             _h.resume();
         }
@@ -466,13 +466,13 @@ public:
 
     ///Awaiter but also can act as a pointer to value
     /**
-     * If object is used as pointer, it perform synchronous access. 
+     * If object is used as pointer, it perform synchronous access.
      * Use co_await to perform asynchronous access
      */
     class call_awaiter: public next_awaiter { // @suppress("Miss copy constructor or assignment operator")
     public:
         using next_awaiter::next_awaiter;
-        
+
         operator bool() const {
             return _value || this->_owner->done() || fetch();
         }
@@ -498,17 +498,17 @@ public:
                 return nullptr;
             }
         }
-        
+
     protected:
         mutable Ret *_value = nullptr;
-        
+
         bool fetch() const {
             bool b = this->_owner->_promise->next(this->_args);
             if (b) _value = this->_owner->_promise->get();
             return b;
         }
     };
-    
+
     ///construct empty generator variable - can be assigned
     generator() = default;
     generator(promise_type *promise):_promise(promise) {}
@@ -526,7 +526,7 @@ public:
     ///Retrieves current value
     /**
      * @return current value
-     * 
+     *
      * @note you need to call next() or check for done()
      */
     Ret &value() {
@@ -535,7 +535,7 @@ public:
     ///Retrieves current value
     /**
      * @return current value
-     * 
+     *
      * @note you need to call next() or check for done()
      */
     const Ret &value() const {
@@ -564,13 +564,13 @@ public:
         return call_awaiter(this, arg);
     }
 
-    ///Checks, whether generator is done 
+    ///Checks, whether generator is done
     bool done() const {
         return _promise->done();
     }
-    
-    
-    
+
+
+
 protected:
 
     struct Deleter {
@@ -579,29 +579,29 @@ protected:
             p->destroy();
         }
     };
-    
-    std::unique_ptr<promise_type, Deleter> _promise;    
-    
+
+    std::unique_ptr<promise_type, Deleter> _promise;
+
     promise_type *get_promise() const {return _promise.get();}
 };
 
 template<typename Ret, typename Arg>
-class generator_promise<Ret(Arg)>: public coro_allocator {
+class generator_promise<Ret(Arg)>: public coro_promise_base {
 public:
     generator_promise() = default;
     generator_promise(const generator_promise &) = delete;
     generator_promise &operator=(const generator_promise &) = delete;
-    
+
     using awaiter = abstract_awaiter<false>;
     using argstuple = std::tuple<Arg>;
 
-;   
-    
+;
+
     void destroy() {
         auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
         h.destroy();
     }
-    
+
     static std::suspend_never initial_suspend() noexcept {return {};}
     struct yield_suspender { // @suppress("Miss copy constructor or assignment operator")
         abstract_awaiter<> *_h;
@@ -619,12 +619,12 @@ public:
         a.notify_all();
         return awt;
     }
-    
+
     yield_suspender final_suspend() noexcept {
         _value = nullptr;
         return yield_suspender{load_awaiter(_awaiter), &_arg};
     }
-    
+
     void unhandled_exception() {
         _e= std::current_exception();
     }
@@ -641,15 +641,15 @@ public:
     generator<Ret(Arg)> get_return_object() {
         return generator<Ret(Arg)>(this);
     }
-    
+
     void return_void() {}
-    
-    
+
+
     bool done() {
         auto h = std::coroutine_handle<generator_promise>::from_promise(*this);
         return h.done();
     }
-    
+
     bool on_await_resume()  {
         if (_e) std::rethrow_exception(_e);
         return !done();
@@ -657,8 +657,8 @@ public:
 
     bool next(Arg &arg) {
         //use empty awaiter to resume when value is ready
-        //because empty awaiter do nothing for resume 
-        [[maybe_unused]] auto chk = _awaiter.exchange(&empty_awaiter<false>::instance, std::memory_order_acquire);        
+        //because empty awaiter do nothing for resume
+        [[maybe_unused]] auto chk = _awaiter.exchange(&empty_awaiter<false>::instance, std::memory_order_acquire);
         //previous awaiter must be cleared
         assert(chk == nullptr);
         //retrieve handle
@@ -675,43 +675,43 @@ public:
         //return true, if value is non-null
         return _value != nullptr;
     }
-    
-    std::coroutine_handle<generator_promise> next_async(awaiter *awt, Arg &arg) {        
+
+    std::coroutine_handle<generator_promise> next_async(awaiter *awt, Arg &arg) {
         [[maybe_unused]] auto chk = _awaiter.exchange(awt, std::memory_order_acquire);
         assert(chk == nullptr);
         _arg = &arg;
         return std::coroutine_handle<generator_promise>::from_promise(*this);
     }
-    
+
     Ret *get() {return _value;}
 
-    
+
 protected:
     Ret *_value = nullptr;
     Arg *_arg = nullptr;
     std::atomic<awaiter *>_awaiter = &empty_awaiter<false>::instance;
     std::exception_ptr _e;
-    
-    
-    
+
+
+
 };
 
 
 ///Not actual generator, just an interface
 /**
  * @tparam T type of generator
- * 
+ *
  * stoppable generator can be stopped anytime from outside. Result of stopping could
  * be marking generator finished.
- * 
+ *
  * This is better solution than force destroying the generator, because you can't stop
  * it when it is pending.
- * 
+ *
  * Using this interface is simple. The backend should create two functions. The first
  * function is actual generator while other function is function which starts the generator
  * passing a stopping singaling object into the generator. Then it pack generator
  * and stop function into instance of this object
- * 
+ *
  */
 template<typename T>
 class stoppable_generator: public generator<T> {
@@ -720,7 +720,7 @@ public:
     stop_fn stop;
     stoppable_generator(generator<T> &&gen, stop_fn &&fn)
         :generator<T>(std::move(gen))
-        ,stop(std::move(fn)) {}    
+        ,stop(std::move(fn)) {}
     stoppable_generator(stoppable_generator &&) = default;
     stoppable_generator(const stoppable_generator &) = delete;
 };
