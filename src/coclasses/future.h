@@ -39,42 +39,42 @@ namespace cocls {
 
 ///Future variable
 /** Future variable is variable, which receives value in a future.
- * 
+ *
  *  This class implements awaitable future variable. You can co_await on the variable,
- *  the coroutine is resumed, once the variable is set. 
- *  
+ *  the coroutine is resumed, once the variable is set.
+ *
  *  To set the variable, you need to retrieve a promise object as first. There can
  *  be only one promise object. It is movable only. Once the promise object is created,
  *  the future must be resolved before its destruction. The reason for such ordering is
  *  that neither future nor promise performs any kind of allocation. While future
  *  sits in coroutine's frame, the promise is just pointer which can be moved around,
  *  until it is used to set the value, which also invalidates the promise to prevent further
- *  attempts to set value. 
- *  
+ *  attempts to set value.
+ *
  *  Neither promise, nor future are MT Safe. Only guaranteed MT safety is for setting
  *  the value, which can be done from different thread, it also assumes, that value
  *  is not read before it is resolved.
- *  
+ *
  *  If you need to copyable, MT safe promises which allows to set value independently from
  *  different threads, to achieve for example a race, where first attempt resolves the
  *  future and other addepts are just ignored, you need to use shared_promise
- *  
+ *
  *  Future can be awaited by multiple awaiters. However you need to ensure MT
  *  safety by proper synchronization. For example when there are multiple awaiters,
  *  ensure, that no awaiter wants to move the result outside of future. Also ensure,
  *  that future can't be destroyed after it is awaited. For multiple awaiting
  *  is recommended to use make_shared
- *  
- *  
+ *
+ *
  *  @note Once promise is obtained, the future must be resolved. Destroying the
  *  future in such case is UB - will probably ends by crashing code during
- *  setting the value of such promise. 
- *  
- * 
+ *  setting the value of such promise.
+ *
+ *
  */
 template<typename T>
 class future;
-///Promise 
+///Promise
 /**
  * Promise is movable only object which serves as pointer to future to be set.
  * Its content is valid until the object is used to set the value, then it becomes
@@ -103,7 +103,7 @@ class promise;
 /**
  * Shared promise acts as promise, but allows to be copied. Multiple threads can
  * try to set value, only the first attempt is used, others are ignored.
- * 
+ *
  * The shared promise allocates shared space on heap,
  */
 template<typename T, typename shared_place = promise<T>>
@@ -118,20 +118,20 @@ template<typename T>
 class future_base {
 public:
     using awaiter = abstract_awaiter<true>;
-    
+
     future_base()
         :_awaiter(&empty_awaiter<true>::disabled)
     {}
     future_base(const future_base &) = delete;
     future_base &operator=(const future_base &) = delete;
-    
+
     ///Create a promise
     /**
      * @return a associated promise object. This object can be moved but not copied
-     * 
+     *
      * @note only one promise can be created. If you need to create copyable object, use
-     * get_shared_promise() 
-     * 
+     * get_shared_promise()
+     *
      */
     promise<T> get_promise() {
         abstract_awaiter<true> *p  = &empty_awaiter<true>::disabled;
@@ -146,19 +146,19 @@ public:
     /**
      * Creates copyable promise. Only one promise can be created by this way. However you
      * can copy the resulting object many times as you want.
-     * 
+     *
      * @note This function performs extra stack allocation to hold the shared state
-     * 
+     *
      * @return copyable promise
      */
     shared_promise<T> get_shared_promise();
 
-    
+
     ///Starts waiting for a result
     co_awaiter<future<T>,true>  operator co_await() {
         return *static_cast<future<T> *>(this);
     }
-    
+
     ///Wait synchronously
     /**
      * @return the value of the future
@@ -166,7 +166,7 @@ public:
     decltype(auto) wait() {
         return co_awaiter<future<T>,true >(*static_cast<future<T> *>(this)).wait();
     }
-    
+
 
     ///For compatible API - same as wait()
     decltype(auto) join() {return wait();}
@@ -174,10 +174,10 @@ public:
     ///Synchronise with the future, but doesn't pick the value
     /** Just waits for result, but doesn't pick the result including the exception */
     void sync() {
-        co_awaiter<future<T>,true >(*static_cast<future<T> *>(this)).sync();        
+        co_awaiter<future<T>,true >(*static_cast<future<T> *>(this)).sync();
     }
 
-    
+
 protected:
 
     enum class Status {
@@ -185,30 +185,30 @@ protected:
         data,
         exception
     };
-    
+
     friend class co_awaiter<future<T>, true>;
 
-    
+
     mutable std::atomic<awaiter *> _awaiter = nullptr;
     Status _status=Status::not_ready;
-    
+
     bool is_ready() {
-        return _status != Status::not_ready;        
+        return _status != Status::not_ready;
     }
-    
+
     bool subscribe_awaiter(abstract_awaiter<true> *x) {
         return x->subscibre_check_ready(_awaiter);
     }
-    
+
     decltype(auto) get_result() {
         assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled);
-        return static_cast<future<T> *>(this)->value(); 
+        return static_cast<future<T> *>(this)->value();
     }
-    
-    
+
+
     friend class promise_base<T>;
     friend class promise<T>;
-    
+
 };
 
 
@@ -219,18 +219,19 @@ public:
     future() {}
 
     ///construct future and use it in callback function
+    /** This allows to return the future as result of a function call */
     template<typename Fn, typename = decltype(std::declval<Fn>()(std::declval<future<T> &>()))>
-    future(Fn &&fn) {
+    explicit future(Fn &&fn) {
         fn(*this);
     }
-    
+
 protected:
     friend class future_base<T>;
     friend class promise_base<T>;
     friend class promise<T>;
     using awaiter = typename future_base<T>::awaiter;
 
-    
+
     union {
         T _v;
         std::exception_ptr _e;
@@ -240,8 +241,8 @@ protected:
         new(&_e) std::exception_ptr(std::current_exception());
         this->_status = future_base<T>::Status::exception;
         awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
-    }      
-    
+    }
+
     template<typename X>
     auto set_value(X &&x) -> std::enable_if_t<std::is_convertible_v<X, T> > {
         new(&_v) T(std::forward<X>(x));
@@ -252,7 +253,7 @@ public:
     ///get value
     /**
      *
-     * 
+     *
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
@@ -267,7 +268,7 @@ public:
     }
     ///get value
     /**
-     * 
+     *
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
@@ -281,8 +282,32 @@ public:
         }
     }
 
-    
-    ~future() {        
+    ///Call function and store result of returned future
+    /**
+     * Because future is not movable, nor copyable, you cannot assign result of function call.
+     * This function helps to initialize the content of the future by result of a function,
+     * to workaround above limitation. The function can construct the future directly to this
+     * variable.
+     *
+     * @param fn function, which returns future<T>. The function doesn't expect arguments,
+     * however, you can use std::bind to create a function call with arguments
+     *
+     * @note content of the variable is destroyed even if the function throws an exception.
+     * Note in such a case, the future variable is left unevaluated.
+     */
+    template<typename Fn, typename = std::enable_if_t<std::is_same_v<decltype(std::declval<Fn>()()), future<T> > > >
+    void result_of(Fn &&fn) {
+        this->~future();
+        try {
+            new(this) future(fn());
+        } catch (...) {
+            new(this) future();
+            throw;
+        }
+    }
+
+
+    ~future() {
         //future must be not initialized or resolved to be destroyed
         assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled);
         switch (this->_status) {
@@ -301,7 +326,7 @@ public:
 
     ///construct future and use it in callback function
     template<typename Fn, typename = decltype(std::declval<Fn>()(std::declval<future<void> &>()))>
-    future(Fn &&fn) {
+    explicit future(Fn &&fn) {
         fn(*this);
     }
 
@@ -310,9 +335,9 @@ protected:
     friend class promise_base<void>;
     friend class promise<void>;
 
-    
+
     std::exception_ptr _e;
-    
+
     void set_value() {
         this->_status = future_base<void>::Status::data;
         awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
@@ -323,12 +348,12 @@ protected:
         this->_status = future_base<void>::Status::exception;
         awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }
-    
-    
+
+
 public:
     ///get value
     /**
-     * 
+     *
      * @return value of the future
      * @exception value_not_ready_exception when value is not ready
      */
@@ -340,9 +365,21 @@ public:
             case future_base<void>::Status::exception: std::rethrow_exception(_e);
             default: throw value_not_ready_exception();
         }
-        
+
     }
-    
+
+    template<typename Fn, typename = std::enable_if_t<std::is_same_v<decltype(std::declval<Fn>()()), future<void> > > >
+    void result_of(Fn &&fn) {
+        this->~future();
+        try {
+            new(this) future(fn());
+        } catch (...) {
+            new(this) future();
+            throw;
+        }
+    }
+
+
     ~future() {
         //future must be not initialized or resolved to be destroyed
         assert(this->_awaiter.load(std::memory_order_relaxed) == &empty_awaiter<true>::disabled);
@@ -350,6 +387,21 @@ public:
 
 };
 
+///Creates future variable, calls a function and gives promise to the function
+/**
+ *
+ * @tparam T type of the future variable
+ * @param fn function which accepts promise<T>. It is expected, that promise will be resolved
+ * (in the future). The promise is moveable.
+ * @return future variable. Variable is not movable. However, you can use this function as
+ * construcor, or with future<T>::result_of()
+ */
+template<typename T, typename Fn, typename = decltype(std::declval<Fn>()(std::declval<promise<T> >()))>
+future<T> make_future(Fn &&fn) {
+    return future<T>([fn = std::forward<Fn>(fn)](auto &f){
+       fn(f.get_promise());
+    });
+}
 
 
 template<typename T>
@@ -370,7 +422,7 @@ public:
         }
         return *this;
     }
-    
+
     ///Releases promise without setting a value;
     void release() const {
         auto m = claim();
@@ -408,9 +460,9 @@ public:
         return _owner.exchange(nullptr, std::memory_order_relaxed);
     }
 
-    
+
 protected:
-    
+
     mutable std::atomic<future<T> *>_owner;
 };
 
@@ -418,7 +470,7 @@ template<typename T>
 class promise: public promise_base<T> {
 public:
     using promise_base<T>::promise_base;
-    
+
     ///set value
     /**
      * @param x value to be set
@@ -427,7 +479,7 @@ public:
         auto m = this->claim();
         if (m) m->set_value(std::move(x));
     }
-    
+
     ///set value
     /**
      * @param x value to be set
@@ -436,8 +488,8 @@ public:
         auto m = this->claim();
         if (m) m->set_value(x);
     }
-    
-    
+
+
     ///promise can be used as callback function
     void operator()(T &&x)  const {
         set_value(std::move(x));
@@ -451,7 +503,7 @@ public:
 template<>
 class promise<void>: public promise_base<void> {
 public:
-    
+
     using promise_base<void >::promise_base;
 
     ///makes future ready
@@ -475,7 +527,7 @@ class promise_with_default: public promise<T> {
 public:
     using super = promise<T>;
     using promise<T>::promise;
-    
+
     template<typename ... Args>
     promise_with_default(super &&prom, Args &&... args)
         :promise<T>(std::move(prom)),def(std::forward<Args>(args)...) {}
@@ -492,12 +544,12 @@ public:
     }
 protected:
     T def;
-    
+
 };
 
 ///Promise with default value
 /**If the promise is destroyed unresolved, the default value is set to the future
- * 
+ *
  * @tparam T type, must be integral type
  * @tparam val default value
  */
@@ -517,8 +569,8 @@ public:
 
 ///Promise with default value - constant is specified in template paramater
 /**If the promise is destroyed unresolved, the default value is set to the future
- * 
- * @tparam T type 
+ *
+ * @tparam T type
  * @tparam val const pointer to default value, must have external linkage
  */
 template<typename T, const T *val>
@@ -541,18 +593,18 @@ public:
  * When future is resolved a callback function i called
  * @tparam T type of value
  * @tparam Fn function type
- * 
+ *
  * This class is intended to be used in classes as member variables, to avoid
- * memory allocation - because the future must be allocated somewhere. 
- * 
+ * memory allocation - because the future must be allocated somewhere.
+ *
  * If you have no such place, use more convenient function make_promise
- * 
+ *
  * @see make_promise()
  */
 template<typename T, typename Fn>
 class future_with_cb: public future<T>, public abstract_awaiter<true>, public coro_promise_base {
 public:
-    
+
     ///Construct a future and pass a callback function
     future_with_cb(Fn &&fn):_fn(std::forward<Fn>(fn)) {
         this->_awaiter = this;
@@ -566,7 +618,7 @@ public:
     }
 
     virtual ~future_with_cb() = default;
-    
+
 protected:
     Fn _fn;
 
@@ -577,16 +629,16 @@ template<typename T, typename Storage, typename Fn>
 class future_with_cb_no_alloc: public future_with_cb<T, Fn> {
 public:
     using future_with_cb<T, Fn>::future_with_cb;
-    
+
     void *operator new(std::size_t sz, Storage &m) {
         return m.alloc(sz);
     }
     void operator delete(void *ptr, Storage &m) {
-        
+
     }
-    
+
     void operator delete(void *ptr, std::size_t) {
-        
+
     }
 private:
     void *operator new(std::size_t sz);
@@ -598,22 +650,22 @@ private:
 ///Makes callback promise
 /**
  * Callback promise cause execution of the callback when promise is resolved.,
- * This function has no use in coroutines, but it can allows to use promises in normal 
- * code. Result object is normal promise.  
- * 
- * There is also only one memory allocation for whole promise and the callback function. 
- * 
+ * This function has no use in coroutines, but it can allows to use promises in normal
+ * code. Result object is normal promise.
+ *
+ * There is also only one memory allocation for whole promise and the callback function.
+ *
  * @tparam T type of promise
  * @param fn callback function. Once the promise is resolved, the callback function receives
  * whole future<T> object as argument (as reference). It can be used to retrieve the value from it
- * 
- * @return promise<T> object 
- * 
+ *
+ * @return promise<T> object
+ *
  * @note callback is executed only after all instances of the promise are destroyed. This helps
  * to reduce side-effect which could potential happen during setting the value of the promise. So
- * execution is postponed. However ensure, that when promise is resolved, the promise instance 
+ * execution is postponed. However ensure, that when promise is resolved, the promise instance
  * is being destroyed as soon as possible
- * 
+ *
  * @see future<T>::get()
  */
 template<typename T, typename Fn>
@@ -638,11 +690,11 @@ promise<T> make_promise(Fn &&fn, Storage &storage) {
 template<typename T, typename shared_place  >
 class shared_promise_base {
 
-public:    
+public:
     void release() {
         _ptr->release();
     }
-    
+
     operator bool() const {
         return _ptr && _ptr->_fut.load(std::memory_order_relaxed) != nullptr;
     }
@@ -690,11 +742,11 @@ template<typename T, typename shared_place >
 class shared_promise: public shared_promise_base<T, shared_place> {
 public:
     using shared_promise_base<T, shared_place>::shared_promise_base;
-    
+
     void set_value(T &&x)  {
         this->_ptr->set_value(std::move(x));
     }
-    
+
     ///set value
     /**
      * @param x value to be set
@@ -702,7 +754,7 @@ public:
     void set_value(const T &x) {
         this->_ptr->set_value(x);
     }
-    
+
     ///promise can be used as callback function
     void operator()(T &&x)  {
         set_value(std::move(x));
@@ -721,13 +773,13 @@ public:
             }
         });
     }
-    
+
 };
 
 template<typename shared_place>
 class shared_promise<void, shared_place>: public shared_promise_base<void, shared_place> {
 public:
-    
+
     using shared_promise_base<void , shared_place>::shared_promise_base;
 
     ///makes future ready
@@ -749,7 +801,7 @@ public:
             }
         });
     }
-    
+
 };
 
 

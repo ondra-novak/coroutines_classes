@@ -362,9 +362,13 @@ public:
                 }
             }
 
-            if ((_owner._status_ref_count & counter_mask) == 0) {
+            //decrease reference count and check result
+            if (((--_owner._status_ref_count) & counter_mask) == 0) {
+                //If the result is 0, we need destroy itself
                 myhandle.destroy();
             } else {
+                //otherwise task will be destroyed by owner.
+                //store handle to the promise object.
                 _owner._my_handle = myhandle;
             }
             //exit to the previous stack frame
@@ -376,7 +380,6 @@ public:
 
     //retrieve final awaiter
     final_awaiter final_suspend() noexcept {
-        --_status_ref_count;
         return *this;
     }
 
