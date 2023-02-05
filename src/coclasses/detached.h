@@ -106,11 +106,11 @@ public:
         _p->initialize_policy(std::forward<Args>(args)...);
     }
 
-
+    detached() = default;
 protected:
     detached(promise_type *p):_p(p) {}
 
-    promise_type *_p;
+    promise_type *_p = nullptr;
 };
 
 
