@@ -18,6 +18,7 @@
 #include <assert.h>
 #include <memory>
 #include <mutex>
+#include <utility>
 
 
 
@@ -411,7 +412,7 @@ public:
  * @return future variable. Variable is not movable. However, you can use this function as
  * construcor, or with future<T>::result_of()
  */
-template<typename T, typename Fn, typename = decltype(std::declval<Fn>()(std::declval<promise<T> >()))>
+template<typename T, typename Fn> requires std::invocable<Fn, promise<T> >
 future<T> make_future(Fn &&fn) {
     return future<T>([fn = std::forward<Fn>(fn)](auto &f){
        fn(f.get_promise());
@@ -654,26 +655,12 @@ protected:
 
 };
 
+template<typename Allocator, typename Base>
+class custom_allocator_base;
+
 ///Extends the future_with_cb with ability to be allocated in a storage
 template<typename T, typename Storage, typename Fn>
-class future_with_cb_no_alloc: public future_with_cb<T, Fn> {
-public:
-    using future_with_cb<T, Fn>::future_with_cb;
-
-    void *operator new(std::size_t sz, Storage &m) {
-        return m.alloc(sz);
-    }
-    void operator delete(void *ptr, Storage &m) {
-
-    }
-
-    void operator delete(void *ptr, std::size_t) {
-
-    }
-private:
-    void *operator new(std::size_t sz);
-
-};
+using future_with_cb_no_alloc = custom_allocator_base<Storage, future_with_cb<T, Fn> >;
 
 
 /**@{*/
@@ -839,6 +826,103 @@ public:
 template<typename T>
 inline shared_promise<T> cocls::future_base<T>::get_shared_promise() {
     return shared_promise<T>(get_promise());
+}
+
+
+
+template<typename T, typename _Policy = void>
+class coro_promise {
+public:
+
+
+    class promise_type: public coro_promise_base,
+                        public coro_policy_holder<_Policy> {
+    public:
+        promise<T> _promise;
+
+
+        coro_promise get_return_object() {
+            return std::coroutine_handle<promise_type>::from_promise(*this);
+        }
+
+        std::suspend_always initial_suspend() noexcept {return {};}
+        std::suspend_never final_suspend() noexcept {return {};}
+        template<typename X, typename = std::enable_if_t<std::is_convertible_v<X,T> > >
+        void return_value(X &&v) {
+            _promise.set_value(std::forward<X>(v));
+        }
+        void unhandled_exception() {
+            _promise.unhandled_exception();
+        }
+    };
+
+    coro_promise(std::coroutine_handle<promise_type> h):_h(h) {}
+    coro_promise(coro_promise &&other):_h(std::exchange(other._h, {})) {}
+
+    void set_promise(promise<T> promise)  {
+        auto h = std::exchange(_h, {});
+        promise_type &p = h.promise();
+        p._promise = std::move(promise);
+        h.resume();
+    }
+
+    ~coro_promise() {
+        if (_h) _h.destroy();
+    }
+
+protected:
+    std::coroutine_handle<promise_type> _h;
+};
+
+template<typename _Policy>
+class coro_promise<void, _Policy>: public coro_promise<std::nullptr_t, _Policy> {
+public:
+
+    using coro_promise<std::nullptr_t, _Policy>::coro_promise;
+
+    class promise_type: public coro_promise_base,
+                        public coro_policy_holder<_Policy> {
+    public:
+        promise<void> _promise;
+
+
+        coro_promise<void, _Policy> get_return_object() {
+            return std::coroutine_handle<promise_type>::from_promise(*this);
+        }
+
+        std::suspend_always initial_suspend() noexcept {return {};}
+        std::suspend_never final_suspend() noexcept {return {};}
+        void return_void() {
+            _promise.set_value();
+        }
+        void unhandled_exception() {
+            _promise.unhandled_exception();
+        }
+    };
+
+
+    void set_promise(promise<void> promise)  {
+        auto h = std::exchange(this->_h, {});
+        promise_type &p = h.promise();
+        p._promise = std::move(promise);
+        h.resume();
+    }
+
+};
+
+///Makes future from result of a coroutine
+/**
+ * The coroutine must be of type coro_promise<T>. Result of the coroutine
+ * resolves the returned future.
+ *
+ * @param coro result of coroutine
+ * @return future
+ */
+template<typename A, typename B>
+future<A> make_future(coro_promise<A,B> coro) {
+    return future<A>([coro = std::move(coro)](auto &f) mutable {
+       coro.set_promise(f.get_promise());
+    });
 }
 
 

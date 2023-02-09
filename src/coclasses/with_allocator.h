@@ -64,6 +64,37 @@ public:
 
 };
 
+template<typename Allocator, typename Base>
+class custom_allocator_base: public Base {
+public:
+
+    using Base::Base;
+
+    template<typename ... Args>
+    void *operator new(std::size_t sz, Allocator &storage, Args && ... ) {
+        void *p = storage.alloc(sz+Allocator::get_extra_space());
+        storage.store_instance(reinterpret_cast<std::byte *>(p)+sz);
+        return p;
+    }
+
+    template<typename This, typename ... Args>
+    void *operator new(std::size_t sz, This &, Allocator &storage, Args && ... ) {
+        void *p = storage.alloc(sz+Allocator::get_extra_space());
+        storage.store_instance(reinterpret_cast<std::byte *>(p)+sz);
+        return p;
+    }
+
+    void operator delete(void *ptr, std::size_t sz) {
+        auto inst = Allocator::restore_instance(reinterpret_cast<std::byte *>(ptr)+sz);
+        inst->dealloc(ptr, sz+Allocator::get_extra_space());
+    }
+
+
+private:
+    void *operator new(std::size_t); //incorrectly use of with_allocator
+
+
+};
 
 using default_allocator = coro_storage;
 
@@ -100,33 +131,8 @@ public:
     using Task::Task;
     with_allocator(Task &&arg):Task(std::move(arg)) {}
 
-    class promise_type: public Task::promise_type {
-    public:
+    using promise_base = custom_allocator_base<Allocator, typename Task::promise_type>;
 
-        template<typename ... Args>
-        void *operator new(std::size_t sz, Allocator &storage, Args && ... ) {
-            void *p = storage.alloc(sz+Allocator::get_extra_space());
-            storage.store_instance(reinterpret_cast<std::byte *>(p)+sz);
-            return p;
-        }
-
-        template<typename This, typename ... Args>
-        void *operator new(std::size_t sz, This &, Allocator &storage, Args && ... ) {
-            void *p = storage.alloc(sz+Allocator::get_extra_space());
-            storage.store_instance(reinterpret_cast<std::byte *>(p)+sz);
-            return p;
-        }
-
-        void operator delete(void *ptr, std::size_t sz) {
-            auto inst = Allocator::restore_instance(reinterpret_cast<std::byte *>(ptr)+sz);
-            inst->dealloc(ptr, sz+Allocator::get_extra_space());
-        }
-
-
-    private:
-        void *operator new(std::size_t); //incorrectly use of with_allocator
-
-    };
 
 };
 

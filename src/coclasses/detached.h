@@ -13,6 +13,7 @@
 #include "debug.h"
 
 #include <coroutine>
+#include "resumption_policy.h"
 
 
 namespace cocls {
@@ -42,45 +43,18 @@ template<typename _Policy = void>
 class detached {
 public:
 
-    using Policy = std::conditional_t<std::is_void_v<_Policy>,resumption_policy::unspecified<void>,_Policy>;
 
-    class promise_type: public coro_promise_base {
+    class promise_type: public coro_promise_base, public coro_policy_holder<_Policy>{
     public:
 
-        template<typename Awt>
-          decltype(auto) await_transform(Awt&& awt) noexcept {
-              if constexpr (has_co_await<Awt>::value) {
-                  auto x = await_transform(awt.operator co_await());
-                  return x;
-              } else if constexpr (has_global_co_await<Awt>::value) {
-                  auto x = await_transform(operator co_await(awt));
-                  return x;
-              } else if constexpr (has_set_resumption_policy<Awt, Policy>::value) {
-                  return awt.set_resumption_policy(std::forward<Awt>(awt), _policy);
-              } else {
-                  return std::forward<Awt>(awt);
-              }
-          }
-
-          using initial_awaiter = typename std::remove_reference<Policy>::type::initial_awaiter;
-
-          initial_awaiter initial_suspend()  noexcept {
-              return initial_awaiter(_policy);
-          }
-
-          std::suspend_never final_suspend() noexcept {return {}; }
-
-          template<typename ... Args>
-          void initialize_policy(Args &&... args) {
-              _policy.initialize_policy(std::forward<Args>(args)...);
-          }
-
-          [[no_unique_address]]  Policy _policy;
-
+          using Policy = typename coro_policy_holder<_Policy>::Policy;
 
           detached<_Policy> get_return_object() {
               return detached<_Policy>(this);
           }
+
+          std::suspend_never final_suspend() noexcept {return {}; }
+
 
           void return_void() {}
 
