@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.2)
 
 add_executable (task  task.cpp)
 add_executable (future  future.cpp)
+add_executable (future_coro  future_coro.cpp)
 add_executable (make_promise  make_promise.cpp)
 add_executable (generator_infinite  generator_infinite.cpp)
 add_executable (generator  generator.cpp)

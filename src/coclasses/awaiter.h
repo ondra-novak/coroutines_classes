@@ -7,7 +7,7 @@
 #include "queued_resumption_policy.h"
 
 #include <algorithm>
-#include <coroutine> 
+#include <coroutine>
 #include <atomic>
 
 namespace cocls {
@@ -17,13 +17,13 @@ namespace cocls {
  * allows to implement both co_awaiter and blocking_awaiter
  * @tparam promise_type type of promise (of task for example)
  * @tparam chain set this true (default false) to allow chains (includes next ptr to awaiter)
- * 
+ *
  * The promise must implement
- * 
+ *
  * bool is_ready(); - return true, if result is ready
  * bool subscribe_awaiter(abstract_awaiter *); - return true, if set, false if resolved
  * auto get_result(coroutines); - return result
- * 
+ *
  */
 
 class abstract_awaiter_base {
@@ -38,7 +38,7 @@ public:
         return std::noop_coroutine();
     }
     virtual ~abstract_awaiter_base() = default;
-    
+
 };
 
 
@@ -54,29 +54,29 @@ public:
      */
     bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain_);
 
-    
+
  };
 
 ///phony awaiter it is used to signal special value in awaiter's/chain
-/** This awaiter doesn't resume anything */ 
+/** This awaiter doesn't resume anything */
 template<bool chain>
 class empty_awaiter: public abstract_awaiter<chain> {
 public:
-    
+
     ///Just instance for any usage
     static empty_awaiter<chain> instance;
     ///Disables awaiter's chain/slot. Any further registrations are impossible
     /** This allows to atomically replace awaiter with disabled, which can be
      * interpreted as "value is ready, no further waiting is required" while current
      * list of awaiters is picked and the awaiters are resumed
-     * 
+     *
      * @see abstract_awaiter<>::resume_chain_set_disabled
-     */ 
+     */
     static empty_awaiter<chain> disabled;
 
     virtual void resume() noexcept {}
-    
-    
+
+
 };
 
 template<>
@@ -85,12 +85,12 @@ public:
     abstract_awaiter() = default;
     abstract_awaiter(const abstract_awaiter &)=default;
     abstract_awaiter &operator=(const abstract_awaiter &)=delete;
-    
+
     void subscribe(std::atomic<abstract_awaiter *> &chain) {
         while (!chain.compare_exchange_weak(_next, this, std::memory_order_relaxed));
     }
     ///releases chain atomicaly
-    /** 
+    /**
      * @param chain holds chain
      * @param skip awaiter to be skipped
      * @return count of released awaiters (including skipped)
@@ -98,13 +98,13 @@ public:
     static std::size_t resume_chain(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
         return resume_chain_lk(chain.exchange(nullptr), skip);
     }
-    
+
     ///Resume chain and disable it
     /**
      * @param chain chain to resume
      * @param skip awaiter to be skipped, can be nullptr
      * @return count of awaiters
-     * 
+     *
      * @note It marks chain disabled, so futher registration are rejected with false
      * @see subscribe_check_ready()
      */
@@ -124,13 +124,13 @@ public:
     ///subscribe this awaiter but at the same time, check, whether it is marked ready
     /**
      * @note uses empty_awaiter<true>::disabled to mark whether the value is ready.
-     * 
+     *
      * @param chain register to chain
      * @retval true registered
      * @retval false registration unsuccessful, the object is already prepared
      */
     bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain);
-    
+
     abstract_awaiter *_next = nullptr;
 protected:
 };
@@ -144,13 +144,13 @@ inline empty_awaiter<chain> empty_awaiter<chain>::disabled;
 ///
 template<typename promise_type, bool chain = false>
 class abstract_owned_awaiter: public abstract_awaiter<chain> {
-public:    
+public:
     abstract_owned_awaiter(promise_type &owner):_owner(owner) {}
     abstract_owned_awaiter(const abstract_owned_awaiter  &) = default;
     abstract_owned_awaiter &operator=(const abstract_owned_awaiter &) = delete;
 
 
-    
+
 protected:
     promise_type &_owner;
 
@@ -165,11 +165,11 @@ template<typename promise_type, bool chain = false>
 class co_awaiter_policy_base: public abstract_owned_awaiter<promise_type, chain> {
 public:
     using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
-    
+
     ///Allows to change resumption policy.
     /** This member is called by a task, when await_transform, to supply
      * own policy. This method is static to able work well on derived awaiters
-     * 
+     *
      * @param _this reference to _this object, but in the most child type
      * @param p resumption policy
      * @return awaiter with policy
@@ -178,9 +178,9 @@ public:
     static co_awaiter_policy<_This, _Policy> set_resumption_policy(_This &&_this, _Policy &&p) {
         return co_awaiter_policy<_This, _Policy>(std::forward<_Policy>(p), std::forward<_This>(_this));
     }
-    
+
 #ifdef __CDT_PARSER__
-    //this helps to Eclipse CDT parser to recognize co_await conversion  
+    //this helps to Eclipse CDT parser to recognize co_await conversion
     using ReturnValue = decltype(std::declval<co_awaiter<promise_type,chain> >().await_resume());
 
     operator ReturnValue();
@@ -196,7 +196,7 @@ protected:
     }
 
     template<typename,typename> friend class co_awaiter_policy;
-    
+
 };
 
 
@@ -211,22 +211,22 @@ public:
         return this->_owner.is_ready();
     }
     ///co_await related function
-    bool await_suspend(std::coroutine_handle<> h) {
-        this->_h = h; 
+    auto await_suspend(std::coroutine_handle<> h) {
+        this->_h = h;
         return this->_owner.subscribe_awaiter(this);
     }
     ///co_await related function
     decltype(auto) await_resume(){
         return this->_owner.get_result();
     }
-    
+
     ///Wait synchronously
     /**
      * Blocks execution until awaiter is signaled
      * @return result of awaited operation
      */
     decltype(auto) wait();
-    
+
     ///Wait synchronously
     /**
      * Blocks execution until awaiter is signaled
@@ -235,11 +235,11 @@ public:
      * affected by the result - for example without need to handle exception
      */
     void sync() noexcept ;
-    
-    
+
+
     ///Subscribe custom awaiter
     /**
-     * Allows to declare custom awaiter, which is resumed, when awaited result is ready. 
+     * Allows to declare custom awaiter, which is resumed, when awaited result is ready.
      * @param awt reference to awaiter. You need to keep reference valid until it is called
      * @retval true registration done
      * @retval false awaiting expression is already resolved, so no registration done, you can
@@ -249,32 +249,32 @@ public:
         return this->_owner.subscribe_awaiter(awt);
     }
 
-    
+
 };
 
 ///Awaiter with policy
 template<typename parent, typename policy>
 class [[nodiscard]] co_awaiter_policy: public std::remove_reference<parent>::type {
-public:    
+public:
     using super = typename std::remove_reference<parent>::type;
     co_awaiter_policy(policy &&p, parent &&owner)
             :super(std::forward<parent>(owner))
             ,_p(std::forward<policy>(p)) {}
-            
+
 
     bool await_ready() {
         return super::await_ready();
     }
     decltype(auto) await_suspend(std::coroutine_handle<> h) {
         return super::await_suspend(h);
-    }    
+    }
     decltype(auto) await_resume(){
         if (_resume_exception) {
             std::rethrow_exception(_resume_exception);
         }
         return super::await_resume();
     }
-    
+
     virtual void resume() noexcept override  {
         try {
             _p.resume(super::_h);
@@ -290,16 +290,16 @@ public:
             _resume_exception = std::current_exception();
             super::_h.resume();
             return std::noop_coroutine();
-        }        
+        }
     }
-    
+
     static co_awaiter_policy set_resumption_policy(co_awaiter_policy  &&_this, policy &&p) {
         return _this;
     }
 
 protected:
     [[no_unique_address]] policy _p;
-    std::exception_ptr _resume_exception;    
+    std::exception_ptr _resume_exception;
 };
 
 
@@ -312,10 +312,10 @@ inline decltype(auto) co_awaiter<promise_type, chain>::wait() {
 template<typename promise_type, bool chain>
 inline void co_awaiter<promise_type, chain>::sync() noexcept  {
     if (await_ready()) return ;
-    
+
     class Awaiter: public abstract_awaiter<chain> {
     public:
-        std::atomic<bool> flag = {false};        
+        std::atomic<bool> flag = {false};
         virtual std::coroutine_handle<> resume_handle() override {
             Awaiter::resume();
             return std::noop_coroutine();
@@ -325,12 +325,12 @@ inline void co_awaiter<promise_type, chain>::sync() noexcept  {
             flag.notify_all();
         }
     };
-    
+
     Awaiter awt;
     if (subscribe_awaiter(&awt)) {
-        awt.flag.wait(false);        
+        awt.flag.wait(false);
     }
-        
+
 }
 
 
@@ -375,7 +375,7 @@ public:
     std::coroutine_handle<> await_resume() {
         return _h;
     }
-    
+
 protected:
     std::coroutine_handle<> _h;
 };
@@ -385,10 +385,10 @@ protected:
  * @note "immediate resume" also depends on the policy. For example, if the coroutine is
  * resumed under dispatcher's policy, it is enqueued and resumed after the dispatcher finishes
  * the current task
- * 
+ *
  * @tparam policy new policy. If you specify void, the current policy is used. This can be useful
  * for queued resumption policy, which causes that current coroutine is paused and other
- * queued coroutines can run (cooperative multitasking) 
+ * queued coroutines can run (cooperative multitasking)
  */
 template<typename policy = void>
 class pause;
@@ -398,7 +398,7 @@ class pause: private policy {
 public:
     template<typename ... Args>
     explicit pause(Args && ... args):policy(std::forward<Args>(args)...) {}
-    
+
     static bool await_ready() noexcept {return false;}
     void await_suspend(std::coroutine_handle<> h) noexcept {
         policy::resume(h);
@@ -410,13 +410,14 @@ public:
 template<>
 class pause<void> {
 public:
-    
+
     template<typename policy>
     static auto set_resumption_policy(pause<void> , policy &&p) {
         return pause<typename std::remove_reference<policy>::type>(std::forward<policy>(p));
     }
-    
+
 };
+
 
 
 
