@@ -237,8 +237,8 @@ protected:
         std::exception_ptr _e;
     };
 
-    void unhandled_exception() {
-        new(&_e) std::exception_ptr(std::current_exception());
+    void set_exception(std::exception_ptr &&e) {
+        new(&_e) std::exception_ptr(std::move(e));
         this->_status = future_base<T>::Status::exception;
         awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }
@@ -306,6 +306,14 @@ public:
         }
     }
 
+    template<typename X>
+    static auto set_result(X &&val) -> std::enable_if_t<std::is_convertible_v<X, T>, future<T> > {
+        return future<T>([&](auto &me){
+            me.set_value(std::forward<X>(val));
+        });
+    }
+
+
 
     ~future() {
         //future must be not initialized or resolved to be destroyed
@@ -343,8 +351,8 @@ protected:
         awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }
 
-    void unhandled_exception() {
-        _e = std::exception_ptr(std::current_exception());
+    void set_exception(std::exception_ptr &&e) {
+        _e = std::move(e);
         this->_status = future_base<void>::Status::exception;
         awaiter::resume_chain_set_disabled(this->_awaiter,nullptr);
     }
@@ -378,6 +386,13 @@ public:
             throw;
         }
     }
+
+    static auto set_result() {
+        return future<void>([](auto &me){
+            me.set_value();
+        });
+    }
+
 
 
     ~future() {
@@ -430,7 +445,7 @@ public:
             try {
                 throw await_canceled_exception();
             } catch (...) {
-                m->unhandled_exception();
+                m->set_exception(std::current_exception());
             }
         }
     }
@@ -451,7 +466,15 @@ public:
     void unhandled_exception()  {
         auto m = claim();
         if (m) {
-           m->unhandled_exception();
+           m->set_exception(std::current_exception());
+        }
+    }
+
+    ///capture current exception
+    void set_exception(std::exception_ptr &&e)  {
+        auto m = claim();
+        if (m) {
+           m->set_exception(std::move(e));
         }
     }
 
@@ -615,6 +638,13 @@ public:
     }
     promise<T> get_promise() {
         return promise<T>(*this);
+    }
+
+    ///inicialize future from result - which returns standard future
+    template<typename ResOf, typename = std::enable_if_t<std::is_same_v<decltype(std::declval<ResOf>()()), future<T> > > >
+    void result_of(ResOf &&fn) {
+        future<T>::result_of(std::forward<Fn>(fn));
+        this->_awaiter = this;
     }
 
     virtual ~future_with_cb() = default;
