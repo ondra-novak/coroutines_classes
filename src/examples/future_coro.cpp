@@ -15,7 +15,7 @@ cocls::future<int> work() {
     };
 }
 
-cocls::coro_future<int> cofn1() {
+cocls::async<int> cofn1() {
     cocls::future<int> fut;
     fut.result_of(work);
     co_return co_await fut;
@@ -26,7 +26,7 @@ cocls::future<int> api_fn() {
 }
 
 //task returning void
-cocls::coro_future<int> cofn2() {
+cocls::async<int> cofn2() {
     cocls::future<int> fut = api_fn();
     co_return co_await fut;
 }

@@ -8,8 +8,7 @@
 #include "awaiter.h"
 #include "common.h"
 #include "exceptions.h"
-
-
+#include "with_allocator.h"
 
 
 #include "poolalloc.h"
@@ -111,17 +110,17 @@ class promise;
  *     ▼                                                       └────────────────┘
  */
 
-///Coroutine, which can be used to return future<T>
+///Coroutine for run asynchronous operations, it can be used to construct future<>
 /**
  * If some interface expect, that future<T> will be returned, you can
  * implement such future as coroutine. Just declare coroutine which
- * returns coro_future, this future object can be converted to future<T>
+ * returns async, this future object can be converted to future<T>
  *
  * @param T returned value, can be void
  * @param _Policy resumption policy - void means default policy
  */
 template<typename T, typename _Policy = void>
-class coro_future;
+class async;
 
 
 template<typename T>
@@ -161,10 +160,10 @@ public:
         ,_state(State::exception){}
 
     template<typename _Policy>
-    future(coro_future<T, _Policy> &&coro)
+    future(async<T, _Policy> &&coro)
         :_state(State::have_promise)
     {
-       typename coro_future<T, _Policy>::promise_type &p = coro._h.promise();
+       typename async<T, _Policy>::promise_type &p = coro._h.promise();
        p._future = this;
        coro.detach();
     }
@@ -252,7 +251,7 @@ protected:
     friend class promise<T>;
 
     template<typename A, typename B>
-    friend class coro_future;
+    friend class async;
 
     using value_storage = std::conditional_t<is_void, int, value_type>;
 
@@ -483,8 +482,6 @@ protected:
 
 };
 
-template<typename Allocator, typename Base>
-class custom_allocator_base;
 
 ///Extends the future_with_cb with ability to be allocated in a storage
 template<typename T, typename Storage, typename Fn>
@@ -529,23 +526,23 @@ promise<T> make_promise(Fn &&fn, Storage &storage) {
 
 
 template<typename T, typename _Policy>
-class coro_future {
+class async {
 public:
 
     friend class future<T>;
 
     class promise_type: public coro_promise_base, // @suppress("Miss copy constructor or assignment operator")
                         public coro_policy_holder<_Policy>,
-                        public coro_unified_return<T, typename coro_future<T,_Policy>::promise_type> {
+                        public coro_unified_return<T, typename async<T,_Policy>::promise_type> {
     public:
         future<T> *_future = nullptr;
 
-        coro_future get_return_object() {
+        async get_return_object() {
             return std::coroutine_handle<promise_type>::from_promise(*this);
         }
 
         struct final_awaiter: std::suspend_always {
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<promise_type> me) {
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<promise_type> me) noexcept {
                 promise_type &p = me.promise();
                 future<T> *f = p._future;
                 me.destroy();
@@ -566,10 +563,10 @@ public:
         }
     };
 
-    coro_future(std::coroutine_handle<promise_type> h):_h(h) {}
-    coro_future(coro_future &&other):_h(std::exchange(other._h, {})) {}
+    async(std::coroutine_handle<promise_type> h):_h(h) {}
+    async(async &&other):_h(std::exchange(other._h, {})) {}
 
-    ~coro_future() {
+    ~async() {
         if (_h) _h.destroy();
     }
 
@@ -582,6 +579,7 @@ public:
         auto h = std::exchange(_h,{});
         h.resume();
     }
+
 
 protected:
     std::coroutine_handle<promise_type> _h;
@@ -685,14 +683,14 @@ public:
         if (_ptr->has_promise()) _ptr->resolve_tracer.charge(_ptr);
     }
 
-    ///Construct shared future from coro_future
+    ///Construct shared future from async
     /**
      * Starts coroutine and initializes shared_future. Result of coroutine is used to resolve
      * the future
      * @param coro coroutine result
      */
     template<typename _Policy>
-    shared_future(coro_future<T, _Policy> &&coro)
+    shared_future(async<T, _Policy> &&coro)
         :_ptr(std::make_shared<future_internal>(std::move(coro))) {
         _ptr->resolve_tracer.charge(_ptr);
     }
@@ -772,7 +770,7 @@ protected:
 };
 
 template<typename T, typename P>
-future(coro_future<T, P>) -> future<T>;
+future(async<T, P>) -> future<T>;
 
 
 

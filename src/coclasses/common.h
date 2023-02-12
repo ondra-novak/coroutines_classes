@@ -18,11 +18,11 @@
 #define consteval constexpr
 #endif
 
-
-#ifdef __CDT_PARSER__
-#define CXX20_REQUIRES(...)
-#else
+//for compiler support concepts but not for CDT, which doesn't support the keyword 'requires'
+#if defined( __cpp_concepts) and not defined (__CDT_PARSER__)
 #define CXX20_REQUIRES(...) requires __VA_ARGS__
+#else
+#define CXX20_REQUIRES(...)
 #endif
 
 ///Coroutine classes use this namespace

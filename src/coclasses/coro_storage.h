@@ -78,10 +78,6 @@ public:
 
     std::size_t capacity() const {return _capacity;}
 
-    static constexpr std::size_t get_extra_space() {return 0;}
-    static constexpr void store_instance(void *) {}
-    static constexpr reusable_storage *restore_instance(void *) {return nullptr;}
-
 protected:
     void *_ptr = nullptr;
     std::size_t _capacity = 0;
@@ -114,22 +110,22 @@ public:
     static constexpr std::size_t adjspace = space * multiplier /100;
 
     void *alloc(std::size_t sz)  {
-        assert(sz <= adjspace); //space is too small to fit the cooroutine frame;
-        if (sz > adjspace) return ::operator new(sz);
-        return _buffer;
+        auto exsz = sz+sizeof(static_storage **);
+        assert(exsz <= adjspace); //space is too small to fit the cooroutine frame;
+        void *p;
+        if (exsz > adjspace) p = ::operator new(exsz);
+        else p = _buffer;
+        auto s = reinterpret_cast<static_storage **>(reinterpret_cast<char *>(p) + sz);
+        *s = this;
+        return p;
     }
     void dealloc(void *ptr, std::size_t sz)  {
-        if (sz > adjspace) return ::operator delete(ptr);
-    }
 
-    static constexpr std::size_t get_extra_space() {return sizeof(static_storage *);}
-    void store_instance(void *p) {
-        *reinterpret_cast<static_storage **>(p) = this;
-    }
-    static static_storage *restore_instance(void *p) {
-        return *reinterpret_cast<static_storage **>(p);
-    }
+        auto s = reinterpret_cast<static_storage **>(reinterpret_cast<char *>(ptr) + sz);
+        auto me = *s;
 
+        if (ptr != _buffer) return ::operator delete(ptr);
+    }
 protected:
     char _buffer[adjspace];
 };
@@ -155,15 +151,12 @@ protected:
 
  *
  */
-class placement_alloc: public coro_storage {
+class placement_alloc {
 public:
     placement_alloc(void *p):_p(p) {}
-    virtual void *alloc(std::size_t) override { return _p;}
-    virtual void dealloc(void *, std::size_t) override{}
+    void *alloc(std::size_t) noexcept { return _p;}
+    static void dealloc(void *, std::size_t) {}
 
-    static constexpr std::size_t get_extra_space() {return 0;}
-    static constexpr void store_instance(void *) {}
-    static constexpr reusable_storage *restore_instance(void *) {return nullptr;}
 
 protected:
     void *_p;
@@ -181,25 +174,24 @@ protected:
 class reusable_storage_mtsafe: public reusable_storage {
 public:
     void *alloc(std::size_t sz)  {
+        void *p;
         if (_busy.exchange(true, std::memory_order_relaxed)) {
-            return coro_promise_base::default_new(sz);
+            p = coro_promise_base::default_new(sz+sizeof(reusable_storage_mtsafe **));
         } else {
-            return reusable_storage::alloc(sz);
+            p = reusable_storage::alloc(sz+sizeof(reusable_storage_mtsafe **));
         }
+        auto s = reinterpret_cast<reusable_storage_mtsafe **>(reinterpret_cast<char *>(p) + sz);
+        *s = this;
+        return p;
     }
-    void dealloc(void *ptr, std::size_t sz) {
-        if (ptr == _ptr) {
-            _busy.store(false, std::memory_order_relaxed);
+    static void dealloc(void *ptr, std::size_t sz) {
+        auto s = reinterpret_cast<reusable_storage_mtsafe **>(reinterpret_cast<char *>(ptr) + sz);
+        auto me = *s;
+        if (ptr == me->_ptr) {
+            me->_busy.store(false, std::memory_order_relaxed);
         } else {
             coro_promise_base::default_delete(ptr, sz);
         }
-    }
-    static constexpr std::size_t get_extra_space() {return sizeof(reusable_storage_mtsafe *);}
-    void store_instance(void *p) {
-        *reinterpret_cast<reusable_storage_mtsafe **>(p) = this;
-    }
-    static reusable_storage_mtsafe *restore_instance(void *p) {
-        return *reinterpret_cast<reusable_storage_mtsafe **>(p);
     }
 protected:
     std::atomic<bool> _busy = {false};
@@ -218,19 +210,19 @@ protected:
  * @tparam Buffer type
  */
 template<typename Buffer>
-class reusable_buffer_storage: public coro_storage { // @suppress("Miss copy constructor or assignment operator")
+class reusable_buffer_storage {
 public:
     ///Construct the storage, pass reference to unused buffer to it
     reusable_buffer_storage(Buffer &buff):_buff(buff) {
         static_assert(std::is_trivial_v<std::remove_reference_t<decltype(*buff.data())> >, "Only buffer of POD data can be used as temporary storage");
     }
-    virtual void *alloc(std::size_t sz) override {
+    void *alloc(std::size_t sz) {
         constexpr std::size_t itemsz = sizeof(decltype(*(this->_buff.data())));
         std::size_t items = (sz+itemsz-1)/itemsz;
         if (_buff.size() < items) _buff.resize(items);
         return _buff.data();
     }
-    virtual void dealloc(void *, std::size_t) override {}
+    static constexpr void dealloc(void *, std::size_t) {}
 
 protected:
     Buffer &_buff;

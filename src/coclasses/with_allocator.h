@@ -5,66 +5,25 @@
 
 #include "common.h"
 #include <coroutine>
+#include <concepts>
 
 
 namespace cocls {
 
+#if defined( __cpp_concepts) and not defined (__CDT_PARSER__)
 
-
-///Abstract class to define storage for coroutines
-class coro_storage {
-public:
-    coro_storage() = default;
-    coro_storage(coro_storage &) = delete;
-    coro_storage &operator=(coro_storage &) = delete;
-    virtual ~coro_storage()=default;
-
-    ///allocate space for the coroutine
-    /**
-     * @param sz required size
-     */
-    virtual void *alloc(std::size_t sz) = 0;
-    ///deallocate the space
-    /**
-     * @param ptr pointer to memory
-     * @param sz size of memory
-     */
-    virtual void dealloc(void *ptr, std::size_t sz) = 0;
-
-    ///Retrieves extra space needed to store reference to the instance
-    /** The reference is stored after the coroutine frame, and it is used to restore
-     * allocator instance during deallocation
-     * @return required size
-     */
-    static constexpr std::size_t get_extra_space() {return sizeof(coro_storage *);}
-
-    ///Stores instance of this allocator to the target memory
-    /**
-     * @param ptr pointer to memory contains allocated space where instance can be stored
-     */
-    void store_instance(void *ptr) {
-        auto s = reinterpret_cast<coro_storage **>(ptr);
-        *s = this;
-    }
-
-    ///Restores instance from the memory
-    /**
-     * Pointer to the memory, where instance has been previously stored.
-     * @param ptr
-     * @return pointer to the instance.
-     *
-     * @note function can also destroy the object at the address (not the allocator
-     * itself, just the reference) because it is being deallocated. This is needed
-     * especially when reference is stored as a smart pointer.
-     */
-    static coro_storage *restore_instance(void *ptr) {
-        auto s = reinterpret_cast<coro_storage **>(ptr);
-        return *s;
-    }
-
+template<typename T>
+concept Storage = requires(T v) {
+    {v.alloc(std::declval<std::size_t>())}->std::same_as<void *>;
+    {T::dealloc(std::declval<void *>(), std::declval<std::size_t>())}->std::same_as<void>;
 };
 
-template<typename Allocator, typename Base>
+
+#endif
+
+
+
+template<typename Allocator, typename Base> CXX20_REQUIRES(Storage<Allocator>)
 class custom_allocator_base: public Base {
 public:
 
@@ -72,21 +31,16 @@ public:
 
     template<typename ... Args>
     void *operator new(std::size_t sz, Allocator &storage, Args && ... ) {
-        void *p = storage.alloc(sz+Allocator::get_extra_space());
-        storage.store_instance(reinterpret_cast<std::byte *>(p)+sz);
-        return p;
+        return storage.alloc(sz);
     }
 
     template<typename This, typename ... Args>
     void *operator new(std::size_t sz, This &, Allocator &storage, Args && ... ) {
-        void *p = storage.alloc(sz+Allocator::get_extra_space());
-        storage.store_instance(reinterpret_cast<std::byte *>(p)+sz);
-        return p;
+        return storage.alloc(sz);
     }
 
     void operator delete(void *ptr, std::size_t sz) {
-        auto inst = Allocator::restore_instance(reinterpret_cast<std::byte *>(ptr)+sz);
-        inst->dealloc(ptr, sz+Allocator::get_extra_space());
+        Allocator::dealloc(ptr, sz);
     }
 
 
@@ -95,8 +49,6 @@ private:
 
 
 };
-
-using default_allocator = coro_storage;
 
 ///declares coroutine which frame is allocated through the allocator
 /**
@@ -124,7 +76,7 @@ using default_allocator = coro_storage;
  * @see coro_storage
  *
  */
-template<typename Task, typename Allocator = default_allocator>
+template<typename Allocator, typename Task> CXX20_REQUIRES(Storage<Allocator>)
 class with_allocator: public Task {
 public:
 

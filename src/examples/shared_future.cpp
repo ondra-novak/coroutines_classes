@@ -16,26 +16,26 @@ cocls::future<int> work(int val, int time) {
 }
 
 //task returning void
-cocls::coro_future<int> dropped_coro() {
+cocls::async<int> dropped_coro() {
     int res = co_await work(10,500);
     std::cout << "Dropped coro returns " << res << std::endl;
     co_return res;
 }
 
 //task returning void
-cocls::coro_future<int> normal_coro() {
+cocls::async<int> normal_coro() {
     int res = co_await work(20,1000);
     std::cout << "Normal coro returns " << res << std::endl;
     co_return res;
 }
 
-cocls::coro_future<int> waiter1(cocls::shared_future<int> f) {
+cocls::async<int> waiter1(cocls::shared_future<int> f) {
     int res = co_await f;
     std::cout << "Waiter 1 returns " << res << std::endl;
     co_return res;
 }
 
-cocls::coro_future<int> waiter2(cocls::shared_future<int> f) {
+cocls::async<int> waiter2(cocls::shared_future<int> f) {
     int res = co_await f;
     std::cout << "Waiter 2 returns " << res << std::endl;
     co_return res;
