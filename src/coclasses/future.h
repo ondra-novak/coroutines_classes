@@ -224,6 +224,15 @@ public:
         }
     }
 
+    const_reference value() const {
+        switch (_state) {
+            default: throw value_not_ready_exception();
+            case State::exception: std::rethrow_exception(_exception);throw;
+            case State::value:
+                if constexpr(!is_void) return _value; else return ;
+        }
+    }
+
 
     ///Wait synchronously
     /**
