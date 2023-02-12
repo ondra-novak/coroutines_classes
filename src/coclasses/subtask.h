@@ -120,6 +120,16 @@ public:
             }
         }
 
+        ///compatibility with co_awaiter
+        bool subscribe_awaiter(abstract_awaiter<false> *awt) {
+            promise_type &p = this->_owner._h.promise();
+            p._awaiter = awt;
+            p._future = &this->_owner;
+            this->_owner._h.resume();
+            return true;
+
+        }
+
 
     };
 

@@ -54,7 +54,7 @@ public:
      */
     bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain_);
 
-
+    static constexpr bool chained = chain;
  };
 
 ///phony awaiter it is used to signal special value in awaiter's/chain
