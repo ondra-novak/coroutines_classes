@@ -282,7 +282,7 @@ void with_queue_test() {
     wq.join();
 }
 
-cocls::with_allocator<cocls::task<void>,cocls::reusable_storage>
+cocls::with_allocator<cocls::reusable_storage, cocls::task<void> >
         test_reusable_co(cocls::reusable_storage &, cocls::scheduler<> &sch) {
     COCLS_SET_CORO_NAME();
     std::cout << "(test_reusable_co) running" << std::endl;
