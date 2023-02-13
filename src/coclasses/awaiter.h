@@ -409,6 +409,8 @@ public:
     ~abstract_listening_awaiter() {
         cleanup();
     }
+    abstract_listening_awaiter(const abstract_listening_awaiter &) = delete;
+    abstract_listening_awaiter &operator=(const abstract_listening_awaiter &) = delete;
 
     ///Start awaiting
     /**
