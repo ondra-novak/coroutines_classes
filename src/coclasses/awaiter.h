@@ -77,6 +77,7 @@ public:
     virtual void resume() noexcept {}
 
 
+
 };
 
 template<>
@@ -132,6 +133,7 @@ public:
     bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain);
 
     abstract_awaiter *_next = nullptr;
+    static constexpr bool chained = true;
 protected:
 };
 
@@ -358,6 +360,153 @@ inline bool abstract_awaiter<true>::subscibre_check_ready(std::atomic<abstract_a
     //we successfully subscribed
     return true;
 }
+
+template<typename Awaitable>
+inline decltype(auto) extract_awaiter(Awaitable &&awt) noexcept {
+    if constexpr (has_co_await<Awaitable>::value) {
+        auto x = awt.operator co_await();
+        return x;
+    } else if constexpr (has_global_co_await<Awaitable>::value) {
+        auto x =operator co_await(awt);
+        return x;
+    } else {
+        return std::forward<Awaitable>(awt);
+    }
+}
+
+
+template<typename T>
+using to_awaiter_type_t = decltype(extract_awaiter(std::declval<T>()));
+
+
+///listening awaiter listen for signal about completion of operation
+/**
+ * Once operation is complete, it calls a virtual function resume. The
+ * function can access value awailable during the event.
+ *
+ * @tparam Awaitable original awaitable object, for example future<X>,
+ * task<X>, etc... You can also listen standard awaiter, for example mutex::lock()
+ *
+ * The awaiter must be derived from abstact_awaiter
+ *
+ * This is abstract class, you need to implement resume() function
+ *
+ * No heap allocation is performed in this class, any required
+ * space is already reserved
+ *
+ */
+template<typename Awaitable>
+class abstract_listening_awaiter: public abstract_awaiter<to_awaiter_type_t<Awaitable>::chained> {
+public:
+    using super = abstract_awaiter<to_awaiter_type_t<Awaitable>::chained>;
+    using awaiter_type = to_awaiter_type_t<Awaitable>;
+    using value_type = decltype(std::declval<awaiter_type>().await_resume());
+
+    static constexpr bool has_extra_awaiter = has_co_await<Awaitable>::value || has_global_co_await<Awaitable>::value;
+
+
+    abstract_listening_awaiter() {};
+    ~abstract_listening_awaiter() {
+        cleanup();
+    }
+
+    ///Start awaiting
+    /**
+     * @param fn a function which is called and which result is awaited.
+     * You cannot await on object passed as reference, it always must
+     * be a function returning awaitable object
+     *
+     * Note that there can be only one awaiter being awaited at
+     * the same time. The instance of this object must remain
+     * valid until operation completes
+     *
+     * Once operation is complete, resume() is called. If the
+     * operation was completed before, resume() is called immediately
+     */
+    template<typename Fn>
+    void await(Fn &&fn) {
+        cleanup();
+        _need_cleanup = true;
+        new(&_awt_instance) Awaitable(fn());
+        if constexpr(has_co_await<Awaitable>::value) {
+            new(&_awt) awaiter_type(_awt_instance.operator co_await());
+            handle_suspend(_awt);
+        } else if constexpr(has_global_co_await<Awaitable>::value) {
+            new(&_awt) awaiter_type(operator co_await(_awt_instance));
+            handle_suspend(_awt);
+        } else {
+            handle_suspend(_awt_instance);
+        }
+    }
+
+    ///cleans up manually any localy stored awaiter or awaitable object
+    /** function calls destructors on all temporary objects
+     * and reclaims released space */
+    void cleanup() {
+        if (_need_cleanup) default_cleanup();
+        _need_cleanup = false;
+    }
+
+    ///called when operation is complete
+    /**
+     * To receive a result of the operation, use the value() function
+     * here
+     */
+    virtual void resume() noexcept override = 0;
+
+    ///called when operation is complete in a coroutine
+    /**
+     * The main purpose is to respond with coroutine handle to be
+     * called next. Default value calls resume() and returns
+     * noop_coroutine.
+     */
+    virtual std::coroutine_handle<> resume_handle() noexcept override {
+        resume();
+        return std::noop_coroutine();
+    }
+
+    ///Retrieves result of asynchronous operation
+    /**
+     * @return result. It is in most cases returned as reference to
+     * a variable which stores the result
+     *
+     * @note will throw stored exception. Because the resume() is
+     * declared noexcept, you must wrap the code into try-catch block
+     */
+    value_type value() {
+        if constexpr(has_extra_awaiter) {
+            return _awt.await_resume();
+        } else {
+            return _awt_instance.await_resume();
+        }
+    }
+
+protected:
+    bool _need_cleanup = false;
+    union {
+        Awaitable _awt_instance;
+    };
+    union {
+        awaiter_type _awt;
+    };
+
+    template<typename Awt>
+    void handle_suspend(Awt &awt) {
+        if (awt.await_ready()) {
+            this->resume();
+        } else {
+            awt.subscribe_awaiter(this);
+        }
+    }
+
+    void default_cleanup() {
+        _awt_instance.~Awaitable();
+        if constexpr(has_extra_awaiter) {
+            _awt.~awaiter_type();
+        }
+    }
+
+};
 
 
 ///Retrieves handle to currently running coroutine
