@@ -114,13 +114,16 @@ class promise;
 /**
  * If some interface expect, that future<T> will be returned, you can
  * implement such future as coroutine. Just declare coroutine which
- * returns async, this future object can be converted to future<T>
+ * returns future_coro, this future object can be converted to future<T>
  *
  * @param T returned value, can be void
  * @param _Policy resumption policy - void means default policy
  */
 template<typename T, typename _Policy = void>
-class async;
+class future_coro;
+
+template<typename T, typename _Policy = void>
+class future_coro_promise;
 
 
 template<typename T>
@@ -131,6 +134,8 @@ public:
     using reference = std::add_lvalue_reference_t<value_type>;
     using const_reference = std::add_lvalue_reference_t<std::add_const_t<value_type> >;
     static constexpr bool is_void = std::is_void_v<value_type>;
+
+    using promise_type = future_coro_promise<T, void>;
 
     enum class State {
         not_ready,
@@ -160,10 +165,10 @@ public:
         ,_state(State::exception){}
 
     template<typename _Policy>
-    future(async<T, _Policy> &&coro)
+    future(future_coro<T, _Policy> &&coro)
         :_state(State::have_promise)
     {
-       typename async<T, _Policy>::promise_type &p = coro._h.promise();
+       typename future_coro<T, _Policy>::promise_type &p = coro._h.promise();
        p._future = this;
        coro.detach();
     }
@@ -260,7 +265,9 @@ protected:
     friend class promise<T>;
 
     template<typename A, typename B>
-    friend class async;
+    friend class future_coro;
+    template<typename A, typename B>
+    friend class future_coro_promise;
 
     using value_storage = std::conditional_t<is_void, int, value_type>;
 
@@ -534,48 +541,20 @@ promise<T> make_promise(Fn &&fn, Storage &storage) {
 /**@}*/
 
 
+
+
 template<typename T, typename _Policy>
-class async {
+class future_coro {
 public:
 
     friend class future<T>;
 
-    class promise_type: public coro_promise_base, // @suppress("Miss copy constructor or assignment operator")
-                        public coro_policy_holder<_Policy>,
-                        public coro_unified_return<T, typename async<T,_Policy>::promise_type> {
-    public:
-        future<T> *_future = nullptr;
+    using promise_type = future_coro_promise<T, _Policy>;
 
-        async get_return_object() {
-            return std::coroutine_handle<promise_type>::from_promise(*this);
-        }
+    future_coro(std::coroutine_handle<promise_type> h):_h(h) {}
+    future_coro(future_coro &&other):_h(std::exchange(other._h, {})) {}
 
-        struct final_awaiter: std::suspend_always {
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<promise_type> me) noexcept {
-                promise_type &p = me.promise();
-                future<T> *f = p._future;
-                me.destroy();
-                return f?f->resolve_resume():std::noop_coroutine();
-
-            }
-        };
-
-        std::suspend_always initial_suspend() noexcept {return {};}
-        final_awaiter final_suspend() noexcept {return {};}
-
-        template<typename ... Args>
-        void resolve(Args && ... args) {
-            if (_future) _future->set(std::forward<Args>(args)...);
-        }
-        void unhandled_exception() {
-            if (_future) _future->set(std::current_exception());
-        }
-    };
-
-    async(std::coroutine_handle<promise_type> h):_h(h) {}
-    async(async &&other):_h(std::exchange(other._h, {})) {}
-
-    ~async() {
+    ~future_coro() {
         if (_h) _h.destroy();
     }
 
@@ -593,6 +572,41 @@ public:
 protected:
     std::coroutine_handle<promise_type> _h;
 };
+
+template<typename T, typename _Policy>
+class future_coro_promise: public coro_promise_base, // @suppress("Miss copy constructor or assignment operator")
+                    public coro_policy_holder<_Policy>,
+                    public coro_unified_return<T, future_coro_promise<T,_Policy> > {
+public:
+    future<T> *_future = nullptr;
+
+
+    future_coro<T, _Policy> get_return_object() {
+        return std::coroutine_handle<future_coro_promise>::from_promise(*this);
+    }
+    struct final_awaiter: std::suspend_always {
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<future_coro_promise> me) noexcept {
+            future_coro_promise &p = me.promise();
+            future<T> *f = p._future;
+            me.destroy();
+            return f?f->resolve_resume():std::noop_coroutine();
+
+        }
+    };
+
+    std::suspend_always initial_suspend() noexcept {return {};}
+    final_awaiter final_suspend() noexcept {return {};}
+
+    template<typename ... Args>
+    void resolve(Args && ... args) {
+        if (_future) _future->set(std::forward<Args>(args)...);
+    }
+    void unhandled_exception() {
+        if (_future) _future->set(std::current_exception());
+    }
+};
+
+
 
 ///Shared future works similar as future<> but can be moved or copied, because it is ref-counter shared place
 /**
@@ -692,14 +706,14 @@ public:
         if (_ptr->has_promise()) _ptr->resolve_tracer.charge(_ptr);
     }
 
-    ///Construct shared future from async
+    ///Construct shared future from future_coro
     /**
      * Starts coroutine and initializes shared_future. Result of coroutine is used to resolve
      * the future
      * @param coro coroutine result
      */
     template<typename _Policy>
-    shared_future(async<T, _Policy> &&coro)
+    shared_future(future_coro<T, _Policy> &&coro)
         :_ptr(std::make_shared<future_internal>(std::move(coro))) {
         _ptr->resolve_tracer.charge(_ptr);
     }
@@ -779,7 +793,7 @@ protected:
 };
 
 template<typename T, typename P>
-future(async<T, P>) -> future<T>;
+future(future_coro<T, P>) -> future<T>;
 
 
 

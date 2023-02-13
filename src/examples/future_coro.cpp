@@ -15,24 +15,21 @@ cocls::future<int> work() {
     };
 }
 
-cocls::async<int> cofn1() {
+cocls::future<int> cofn1() {
     cocls::future<int> fut;
     fut.result_of(work);
     co_return co_await fut;
 }
 
-cocls::future<int> api_fn() {
-    return cofn1();
-}
 
 //task returning void
-cocls::async<int> cofn2() {
-    cocls::future<int> fut = api_fn();
+cocls::future<int> cofn2() {
+    cocls::future<int> fut = cofn1();
     co_return co_await fut;
 }
 
 int main(int, char **) {
-    std::cout << "Result:" << cocls::future(cofn2()).join() <<std::endl;
+    std::cout << "Result:" << cofn2().wait() <<std::endl;
 
 
 }

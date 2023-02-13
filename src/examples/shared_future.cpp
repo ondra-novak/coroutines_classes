@@ -16,26 +16,26 @@ cocls::future<int> work(int val, int time) {
 }
 
 //task returning void
-cocls::async<int> dropped_coro() {
+cocls::future<int> dropped_coro() {
     int res = co_await work(10,500);
     std::cout << "Dropped coro returns " << res << std::endl;
     co_return res;
 }
 
 //task returning void
-cocls::async<int> normal_coro() {
+cocls::future<int> normal_coro() {
     int res = co_await work(20,1000);
     std::cout << "Normal coro returns " << res << std::endl;
     co_return res;
 }
 
-cocls::async<int> waiter1(cocls::shared_future<int> f) {
+cocls::future<int> waiter1(cocls::shared_future<int> f) {
     int res = co_await f;
     std::cout << "Waiter 1 returns " << res << std::endl;
     co_return res;
 }
 
-cocls::async<int> waiter2(cocls::shared_future<int> f) {
+cocls::future<int> waiter2(cocls::shared_future<int> f) {
     int res = co_await f;
     std::cout << "Waiter 2 returns " << res << std::endl;
     co_return res;
@@ -44,13 +44,13 @@ cocls::async<int> waiter2(cocls::shared_future<int> f) {
 
 int main(int, char **) {
     {
-        cocls::shared_future<int> x(dropped_coro());
+        cocls::shared_future<int> x([]{return dropped_coro();});
         // x is dropped
     }
     {
-        cocls::shared_future<int> x(normal_coro());
-        cocls::future(waiter1(x)).join();
-        cocls::future(waiter2(x)).join();
+        cocls::shared_future<int> x([]{return normal_coro();});
+        waiter1(x).join();
+        waiter2(x).join();
     }
 }
 
