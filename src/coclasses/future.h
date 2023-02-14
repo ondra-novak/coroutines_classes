@@ -147,12 +147,27 @@ public:
     class __SetValueTag {};
     class __SetExceptionTag {};
 
+    ///construct empty future
+    /**
+     * It can be used manually. You need to obtain promise by calling the function get_promise(), then
+     * future can be awaited
+     */
     future() {};
 
-    template<typename Fn> CXX20_REQUIRES(std::invocable<Fn, promise<T> >)
+    ///construct future, calls function with the promise
+    /**
+     * @param init function to start asynchronous operation and store the promise which is
+     * eventually resolved.
+     *
+     * constructor can be used in return expresion. You can omit the constructor name itself as
+     * the constructor is intentionally declared without explicit keyword
+     */
+    template<typename Fn>
+    CXX20_REQUIRES(std::invocable<Fn, promise<T> >)
     future(Fn &&init) {
         init(get_promise());
     }
+
     template<typename ... Args>
     future(__SetValueTag, Args && ... args)
         :_value(std::forward<Args>(args)...)
@@ -164,6 +179,15 @@ public:
         ,_awaiter(&empty_awaiter<true>::disabled)
         ,_state(State::exception){}
 
+    ///construct by future_coro - companion coroutine result
+    /**
+     * If you declare future_coro coroutine type, its result can be passed to the future.
+     * @param coro coroutine
+     *
+     * it is also possible to use future<T> as coroutine (the function can use co_ keywords,
+     * but note that future<> is not movable, but future_coro<> is movable
+     *
+     */
     template<typename _Policy>
     future(future_coro<T, _Policy> &&coro)
         :_state(State::have_promise)
@@ -173,36 +197,46 @@ public:
        coro.detach();
     }
 
+    ///Resolves future by a value
     template<typename ... Args>
     static future<T> set_value(Args && ... args) {
         return future<T>(__SetValueTag(), std::forward<Args>(args)...);
     }
 
+    ///Resolves future by an exception
     static future<T> set_exception(std::exception_ptr e) {
         return future<T>(__SetExceptionTag(), std::move(e));
     }
 
     using awaiter = abstract_awaiter<true>;
 
+    ///retrieves promise from unitialized object
     promise<T> get_promise() {
         assert("Invalid future state" && _state == State::not_ready);
         _state = State::have_promise;
         return promise<T>(*this);
     }
 
-
+    ///construct future from result returned by a function (can be lambda)
+    /**
+     * @param fn function with zero argument and returns the same type
+     *
+     * @note future is destroyed and recreated. If an exception is thrown from the
+     * function, the future is resolved with that exception
+     */
     template<typename Fn>
     CXX20_REQUIRES(std::same_as<decltype(std::declval<Fn>()()), future<T> > )
-    void result_of(Fn &&fn) {
+    void result_of(Fn &&fn) noexcept {
         this->~future();
         try {
             new(this) future<T>(fn());
         } catch(...) {
             new(this) future<T>();
+            get_promise()(std::current_exception());
         }
     }
 
-
+    ///destructor
     ~future() {
         assert("Destroy of pending future" && _state != State::have_promise);
         switch (_state) {
@@ -212,14 +246,17 @@ public:
         }
     }
 
+    ///determines, whether promise has been already retrieved
     bool has_promise() const  {
         return _state == State::have_promise;
     }
 
+    ///determines, whether result is already available
     bool ready() const {
         return _awaiter.load(std::memory_order_acquire) == &empty_awaiter<true>::disabled;
     }
 
+    ///retrieves result value (as reference)
     reference value() {
         switch (_state) {
             default: throw value_not_ready_exception();
@@ -229,6 +266,7 @@ public:
         }
     }
 
+    ///retrieves result value (as const reference)
     const_reference value() const {
         switch (_state) {
             default: throw value_not_ready_exception();
@@ -257,6 +295,7 @@ public:
         co_awaiter<future<T>,true >(*this).sync();
     }
 
+    ///support co_await
     co_awaiter<future<T>,true> operator co_await() {return *this;}
 
 
@@ -324,18 +363,37 @@ protected:
     }
 };
 
+
+///promise object - can be obtained by future<>::get_promise() or during construction of the future
+/**
+ * The promise object acts as function (invokable). It is movable, not copyable. If it is destroyed
+ * without calling, the associated future is resolved with no value, which causes that exception is thrown.
+ * The promise can be called concurrently where only first call is accepted, other are ignored.
+ *
+ * The promise is invokable as constructor of returned value with exception - the promise can be
+ * called with std::exception_ptr which causes that future throws this exception.
+ *
+ * @tparam T
+ */
 template<typename T>
 class promise {
 public:
+    ///construct empty promise - to be assigned
     promise():_owner(nullptr) {}
+    ///construct promise pointing at specific future
     explicit promise(future<T> &fut):_owner(&fut) {}
+    ///promise is not copyable
     promise(const promise &other) =delete;
+    ///promise can be moved
     promise(promise &&other):_owner(other.claim()) {}
+    ///destructor
     ~promise() {
         if (_owner.load(std::memory_order_relaxed))
             set_exception(std::make_exception_ptr(await_canceled_exception()));
     }
+    ///promise cannot assignment by copying
     promise &operator=(const promise &other) = delete;
+    ///promise can be assigned by move
     promise &operator=(promise &&other) {
         if (this != &other) {
             if (_owner) set_exception(std::make_exception_ptr(await_canceled_exception()));
@@ -344,27 +402,45 @@ public:
         return *this;
     }
 
-
+    ///construct the associated future
+    /**
+     * @param args arguments to construct the future's value - same as its constructor. For
+     * promise<void> arguments are ignored
+     * @retval true success (race won)
+     * @retval false promise is already claimed (race lost)
+     */
     template<typename ... Args>
-    void operator()(Args && ... args) {
+    bool operator()(Args && ... args) {
         auto m = claim();
         if (m) {
             m->set(std::forward<Args>(args)...);
             m->resolve();
+            return true;
         }
+        return false;
     }
 
+    ///construct the associated future
+    /**
+     * @param args arguments to construct the future's value - same as its constructor. For
+     * promise<void> arguments are ignored
+     * @retval true success (race won)
+     * @retval false promise is already claimed (race lost)
+     */
     template<typename ... Args>
-    void set_value(Args && ... args) {
+    bool set_value(Args && ... args) {
         auto m = claim();
         if (m) {
             m->set(std::forward<Args>(args)...);
             m->resolve();
+            return true;
         }
+        return false;
     }
 
-    void set_exception(std::exception_ptr e) {
-        set_value(e);
+    ///Sets exception
+    bool set_exception(std::exception_ptr e) {
+        return set_value(e);
     }
 
     ///Returns true, if the promise is valid
@@ -378,8 +454,8 @@ public:
     }
 
     ///capture current exception
-    void unhandled_exception()  {
-        set_exception(std::current_exception());
+    bool unhandled_exception()  {
+        return set_exception(std::current_exception());
     }
 
     ///claim this future as pointer to promise - used often internally
@@ -637,7 +713,7 @@ public:
  *
  *
  */
-template<typename T>
+template<typename T, typename Base = cocls::future<T> >
 class shared_future {
 
 
@@ -650,11 +726,11 @@ class shared_future {
             _ptr = nullptr;
         }
     protected:
-        std::shared_ptr<future<T> > _ptr;
+        std::shared_ptr<Base> _ptr;
     };
 
 
-    class future_internal: public future<T> {
+    class future_internal: public Base {
     public:
         using future<T>::future;
 
@@ -699,7 +775,7 @@ public:
      *
      * @param fn function to be called and return future<T>
      */
-    template<typename Fn> CXX20_REQUIRES(std::same_as<decltype(std::declval<Fn>()()), future<T> > )
+    template<typename Fn> CXX20_REQUIRES(std::same_as<decltype(std::declval<Fn>()()), Base > )
     shared_future(Fn &&fn)
         :_ptr(std::make_shared<future_internal>()) {
         _ptr->result_of(std::forward<Fn>(fn));
@@ -720,18 +796,18 @@ public:
 
     ///Retrieve the future itself
     /** retrieved as reference, can't be copied */
-    operator future<T> &() {return *_ptr;};
+    operator Base &() {return *_ptr;};
 
 
     ///return resolved future
     template<typename ... Args>
     static shared_future<T> set_value(Args && ... args) {
-        return shared_future([&]{return future<T>::set_value(std::forward<Args>(args)...);});
+        return shared_future([&]{return Base::set_value(std::forward<Args>(args)...);});
     }
 
     ///return resolved future
     static shared_future<T> set_exception(std::exception_ptr e) {
-        return shared_future([&]{return future<T>::set_exception(std::move(e));});
+        return shared_future([&]{return Base::set_exception(std::move(e));});
     }
 
     ///initializes object if needed, otherwise does nothing
@@ -798,13 +874,95 @@ future(future_coro<T, P>) -> future<T>;
 
 
 
-template<typename T>
-inline void shared_future<T>::resolve_cb::charge(std::shared_ptr<future_internal> ptr) {
+template<typename T, typename Base>
+inline void shared_future<T,Base>::resolve_cb::charge(std::shared_ptr<future_internal> ptr) {
        _ptr = ptr;
        if (!(ptr->operator co_await()).subscribe_awaiter(&ptr->resolve_tracer)) {
            _ptr = nullptr;
       }
 }
+
+///Construct a future with context attached to it
+/** It can be returned from a function without need to worry, where context will be stored
+ * So the whole implementation can be there without need to be initialized on stack
+ *
+ * @tparam T Type returned by this future (can be void)
+ * @tparam Context Type of object constructed with the future. The constructor
+ * receives extra argument (as first argument) containing promise to the future. The
+ * constructor should store the promise and start asynchronous operation. Once
+ * asynchronous operation is complete, the promise must be resolved. The template class
+ * garanteed lifetime, it will not end before the promise is resolved. Ensure
+ * that resolving the promise is last operation.
+ */
+template<typename T, typename Context>
+class [[nodiscard]] future_with_context: public cocls::future<T> {
+public:
+
+    ///construct the object
+    /**
+     * @param args arguments passed to the constructor of Context.
+     */
+    template<typename ... Args>
+    future_with_context(Args && ... args):
+        cocls::future<T>([&](auto promise){
+            new(&_ctx) Context(std::move(promise), std::forward<Args>(args)...);
+    }),_constructed(true) {}
+    ~future_with_context() {
+        if (_constructed) _ctx.~Context();
+    }
+
+    ///construct / replace with return value of a function which is called (can be lambda)
+    /**
+     * @param fn function must return the same type. It is called without arguments. If exception
+     * is thrown during call, the exception is captured and stored in future
+     */
+    template<typename Fn>
+    CXX20_REQUIRES(std::same_as<decltype(std::declval<Fn>()()), future_with_context<T, Context> >)
+    void result_of(Fn &&fn) noexcept {
+        this->~future_with_context();
+        try {
+            new(this) future_with_context(fn());
+        } catch (...) {
+            new(this) future_with_context(std::monostate());
+            throw;
+        }
+    }
+
+    ///construct object uninitialized
+    /**
+     * result can be used as general future or can be initialized later using result_of()
+     * @return uninitialized future
+     */
+    static future_with_context unitialized()  {
+        return future_with_context(std::monostate());
+    }
+
+    template<typename ... Args>
+    static future_with_context set_value(Args && ... args) {
+        return future_with_context(std::monostate(), std::forward<Args>(args)...);
+
+    }
+    static future_with_context set_exception(std::exception_ptr e) {
+        return future_with_context(std::monostate(), std::move(e));
+
+    }
+
+protected:
+    future_with_context(std::monostate):_constructed(false) {}
+    template<typename ... Args>
+    future_with_context(std::monostate, Args && ... args)
+        :future<T>(typename future<T>::__SetValueTag(), std::forward<Args>(args)...)
+         ,_constructed(false) {}
+    template<typename ... Args>
+    future_with_context(std::monostate, std::exception_ptr e)
+        :future<T>(typename future<T>::__SetExceptionTag(), std::move(e))
+         ,_constructed(false) {}
+
+    union {
+        Context _ctx;
+    };
+    bool _constructed;
+};
 
 }
 #endif /* SRC_COCLASSES_FUTURE_H_ */
