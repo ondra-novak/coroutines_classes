@@ -12,7 +12,7 @@
 
 
 #include "poolalloc.h"
-#include "resumption_policy.h"
+#include "coro_policy_holder.h"
 
 #include <assert.h>
 #include <memory>

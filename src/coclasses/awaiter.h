@@ -194,7 +194,7 @@ protected:
         return _h;
     }
     virtual void resume() noexcept  override {
-        resumption_policy::unspecified<void>::resume(_h);
+        resumption_policy::unspecified<void>::policy::resume(_h);
     }
 
     template<typename,typename> friend class co_awaiter_policy;

@@ -53,13 +53,13 @@ public:
     ///Retrieve handle which is used to start this coroutine
     /**
      * @return handle to start this coroutine. If the coroutine is already running, returns
-     * nullptr. Always check the return value! 
-     * 
+     * nullptr. Always check the return value!
+     *
      * @note From the perspective of outside work, this function marks coroutine running even
      * if it is not running yet. It is expected, that owner of the handle resumes the coroutine.
-     * Coroutine in this state can be still canceled. This is the only way to cancel execution. 
+     * Coroutine in this state can be still canceled. This is the only way to cancel execution.
      * Do not destroy handle, because it still can be awaited
-     * 
+     *
      */
     [[nodiscard]] std::coroutine_handle<> get_start_handle() {
         auto prom = static_cast<lazy_promise<T> *>(this->get_promise());
@@ -70,17 +70,17 @@ public:
             return nullptr;
         }
     }
-  
-    
+
+
     ///Marks lazy task as canceled.
     /**
      * This allows to cancel lazy task before it is started. If the task is already running,
      * function does nothing as the task cannot be canceled now.
-     * 
-     * Function doesn't resume the task. You need to co_await or start() the task. If you 
+     *
+     * Function doesn't resume the task. You need to co_await or start() the task. If you
      * also have a handle of the task, you need to resume the handle.
-     * 
-     * 
+     *
+     *
      */
     void mark_canceled() {
         auto prom = static_cast<lazy_promise<T> *>(this->get_promise());
@@ -106,16 +106,16 @@ public:
     }
 protected:
     lazy(promise_type_base &h):task<T, Policy>(h) {}
-    
+
     friend class lazy_promise<T, Policy>;
 
 
 };
 
 template<typename T>
-class lazy<T, void>: public lazy<T, resumption_policy::unspecified<void> > {
+class lazy<T, void>: public lazy<T, typename resumption_policy::unspecified<void>::policy > {
 public:
-    using lazy<T, resumption_policy::unspecified<void> >::lazy;
+    using lazy<T, typename resumption_policy::unspecified<void>::policy >::lazy;
 };
 
 template<typename T, typename Policy>
@@ -123,29 +123,29 @@ class lazy_promise: public task_promise<T, Policy>
 {
 public:
     lazy_promise():_started(false) {}
-    
+
     struct initial_awaiter {
         lazy_promise *_owner;
         initial_awaiter(lazy_promise *owner):_owner(owner) {}
         initial_awaiter(const initial_awaiter &) = delete;
         initial_awaiter &operator=(const initial_awaiter &) = delete;
-        
+
         static bool await_ready() noexcept {return false;}
         static void await_suspend(std::coroutine_handle<> ) noexcept {};
         void await_resume() {
             if (_owner->_canceled) throw await_canceled_exception();
         }
     };
-    
+
     initial_awaiter initial_suspend() noexcept {
         task_promise<T, Policy>::initial_suspend();
         return {this};
     }
-    
+
     void cancel() {
         _canceled = true;
     }
-    
+
     lazy<T> get_return_object() {
         return lazy<T>(*this);
     }
@@ -154,14 +154,14 @@ protected:
     bool _canceled = false;
 
 
-    
+
     template<typename, typename> friend class lazy;
-    
+
 };;
 
-template<typename T, typename P> 
+template<typename T, typename P>
     struct is_task<lazy<T,P> > : std::integral_constant<bool, true> {};
-template<typename T, typename P> 
+template<typename T, typename P>
     struct task_result<lazy<T,P> > {using type = T;};
 
 

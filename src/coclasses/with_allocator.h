@@ -83,7 +83,7 @@ public:
     using Task::Task;
     with_allocator(Task &&arg):Task(std::move(arg)) {}
 
-    using promise_base = custom_allocator_base<Allocator, typename Task::promise_type>;
+    using promise_type = custom_allocator_base<Allocator, typename Task::promise_type>;
 
 
 };

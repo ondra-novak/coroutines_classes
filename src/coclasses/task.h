@@ -555,7 +555,7 @@ public:
 };
 
 template<typename T>
-class task_promise<T, void>: public task_promise<T, resumption_policy::unspecified<void> > {
+class task_promise<T, void>: public task_promise<T, typename resumption_policy::unspecified<void>::policy > {
 public:
 
     auto get_return_object() {

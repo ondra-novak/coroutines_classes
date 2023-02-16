@@ -45,6 +45,7 @@ add_executable (detached detached.cpp)
 add_executable (detached_thread_pool detached_thread_pool.cpp)
 add_executable (task_double_await task_double_await.cpp)
 add_executable (subtask subtask.cpp)
+add_executable (stackfull stackfull.cpp)
 add_executable (generator_with_arg generator_with_arg.cpp)
 add_executable (generator_aggregator_with_arg generator_aggregator_with_arg.cpp)
 
