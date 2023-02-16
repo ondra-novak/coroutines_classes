@@ -401,9 +401,11 @@ public:
     using super = abstract_awaiter<to_awaiter_type_t<Awaitable>::chained>;
     using awaiter_type = to_awaiter_type_t<Awaitable>;
     using value_type = decltype(std::declval<awaiter_type>().await_resume());
+    static constexpr bool is_reference = std::is_reference_v<Awaitable>;
 
     static constexpr bool has_extra_awaiter = has_co_await<Awaitable>::value || has_global_co_await<Awaitable>::value;
 
+    using AwaitableStorage = std::conditional_t<is_reference, std::add_pointer_t<std::decay_t<Awaitable> >, Awaitable>;
 
     abstract_listening_awaiter() {};
     ~abstract_listening_awaiter() {
@@ -429,15 +431,15 @@ public:
     void await(Fn &&fn) {
         cleanup();
         _need_cleanup = true;
-        new(&_awt_instance) Awaitable(fn());
+        construct_awt(std::forward<Fn>(fn));
         if constexpr(has_co_await<Awaitable>::value) {
-            new(&_awt) awaiter_type(_awt_instance.operator co_await());
+            new(&_awt) awaiter_type(get_awt().operator co_await());
             handle_suspend(_awt);
         } else if constexpr(has_global_co_await<Awaitable>::value) {
-            new(&_awt) awaiter_type(operator co_await(_awt_instance));
+            new(&_awt) awaiter_type(operator co_await(get_awt()));
             handle_suspend(_awt);
         } else {
-            handle_suspend(_awt_instance);
+            handle_suspend(get_awt());
         }
     }
 
@@ -486,11 +488,29 @@ public:
 protected:
     bool _need_cleanup = false;
     union {
-        Awaitable _awt_instance;
+        AwaitableStorage _awt_instance;
     };
     union {
         awaiter_type _awt;
     };
+
+    template<typename Fn>
+    void construct_awt(Fn &&fn) {
+        if constexpr(is_reference) {
+            Awaitable s = fn();
+            new(&_awt_instance) AwaitableStorage(&s);
+        } else {
+            new(&_awt_instance) AwaitableStorage(fn());
+        }
+    }
+
+    Awaitable &get_awt() {
+        if constexpr(is_reference) {
+            return *_awt_instance;
+        } else {
+            return _awt_instance;
+        }
+    }
 
     template<typename Awt>
     void handle_suspend(Awt &awt) {
@@ -502,7 +522,7 @@ protected:
     }
 
     void default_cleanup() {
-        _awt_instance.~Awaitable();
+        _awt_instance.~AwaitableStorage();
         if constexpr(has_extra_awaiter) {
             _awt.~awaiter_type();
         }
