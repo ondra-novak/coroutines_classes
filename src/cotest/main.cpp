@@ -265,10 +265,10 @@ void scheduler_test() {
 using queued_task = cocls::with_queue<cocls::task<void>, int>;
  queued_task with_queue_task() {
      COCLS_SET_CORO_NAME();
-        int i = co_await queued_task::current_queue();
+        int i = co_yield {};
         while (i) {
             std::cout<<"(with_queue_task) Received from queue: " << i << std::endl;
-            i = co_await queued_task::current_queue();
+            i = co_yield {};
         }
         std::cout<<"(with_queue_task) Done" << std::endl;
 }

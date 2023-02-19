@@ -14,7 +14,7 @@
 #define co_await ~
 //rewrite co_return as throw
 #define co_return throw
-#define co_yield ~
+#define co_yield
 #define consteval constexpr
 #endif
 
