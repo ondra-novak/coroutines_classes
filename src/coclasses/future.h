@@ -215,7 +215,7 @@ public:
 
     ///retrieves promise from unitialized object
     promise<T> get_promise() {
-        auto cur_awaiter = _awaiter.exchange(nullptr, std::memory_order_relaxed);
+        [[maybe_unused]] auto cur_awaiter = _awaiter.exchange(nullptr, std::memory_order_relaxed);
         assert("Invalid future state" && cur_awaiter== &empty_awaiter<true>::instance);
         return promise<T>(*this);
     }
@@ -752,7 +752,8 @@ public:
         return std::coroutine_handle<future_coro_promise>::from_promise(*this);
     }
     struct final_awaiter: std::suspend_always {
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<future_coro_promise> me) noexcept {
+        template<typename Prom>
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<Prom> me) noexcept {
             future_coro_promise &p = me.promise();
             future<T> *f = p._future;
             me.destroy();

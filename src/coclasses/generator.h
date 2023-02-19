@@ -152,7 +152,8 @@ public:
 
         struct yield_suspend: std::suspend_always {
             promise_type *p = nullptr;
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<promise_type> me) noexcept {
+            template<typename X>
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<X> me) noexcept {
                 p = &me.promise();
                 p->_arg = nullptr;
                 awaiter *caller = std::exchange(p->_caller, nullptr);
