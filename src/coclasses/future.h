@@ -82,6 +82,13 @@ namespace cocls {
  *  is recommended to use make_shared
  *
  *
+ * @note Future can act as optional. If the promise is dropped without being called, the
+ * future is set resolved, but without setting the value. In this case, accessing the
+ * future cause the exception "value_not_ready_exception". However, you can detect this
+ * situation before. If you store future in a variable, you can call has_value() which
+ * can be also co_await-ed. The behavoir is the same as co_await the future itself,
+ * but now, the result is true if the value has been set, or false if not.
+ *
  */
 template<typename T>
 class future;
@@ -96,19 +103,6 @@ template<typename T>
 class promise;
 
 
-/*
- *     │                                                       ┌────────────────┐
- *     │owner──────────┐                         ┌─shared_ptr──┤ shared_promise │
- *     │               ▼                         │             └────────────────┘
- *     │           ┌────────┐       allocated    │
- *     ▼           │        │      ┌─────────┐   │             ┌────────────────┐
- * co_await ◄──────┤ future │◄─────┤ promise │◄──┼─shared_ptr──┤ shared_promise │
- *     │           │        │      │         │   │             └────────────────┘
- *     │           └────────┘      └─────────┘   │
- *     │                                         │             ┌────────────────┐
- *     │                                         └─shared_ptr──┤ shared_promise │
- *     ▼                                                       └────────────────┘
- */
 
 ///Coroutine for run asynchronous operations, it can be used to construct future<>
 /**
@@ -134,25 +128,26 @@ public:
     using reference = std::add_lvalue_reference_t<value_type>;
     using const_reference = std::add_lvalue_reference_t<std::add_const_t<value_type> >;
     static constexpr bool is_void = std::is_void_v<value_type>;
+    using value_storage = std::conditional_t<is_void, int, value_type>;
 
     using promise_type = future_coro_promise<T, void>;
 
     enum class State {
-        not_ready,
-        have_promise,
+        not_value,
         value,
         exception
     };
 
     class __SetValueTag {};
     class __SetExceptionTag {};
+    class __SetNoValueTag {};
 
     ///construct empty future
     /**
      * It can be used manually. You need to obtain promise by calling the function get_promise(), then
      * future can be awaited
      */
-    future() {};
+    future():_awaiter(&empty_awaiter<true>::instance) {};
 
     ///construct future, calls function with the promise
     /**
@@ -164,8 +159,8 @@ public:
      */
     template<typename Fn>
     CXX20_REQUIRES(std::invocable<Fn, promise<T> >)
-    future(Fn &&init) {
-        init(get_promise());
+    future(Fn &&init) :_awaiter(nullptr) {
+        init(promise<T>(*this));
     }
 
     template<typename ... Args>
@@ -179,6 +174,10 @@ public:
         ,_awaiter(&empty_awaiter<true>::disabled)
         ,_state(State::exception){}
 
+    future(__SetNoValueTag)
+        :_awaiter(&empty_awaiter<true>::disabled)
+        ,_state(State::not_value){}
+
     ///construct by future_coro - companion coroutine result
     /**
      * If you declare future_coro coroutine type, its result can be passed to the future.
@@ -189,9 +188,7 @@ public:
      *
      */
     template<typename _Policy>
-    future(future_coro<T, _Policy> &&coro)
-        :_state(State::have_promise)
-    {
+    future(future_coro<T, _Policy> &&coro) {
        typename future_coro<T, _Policy>::promise_type &p = coro._h.promise();
        p._future = this;
        coro.detach();
@@ -208,12 +205,18 @@ public:
         return future<T>(__SetExceptionTag(), std::move(e));
     }
 
+    ///Sets future to state not-value. The future is ready, but has no value
+    static future<T> set_not_value() {
+        return future<T>(__SetNoValueTag());
+    }
+
+
     using awaiter = abstract_awaiter<true>;
 
     ///retrieves promise from unitialized object
     promise<T> get_promise() {
-        assert("Invalid future state" && _state == State::not_ready);
-        _state = State::have_promise;
+        auto cur_awaiter = _awaiter.exchange(nullptr, std::memory_order_relaxed);
+        assert("Invalid future state" && cur_awaiter== &empty_awaiter<true>::instance);
         return promise<T>(*this);
     }
 
@@ -236,9 +239,17 @@ public:
         }
     }
 
+    ///same as result_of
+    template<typename Fn>
+    CXX20_REQUIRES(std::same_as<decltype(std::declval<Fn>()()), future<T> > )
+    future<T> &operator<<(Fn &&fn) noexcept {
+        result_of(std::forward<Fn>(fn));
+        return *this;
+    }
+
     ///destructor
     ~future() {
-        assert("Destroy of pending future" && _state != State::have_promise);
+        assert("Destroy of pending future" && _awaiter != nullptr);
         switch (_state) {
             default:break;
             case State::value: _value.~value_storage();break;
@@ -248,7 +259,7 @@ public:
 
     ///determines, whether promise has been already retrieved
     bool has_promise() const  {
-        return _state == State::have_promise;
+        return _awaiter == nullptr;
     }
 
     ///determines, whether result is already available
@@ -281,7 +292,7 @@ public:
     /**
      * @return the value of the future
      */
-    decltype(auto) wait() {
+    reference wait() {
         return co_awaiter<future<T>,true >(*this).wait();
     }
 
@@ -289,14 +300,76 @@ public:
     ///For compatible API - same as wait()
     decltype(auto) join() {return wait();}
 
-    ///Synchronise with the future, but doesn't pick the value
-    /** Just waits for result, but doesn't pick the result including the exception */
-    void sync() {
-        co_awaiter<future<T>,true >(*this).sync();
+
+
+    ///Synchronize with future, but doesn't pick value or explore its state
+    void sync() const {
+        co_awaiter<future<T>,true >(*const_cast<future<T> *>(this)).wait();
     }
 
     ///support co_await
     co_awaiter<future<T>,true> operator co_await() {return *this;}
+
+    ///has_value() awaiter return by function has_value()
+    class [[nodiscard]] has_value_awt: public co_awaiter_policy_base<future<T>, true> {
+    public:
+        has_value_awt(future<T> &owner):co_awaiter_policy_base<future<T>, true>(owner) {}
+        bool await_ready() noexcept {return this->_owner.ready();}
+        bool await_resume() noexcept {return this->_owner._state != State::not_value;}
+        bool await_suspend(std::coroutine_handle<> h) {
+            this->_h = h;
+            return this->_owner.subscribe_awaiter(this);
+        }
+        operator bool() const {
+            if (!this->_owner.ready()) this->_owner.sync();
+            return this->_owner._state != State::not_value;
+        }
+    };
+
+
+    ///Asks whether the future has value
+    /**
+     * @retval true future has value or exception
+     * @retval false future has no value
+     *
+     * @note if called on pending future, it acts as wait(), so it blocks.
+     *
+     * @note function is awaitable. You can co_await has_value() which suspend
+     * the coroutine until the value is ready
+     */
+    has_value_awt has_value() const {
+        return has_value_awt(*const_cast<future<T> *>(this));
+    }
+
+    ///Asks whether the future has value
+    /**
+     * @retval true future has value or exception
+     * @retval false future has no value
+     *
+     * @note if called on pending future, it acts as wait(), so it blocks
+     */
+    operator bool() const {
+        return has_value();
+    }
+
+    ///Asks whether the future has value
+    /**
+     * @retval true future has value or exception
+     * @retval false future has no value
+     *
+     * @note if called on pending future, it acts as wait(), so it blocks
+     */
+    bool operator!() const {
+        return !has_value();
+    }
+
+    ///Dereference - acts as wait()
+
+    reference operator *() {
+        return wait();
+    }
+
+
 
 
 protected:
@@ -308,7 +381,6 @@ protected:
     template<typename A, typename B>
     friend class future_coro_promise;
 
-    using value_storage = std::conditional_t<is_void, int, value_type>;
 
     union {
         value_storage _value;
@@ -316,7 +388,7 @@ protected:
 
     };
     mutable std::atomic<awaiter *> _awaiter = nullptr;
-    State _state=State::not_ready;
+    State _state=State::not_value;
 
     //need for co_awaiter
     bool is_ready() const {return ready();}
@@ -327,7 +399,7 @@ protected:
 
     template<typename ... Args>
     void set(Args && ... args) {
-        assert("Future is ready, can't set value twice" && (_state == State::have_promise || _state == State::not_ready));
+        assert("Future is ready, can't set value twice" && _state == State::not_value);
         if constexpr(!is_void) {
             new(&_value) value_type(std::forward<Args>(args)...);
         }
@@ -335,7 +407,7 @@ protected:
     }
 
     void set(std::exception_ptr e) {
-        assert("Future is ready, can't set value twice" && (_state == State::have_promise || _state == State::not_ready));
+        assert("Future is ready, can't set value twice" && _state == State::not_value);
         new (&_exception) std::exception_ptr(std::move(e));
         _state = State::exception;
     }
@@ -465,6 +537,25 @@ public:
 
 
 protected:
+
+    ///to allows direct access from derived classes
+    /** Sets the future value, but doesn't resolve */
+    template<typename ... Args>
+    static void set(future<T> *what,  Args && ... args) {
+        what->set(std::forward<Args>(args)...);
+    }
+
+    ///to allows direct access from derived classes
+    /** resolves future */
+    static void resolve(future<T> *what) {
+        what->resolve();
+    }
+
+    ///to allows direct access from derived classes
+    /** resolves future from await_suspend or resume_handle*/
+    static std::coroutine_handle<> resolve_resume(future<T> *what) {
+        return what->resolve_resume();
+    }
 
     mutable std::atomic<future<T> *>_owner;
 };

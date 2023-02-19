@@ -8,7 +8,7 @@ cocls::generator<int> co_fib(cocls::thread_pool &pool, int count, int delay) {
     int a = 0;
     int b = 1;
     for(int i = 0;i<count;i++) {
-        int c = a+b;        
+        int c = a+b;
         co_yield c;
         co_await pool;
         std::this_thread::sleep_for(std::chrono::milliseconds(delay));
@@ -27,13 +27,13 @@ int main(int, char **) {
     auto gen = cocls::generator_aggregator(std::move(gens));
     for(;;) {
         auto val = gen();
-        if (val) {
-            std::cout << *val << std::endl;
+        if (val) { //blocks and return true if generator generated a value
+            std::cout << *val << std::endl; //dereference value
         } else {
             std::cout << "Done" << std::endl;
             break;
         }
-        
+
     }
 }
 

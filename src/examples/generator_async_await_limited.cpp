@@ -7,7 +7,7 @@
 cocls::generator<int> co_fib(cocls::thread_pool &pool) {
     int a = 0;
     int b = 1;
-    for(;;) {
+    for(int i = 0; i < 10; i++) {
         int c = a+b;
         co_yield c;
         co_await pool;
@@ -17,18 +17,18 @@ cocls::generator<int> co_fib(cocls::thread_pool &pool) {
     }
 }
 
-void reader(cocls::generator<int> gen) {
-    for (int i = 0; i < 20; i++) {
-        //result of gen() is future
-        std::cout << *gen()<< std::endl;
+cocls::task<> reader(cocls::generator<int> gen) {
+    auto fut = gen();
+    while (co_await fut.has_value()) {
+        std::cout << *fut << std::endl;
+        fut.result_of(gen);
     }
-
 }
 
 int main(int, char **) {
 
     cocls::thread_pool pool(4);
-    reader(co_fib(pool));
+    reader(co_fib(pool)).join();
 
 }
 

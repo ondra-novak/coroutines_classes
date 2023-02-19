@@ -6,7 +6,7 @@ cocls::generator<int> co_fib() {
     int a = 0;
     int b = 1;
     for(;;) {
-        int c = a+b;        
+        int c = a+b;
         co_yield c;
         a = b;
         b = c;
@@ -25,6 +25,6 @@ int main(int, char **) {
             std::cout << "Done" << std::endl;
         }
     }
-    
+
 }
 

@@ -298,16 +298,16 @@ void test_reusable() {
     cocls::scheduler<> sch(pool);
     //coroutine should allocate new block
     {
-        test_reusable_co(m,sch);
+        test_reusable_co(m,sch).join();
     }
     std::cout << "Coroutine allocated in storage. size=" << m.capacity() << std::endl;
     //coroutine should reuse preallocated block
     {
-        test_reusable_co(m,sch);
+        test_reusable_co(m,sch).join();
     }
     //coroutine should reuse preallocated block
     {
-        test_reusable_co(m,sch);
+        test_reusable_co(m,sch).join();
     }
 }
 
