@@ -80,7 +80,7 @@ struct generator_aggregator_controller {
  * as rvalue reference to avoid copying (because generators are movable)_
  * @return generator
  *
- * @note for generator with an argument, aggregator works differently. First call
+ * @note for generator with an argument, the aggregator works differently. The first call
  * of such generator initializes all aggregated generators with the value you passed as argument
  * All other calls passes value to generator which result has been returned previously.
  */
