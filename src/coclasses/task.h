@@ -142,7 +142,7 @@ public:
      * the awaited task is finished
      *
      */
-    co_awaiter<promise_type_base, true> operator co_await() {
+    co_awaiter<promise_type_base> operator co_await() {
         return *_promise;
     }
 
@@ -189,7 +189,7 @@ public:
 
     ///Join the task synchronously, returns value
     decltype(auto) join() {
-        co_awaiter<promise_type_base, true> aw(*_promise);
+        co_awaiter<promise_type_base> aw(*_promise);
         return aw.wait();
     }
 
@@ -200,7 +200,7 @@ public:
      * doesn't pick any result nor exception.
      */
     void sync() noexcept {
-        co_awaiter<promise_type_base, true> aw(*_promise);
+        co_awaiter<promise_type_base> aw(*_promise);
         aw.sync();
     }
 
@@ -266,7 +266,7 @@ protected:
 
 class task_promise_base: public coro_promise_base  {
 public:
-    using AW = abstract_awaiter<true>;
+    using AW = abstract_awaiter;
 
     //contains list of awaiters - linked list (this->_next)
     std::atomic<AW *> _awaiter_chain;
@@ -338,7 +338,7 @@ public:
             auto noop = std::noop_coroutine();
             std::coroutine_handle<> ret = noop;
             //get list of awaiters
-            auto awt = _owner._awaiter_chain.exchange(&empty_awaiter<true>::disabled);
+            auto awt = _owner._awaiter_chain.exchange(&empty_awaiter::disabled);
             while (awt) {
                 auto x = awt;
                 awt = awt->_next;
@@ -396,7 +396,7 @@ public:
 
     //adds awaiter to the chain
     bool subscribe_awaiter(AW *aw) {
-        return aw->subscibre_check_ready(_awaiter_chain);
+        return aw->subscribe_check_ready(_awaiter_chain, empty_awaiter::disabled);
     }
 
     auto set_ready_data() {

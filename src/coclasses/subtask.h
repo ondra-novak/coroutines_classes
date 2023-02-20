@@ -61,7 +61,7 @@ public:
         ///contains pointer to future - to refer place where to store result
         subtask *_future = nullptr;
         ///contains pointer to awaiter - which will be resumed at the end
-        abstract_awaiter<> *_awaiter = nullptr;
+        abstract_awaiter *_awaiter = nullptr;
         ///final suspender - resumes awaiter at the end of execution
         struct final_suspender: std::suspend_always { // @suppress("Miss copy constructor or assignment operator")
             final_suspender(promise_type *owner):_owner(owner) {}
@@ -128,7 +128,7 @@ public:
         }
 
         ///compatibility with co_awaiter
-        bool subscribe_awaiter(abstract_awaiter<false> *awt) {
+        bool subscribe_awaiter(abstract_awaiter *awt) {
             promise_type &p = this->_owner._h.promise();
             p._awaiter = awt;
             p._future = &this->_owner;

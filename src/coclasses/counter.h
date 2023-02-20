@@ -12,15 +12,15 @@ namespace cocls {
 /**
  * Counter counts up or down. If the value is positive, any awaiting
  * coroutine is suspended. Once counter reaches zero, or below zero, awaiting
- * coroutines are resumed. When counter is zero or below zero, co_await 
+ * coroutines are resumed. When counter is zero or below zero, co_await
  * is immediately finished with no suspension
- * 
+ *
  * Counter is MT safe.  Counter can be directly co_awaited. It returns no value
  * when it is resumed.
  */
 class Counter {
 public:
-    using awaiter = cocls::abstract_awaiter<true>;
+    using awaiter = cocls::abstract_awaiter;
 
     ///Initialize counter to zero
     Counter():_count(0) {}
@@ -29,7 +29,7 @@ public:
     ///Initialize counter from other counter
     /**
      * @param other other counter - note only value is copied.
-     * 
+     *
      */
     Counter(const Counter &other):_count(other.get_value()) {}
 
@@ -37,26 +37,26 @@ public:
     /**
      * @param other other counter
      * @return this
-     * 
+     *
      * @note equivalent operation to set_value(other.get_value())
-     */ 
+     */
     Counter &operator=(const Counter &other) {
         if (this != &other) {
             set_value(other.get_value());
         }
         return *this;
     }
-    
+
     ///Coawait counter
-    co_awaiter<Counter, true> operator co_await() {
+    co_awaiter<Counter> operator co_await() {
         return *this;
     }
-    
+
     ///increment value
     long increment() {
         return ++_count;
     }
-    
+
     long operator++() {
         return increment();
     }
@@ -64,16 +64,16 @@ public:
         return increment()-1;
     }
 
-    
+
     ///decrement value
     long decrement() {
-        long r = --_count; 
+        long r = --_count;
         if (r == 0) {
             awaiter::resume_chain(_chain, nullptr);
         }
         return r;
     }
-    
+
     long operator--() {
         return decrement();
     }
@@ -81,11 +81,11 @@ public:
         return decrement()+1;
     }
 
-    
+
     ///set value
     /**
-     * @param val new value. 
-     * 
+     * @param val new value.
+     *
      * @note by setting under 1 releases any awaiting coroutines
      */
     void set_value(long val) {
@@ -94,34 +94,34 @@ public:
             awaiter::resume_chain(_chain, nullptr);
         }
     }
-    
+
     ///retrieve current values
     long get_value() const {
         return _count;
     }
-    
-    
+
+
 protected:
     std::atomic<awaiter *> _chain = nullptr;
     std::atomic<long> _count;
-    
-    
-    friend class co_awaiter<Counter, true>;
-    
+
+
+    friend class co_awaiter<Counter>;
+
     bool is_ready() const {
         return _count <= 0;
     }
-    
+
     bool subscribe_awaiter(awaiter *awt) noexcept {
-        awt->subscibre_check_ready(_chain);
+        awt->subscribe(_chain);
         if (_count <= 0) {
             awaiter::resume_chain(_chain, awt);
             return false;
-        }        
+        }
         return true;
     }
-    
-    void get_result() noexcept {}; 
+
+    void get_result() noexcept {};
 
 };
 

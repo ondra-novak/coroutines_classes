@@ -28,6 +28,11 @@ namespace cocls {
 /** Main benefit of such object is zero allocation during transferring the coroutine to the
  * other thread
  *
+<<<<<<< HEAD
+=======
+ * Each thread also initializes the coroboard() so coroutines can be scheduled manually inside of
+ * each thread
+>>>>>>> branch 'master' of https://github.com/ondra-novak/coroutines_classes.git
  *
  */
 
@@ -75,7 +80,7 @@ public:
      */
     void stop() {
         std::vector<std::thread> tmp;
-        std::queue<abstract_awaiter<> *> q;
+        std::queue<abstract_awaiter *> q;
         {
             std::unique_lock lk(_mx);
             _exit = true;
@@ -152,7 +157,7 @@ public:
     /**
      * @param aw awaiter to start in thread pool
      */
-    void enqueue(abstract_awaiter<> *aw) {
+    void enqueue(abstract_awaiter *aw) {
         bool ok = subscribe_awaiter(aw);
         if (!ok) {
             aw->resume();
@@ -329,7 +334,7 @@ public:
 protected:
     mutable std::mutex _mx;
     std::condition_variable _cond;
-    std::queue<abstract_awaiter<> *> _queue;
+    std::queue<abstract_awaiter *> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;
     static thread_local thread_pool *_current;
@@ -341,7 +346,7 @@ protected:
     void get_result() {
         if (_exit) throw await_canceled_exception();
     }
-    bool subscribe_awaiter(abstract_awaiter<> *awt) noexcept {
+    bool subscribe_awaiter(abstract_awaiter *awt) noexcept {
         std::lock_guard lk(_mx);
         if (_exit) return false;
         _queue.push(awt);
@@ -374,7 +379,7 @@ struct thread_pool {
 
     using initial_awaiter = initial_resume_by_policy<thread_pool>;
 
-    class resumer: public abstract_awaiter<> {
+    class resumer: public abstract_awaiter {
     public:
         shared_thread_pool _cur_pool = nullptr;
         std::coroutine_handle<> _h;

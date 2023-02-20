@@ -104,10 +104,10 @@ namespace cocls {
      * @tparam CoroQueue type of queue of awaiters
      * @tparam Lock type of lock
      */
-    template<typename T, typename CoroQueue = std::queue<abstract_awaiter<>*>, typename Lock = std::mutex>
+    template<typename T, typename CoroQueue = std::queue<abstract_awaiter *>, typename Lock = std::mutex>
     class limited_queue : public queue<T, _details::limited_queue_impl<T>, CoroQueue, Lock> {
     public:
-        
+
         using super_t = queue<T, _details::limited_queue_impl<T>, CoroQueue, Lock>;
         ///construct queue, specify size
         /**
@@ -124,7 +124,7 @@ namespace cocls {
     * @tparam CQueue queue implementation for consumers
     * @tparam Lock lock implementation
     */
-    template<typename T, typename PQueue = std::queue<abstract_awaiter<>* >, typename CQueue = std::queue<abstract_awaiter<>* >, typename Lock = std::mutex>
+    template<typename T, typename PQueue = std::queue<abstract_awaiter* >, typename CQueue = std::queue<abstract_awaiter* >, typename Lock = std::mutex>
     class limited_queue_awaitable_push : public limited_queue<T, CQueue, Lock> {
     public:
         using super_t = limited_queue<T, CQueue, Lock>;
@@ -158,7 +158,7 @@ namespace cocls {
 
         class pop_awaiter : public co_awaiter<typename super_t::super_t> {
         public:
-            using super_awaiter = co_awaiter<typename super_t::super_t>; 
+            using super_awaiter = co_awaiter<typename super_t::super_t>;
             using co_awaiter<typename super_t::super_t>::co_awaiter;
 
             decltype(auto) await_resume() {
@@ -197,13 +197,13 @@ namespace cocls {
 
         /// checks state of the queue after pop
         /** Ensures that every waiting push-awaiter is resumed in case, that queue
-        * has a space to insert new items. This function is called automatically 
+        * has a space to insert new items. This function is called automatically
         * after pop() on this class. However, if the pop is done through the
         * its parent class (queue), this check is not done, so you must call it
         * manually
         **/
         void check_after_pop() {
-            abstract_awaiter<>* awt;
+            abstract_awaiter* awt;
             while (this->_queue.size() + _reserved_space < this->_queue.capacity()) {
                 {
                     {
@@ -236,7 +236,7 @@ namespace cocls {
         }
 
 
-        bool subscribe_awaiter(abstract_awaiter<>* awt) {
+        bool subscribe_awaiter(abstract_awaiter* awt) {
             std::lock_guard _(this->_mx);
             if (this->_queue.size() + _reserved_space < this->_queue.capacity()) {
                 _reserved_space++;
