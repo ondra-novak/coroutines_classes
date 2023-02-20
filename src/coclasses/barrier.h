@@ -17,42 +17,42 @@ namespace cocls {
  */
 class barrier {
 public:
-    
+
     ///Construct a barrier which can be released manually
     barrier():_count(-1) {}
     ///Construct a barrier which is automatically released when certain count of coroutines reaches
     barrier(unsigned int count):_count(count) {}
-    
-    
-    using awaiter = co_awaiter<barrier,true>;
+
+
+    using awaiter = co_awaiter<barrier>;
 
     ///await the barrier
     awaiter operator co_await() {
         return *this;
     }
-    
+
     ///release the barrier manually
     /** It is one hit action. if there is no awaiting coroutine, function does nothing */
     void release() {
-        abstract_awaiter<true>::resume_chain(_waiting,nullptr);
+        abstract_awaiter::resume_chain(_waiting,nullptr);
     }
-    
-    
-    
+
+
+
 protected:
-    
-    friend class co_awaiter<barrier, true>;
+
+    friend class co_awaiter<barrier>;
     unsigned int _count;
-    std::atomic<abstract_awaiter<true> *> _waiting = nullptr;
-    
+    std::atomic<abstract_awaiter *> _waiting = nullptr;
+
     bool is_ready() {
         //we always need to suspend the coroutine, to have chance to check resumption condition
         return false;
     }
-    
-    
-    
-    bool subscribe_awaiter(abstract_awaiter<true> *awt) {        
+
+
+
+    bool subscribe_awaiter(abstract_awaiter *awt) {
         awt->_next = nullptr;
         //first pick whole chain and put there nullptr - other threads will be paused too
         auto x = _waiting.exchange(nullptr, std::memory_order_relaxed);
@@ -74,28 +74,28 @@ protected:
                     //last subscribe returned false
                     //the current queue, except c is already resumed
                     //so resume the c as well
-                    c->resume(); 
-                    
+                    c->resume();
+
                 }
             }
-            //in this case, true continues in suspend - but it is not problem, whether the 
-            //coroutine has been resumed, this is expected. 
+            //in this case, true continues in suspend - but it is not problem, whether the
+            //coroutine has been resumed, this is expected.
             return true;
-        } else {           
+        } else {
             //if the count has been met
             //resume whole chain (without me)
-            abstract_awaiter<true>::resume_chain_lk(x, nullptr);
+            abstract_awaiter::resume_chain_lk(x, nullptr);
             //return false, so I can also continue
             return false;
-        }                
+        }
     }
-    
+
     void get_result() {
         //empty
     }
-    
 
-    unsigned int get_count(abstract_awaiter<true> *x) {
+
+    unsigned int get_count(abstract_awaiter *x) {
         //count waiting threads
         unsigned int cnt = 0;
         for (auto y = x; y; y = y->_next) {

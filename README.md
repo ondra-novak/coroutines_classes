@@ -157,11 +157,11 @@ scheduler<> sch;
 ```
 
 
-## abstract_awaiter<>
+## abstract_awaiter
 
 * abstract_awaiter is base class for awaiters in `cocls`. It has virtual function `resume()` which is called for resumption of coroutine
 * you can write own implementation, so you can receive signal instead resumption
-* you can call `subscribe_awaiter(abstract_awaiter<>)` on a co_awaiter<> (most of awaiters in this library), so instead of waiting in coroutine or synchronously, your awaiter will be called for `.resume()` when awaitable object is ready
+* you can call `subscribe_awaiter(abstract_awaiter)` on a co_awaiter<> (most of awaiters in this library), so instead of waiting in coroutine or synchronously, your awaiter will be called for `.resume()` when awaitable object is ready
 
 ### co_awaiter\<X,chain>
 

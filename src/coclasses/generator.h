@@ -68,7 +68,7 @@ public:
     using param_Arg = std::conditional_t<arg_is_void,std::nullptr_t, reference_Arg>;
 
     ///type of abstract awaiter
-    using awaiter = abstract_awaiter<false>;
+    using awaiter = abstract_awaiter;
     ///type of iterator
     using iterator = generator_iterator<generator<Ret, Arg> >;
 

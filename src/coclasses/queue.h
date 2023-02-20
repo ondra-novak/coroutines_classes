@@ -27,77 +27,77 @@ namespace primitives {
 /**
  * @tparam T type of queued item
  * @tparam Queue type which implements queue of T objects, default is std::queue<T>
- * @tparam CoroQueue type which implements queue of waiting awaiter, default is std::queue<abstract_awaiter<> *>
+ * @tparam CoroQueue type which implements queue of waiting awaiter, default is std::queue<abstract_awaiter *>
  * @tparam Lock object responsible to lock internals - default is std::mutex
- * 
+ *
  * Awaitable queue is queue, which can be awaited for the new item. If there is no
  * item in the queue, the awaiting coroutine is suspened. Pushing new item into
  * queue causes resumption of the coroutine
- * 
+ *
  * The implementation is MT Safe - for the purpose of this object. So it is allowed
  * to push items from multiple threads without any extra synchronizations. It
  * is also possible to have multiple awaiting coroutines
- * 
- * 
+ *
+ *
  * @code
  * queue<int> q;
- * 
+ *
  * q.push(42);
- * 
+ *
  * int value = co_await q;
  * @endcode
  */
-template<typename T, 
-         typename Queue = primitives::std_queue<T>, 
-         typename CoroQueue = primitives::std_queue<abstract_awaiter<> *>, 
+template<typename T,
+         typename Queue = primitives::std_queue<T>,
+         typename CoroQueue = primitives::std_queue<abstract_awaiter*>,
          typename Lock = std::mutex >
 class queue {
 public:
     ///construct empty queue
     queue() = default;
     ~queue();
-    
+
     ///Push the item
     /**
      * @param x rvalue reference for item, use for movable items
-     * 
+     *
      * @note if there is awaiting coroutine, it may be resumed now (resume_lock is used)
      */
     void push(T &&x);
-    
+
     ///Push the item
     /**
      * @param x rvalue reference for item, use for movable itesm
-     * 
+     *
      * @note if there is awaiting coroutine, it may be resumed now (resume_lock is used)
      */
     void push(const T &x);
-    
+
     ///Determines, whether queue is empty
     /**
      * @retval true queue is empty
      * @retval false queue is not empty
      */
     bool empty();
-    
+
     ///Retrieves count of waiting items
     /**
      * @return count of waiting items
      */
     std::size_t size();
-    
-    
-    
+
+
+
     ///pop the item from the queue
     /**
      * @return awaiter which can be awaited
-     * 
+     *
      * @code
      * queue<int> q;
-     * 
+     *
      *   //async
      * int val1 = co_await q.pop();
-     * 
+     *
      *   //sync
      * int val2 = q.pop().wait();
      * @endcode
@@ -105,11 +105,11 @@ public:
     co_awaiter<queue> pop() {
         return *this;
     }
-    
-    
-    
+
+
+
 protected:
-    
+
     bool is_ready() {
         std::unique_lock lk(_mx);
         if (!empty_lk()) {
@@ -119,15 +119,15 @@ protected:
             return false;
         }
     }
-    
-    bool subscribe_awaiter(abstract_awaiter<> *aw) {
+
+    bool subscribe_awaiter(abstract_awaiter *aw) {
         std::unique_lock lk(_mx);
         bool suspend = empty_lk();
         if (suspend) _awaiters.push(aw);
         else ++_reserved_items;
         lk.unlock();
         return suspend;
-        
+
     }
 
     T get_result() {
@@ -139,7 +139,7 @@ protected:
         return x;
     }
 
-    
+
     friend class co_awaiter<queue>;
     ///lock protects internal
     Lock _mx;
@@ -152,16 +152,16 @@ protected:
      * once coroutine is being resumed, the item, which is going to be returned
      * must be stored somewhere. The queue is used for this purpose, so the
      * item don't need to be copied during this process. It is only reserver and
-     * removed once the resumption is completed. 
-     * 
-     *   
+     * removed once the resumption is completed.
+     *
+     *
      */
     std::size_t _reserved_items = 0;
-    
+
     bool _exit = false;;
-    
+
     void resume_awaiter(std::unique_lock<std::mutex> &lk);
-    
+
     std::size_t size_lk() const {
         return _queue.size() - _reserved_items;
     }
@@ -188,12 +188,12 @@ public:
     ///construct empty queue
     queue() = default;
     ~queue();
-    
-    ///Push an event 
+
+    ///Push an event
     void push();
     ///determines, whether there are no events
     /**
-     * 
+     *
      * @retval true no events in queue
      * @retval false at least one event in the queue
      */
@@ -212,7 +212,7 @@ public:
         return *this;
     }
 protected:
-    
+
     bool is_ready() {
         std::unique_lock lk(_mx);
         if (!empty_lk()) {
@@ -222,15 +222,15 @@ protected:
             return false;
         }
     }
-    
-    bool subscribe_awaiter(abstract_awaiter<> *aw) {
+
+    bool subscribe_awaiter(abstract_awaiter *aw) {
         std::unique_lock lk(_mx);
         bool suspend = empty_lk();
         if (suspend) _awaiters.push(aw);
         else ++_reserved_items;
         lk.unlock();
         return suspend;
-        
+
     }
 
     void get_result() {
@@ -241,7 +241,7 @@ protected:
 
     }
 
-    
+
     friend class co_awaiter<queue>;
     ///lock protects internal
     Lock _mx;
@@ -254,16 +254,16 @@ protected:
      * once coroutine is being resumed, the item, which is going to be returned
      * must be stored somewhere. The queue is used for this purpose, so the
      * item don't need to be copied during this process. It is only reserver and
-     * removed once the resumption is completed. 
-     * 
-     *   
+     * removed once the resumption is completed.
+     *
+     *
      */
     std::size_t _reserved_items = 0;
-    
+
     bool _exit = false;;
-    
+
     void resume_awaiter(std::unique_lock<std::mutex> &lk);
-    
+
     std::size_t size_lk() const {
         return _queue.size() - _reserved_items;
     }
@@ -274,7 +274,7 @@ protected:
 
 namespace primitives {
 
-    ///Simulates queue interface above single item. 
+    ///Simulates queue interface above single item.
     /** It can be used to simplify queue of awaiters for queue<>, if only
      * one coroutine is expected to be awaiting. However if this
      * promise is not fullfiled, the result is UB
@@ -322,7 +322,7 @@ namespace primitives {
 
     /// represents empty lock, no-lock, object which simulates locking but doesn't lock at all
     /** You can use it if you need to remove often cost operation of locking in othewise single
-     * thread use 
+     * thread use
      */
     class no_lock {
     public:
@@ -346,7 +346,7 @@ namespace primitives {
         bool empty() const {return _sz == 0;}
     protected:
         std::size_t _sz = 0;
-        
+
     };
 }
 
@@ -387,7 +387,7 @@ template<typename T, typename Queue, typename CoroQueue, typename Lock>
 inline queue<T,Queue,CoroQueue, Lock>::~queue() {
     _exit = true;
     while (!_awaiters.empty()) {
-        auto x = _awaiters.front();        
+        auto x = _awaiters.front();
         _awaiters.pop();
         x->resume();
     }
@@ -433,7 +433,7 @@ template<typename Queue, typename CoroQueue, typename Lock>
 inline queue<void ,Queue,CoroQueue, Lock>::~queue() {
     _exit = true;
     while (!_awaiters.empty()) {
-        auto x = _awaiters.front();        
+        auto x = _awaiters.front();
         _awaiters.pop();
         x->resume();
     }

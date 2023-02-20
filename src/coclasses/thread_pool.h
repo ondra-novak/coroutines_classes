@@ -24,24 +24,24 @@
 
 namespace cocls {
 
-///thread pool for coroutines. 
+///thread pool for coroutines.
 /** Main benefit of such object is zero allocation during transferring the coroutine to the
  * other thread
- * 
+ *
  * Each thread also initializes the coroboard() so coroutines can be scheduled manually inside of
  * each thread
- * 
+ *
  */
 
 class thread_pool {
 public:
-    
+
     ///Start thread pool
-    /**     
-     * @param threads count of threads. Default value creates same amount as count 
+    /**
+     * @param threads count of threads. Default value creates same amount as count
      * of available CPU cores (hardware_concurrency)
      */
-    thread_pool(unsigned int threads = 0)        
+    thread_pool(unsigned int threads = 0)
     {
         if (!threads) threads = std::thread::hardware_concurrency();
         for (unsigned int i = 0; i < threads; i++) {
@@ -49,7 +49,7 @@ public:
         }
     }
 
-    
+
     ///Start a worker
     /**
      * By default, workers are started during construction. This function allows
@@ -65,19 +65,19 @@ public:
             _queue.pop();
             lk.unlock();
             resumption_policy::queued::install_queue_and_resume(h->resume_handle());
-            //if _current is nullptr, thread_pool has been destroyed 
+            //if _current is nullptr, thread_pool has been destroyed
             if (_current == nullptr) return;
             lk.lock();
         }
     }
-    
+
     ///Stops all threads
     /**
      * Stopped threads cannot be restarted
      */
     void stop() {
         std::vector<std::thread> tmp;
-        std::queue<abstract_awaiter<> *> q;
+        std::queue<abstract_awaiter *> q;
         {
             std::unique_lock lk(_mx);
             _exit = true;
@@ -103,21 +103,21 @@ public:
         }
     }
 
-    ///Destroy the thread pool 
+    ///Destroy the thread pool
     /**
      * It also stops all threads
      */
     ~thread_pool() {
         stop();
     }
-    
+
     class awaiter : public co_awaiter<thread_pool> {
     public:
         using co_awaiter<thread_pool>::co_awaiter;
 
     private:
         using co_awaiter<thread_pool>::set_resumption_policy;
-        
+
     };
     template<typename Fn>
     class fork_awaiter: public awaiter {
@@ -125,20 +125,20 @@ public:
         fork_awaiter(thread_pool &pool, Fn &&fn):awaiter(pool), _fn(std::forward<Fn>(fn)) {}
         bool await_suspend(std::coroutine_handle<> h) noexcept {
             Fn fn (std::forward<Fn>(_fn));
-            bool b = awaiter::await_suspend(h);            
+            bool b = awaiter::await_suspend(h);
             fn();
             return b;
         }
     protected:
         Fn _fn;
     };
-    
-    
+
+
     ///Transfer coroutine to the thread pool
     /**
-     * 
+     *
      * @return awaiter
-     * 
+     *
      * @code
      * task<> coro_test(thread_pool &p) {
      *      co_await p;
@@ -149,16 +149,16 @@ public:
     awaiter operator co_await() {
         return *this;
     }
-    
-    ///start a anonymous awaiter - called from thread_pool_resumption_policy 
+
+    ///start a anonymous awaiter - called from thread_pool_resumption_policy
     /**
      * @param aw awaiter to start in thread pool
      */
-    void enqueue(abstract_awaiter<> *aw) {
+    void enqueue(abstract_awaiter *aw) {
         bool ok = subscribe_awaiter(aw);
         if (!ok) {
             aw->resume();
-        }        
+        }
     }
 
     ///start a lazy task in the thread pool
@@ -169,7 +169,7 @@ public:
      */
     template<typename T, typename _P>
     bool enqueue(lazy<T,_P> t) {
-        
+
         class awaiter: public abstract_owned_awaiter<thread_pool> {
         public:
             awaiter(thread_pool &owner, lazy<T> t, std::coroutine_handle<> h)
@@ -178,7 +178,7 @@ public:
             void resume_canceled() noexcept{
                 _t.mark_canceled();
                 _policy.resume(_h);
-                delete this;            
+                delete this;
             }
 
             virtual void resume() noexcept override {
@@ -196,9 +196,9 @@ public:
             lazy<T> _t;
             std::coroutine_handle<> _h;
             _P _policy;
-            
+
         };
-        
+
         std::coroutine_handle<> h = t.get_start_handle();
         if (h == nullptr) return false;
         awaiter *aw = new awaiter(*this, t, h);
@@ -208,46 +208,46 @@ public:
         }
         return true;
     }
-    
+
     /*
      * BUG - GCC 10.3-12.2+ - do not inline lambda to this function
-     * 
+     *
      * declare lambda as variable auto, and pass the variable to the
      * argument by std::move() - otherwise bad things can happen
-     * 
+     *
      * https://godbolt.org/z/nz1coM5YP
-     * 
-     */ 
+     *
+     */
     /// For the code, transfers coroutine to different thread while some code continues in this thread
     /**
      * @param fn function to be called in current thread after coroutine is transfered.
      * @return awaiter you need to await for the result to execute this fork
-     * 
+     *
      * @code
      * co_await pool.fork([=]{
      *          //forked code
      * })
      * @endcode
-     * 
+     *
      * @note BUG - GCC 10.3-12.2+ - do not inline lambda to this function: https://godbolt.org/z/nz1coM5YP
-     * 
+     *
      * @code
      * auto forked = [=] {
      *          //forked code
      * };
      * co_await pool.fork(std:::move(forked));
      * @endcode
-     * 
-     * 
+     *
+     *
      */
- 
+
     template<typename Fn>
     fork_awaiter<Fn> fork(Fn &&fn) {
         return fork_awaiter<Fn>(*this, std::forward<Fn>(fn));
     }
-    
+
     struct current {
-        
+
         class  current_awaiter: public awaiter {
         public:
             current_awaiter():awaiter(*_current) {}
@@ -256,7 +256,7 @@ public:
                 return c == nullptr || c->_exit;
             }
         };
-        
+
         template<typename Fn>
         class current_fork_awaiter: public fork_awaiter<Fn> {
         public:
@@ -264,7 +264,7 @@ public:
             static bool await_ready() {
                 thread_pool *c = _current;
                 return c == nullptr || c->_exit;
-            }            
+            }
         };
 
 
@@ -279,7 +279,7 @@ public:
             thread_pool *c = _current;
             return !c || c->is_stopped();
         }
-        
+
         ///run enqueued task
         /**
          * @retval true a task has been run
@@ -295,17 +295,17 @@ public:
             thread_pool *c = _current;
             if (c) return c->any_enqueued();
             return false;
-            
+
         }
 
     };
-    
+
     bool is_stopped() const {
         std::lock_guard _(_mx);
         return _exit;
     }
 
-    
+
     bool give_way() {
         std::unique_lock lk(_mx);
         if (!_exit && !_queue.empty()) {
@@ -314,16 +314,16 @@ public:
             lk.unlock();
             resumption_policy::queued::resume(h->resume_handle());
             return true;
-        }       
+        }
         return false;
     }
-    
+
     ///returns true if there is still enqueued task
     bool any_enqueued() {
         std::unique_lock lk(_mx);
         return _exit || !_queue.empty();
     }
-    
+
     friend bool is_current(const thread_pool &pool) {
         return _current == &pool;
     }
@@ -331,26 +331,26 @@ public:
 protected:
     mutable std::mutex _mx;
     std::condition_variable _cond;
-    std::queue<abstract_awaiter<> *> _queue;
+    std::queue<abstract_awaiter *> _queue;
     std::vector<std::thread> _threads;
-    bool _exit = false;    
+    bool _exit = false;
     static thread_local thread_pool *_current;
-    
+
     friend class co_awaiter<thread_pool>;
     bool is_ready() noexcept {
         return _exit;
     }
     void get_result() {
-        if (_exit) throw await_canceled_exception(); 
-    }        
-    bool subscribe_awaiter(abstract_awaiter<> *awt) noexcept {
+        if (_exit) throw await_canceled_exception();
+    }
+    bool subscribe_awaiter(abstract_awaiter *awt) noexcept {
         std::lock_guard lk(_mx);
         if (_exit) return false;
         _queue.push(awt);
         _cond.notify_one();
         return true;
     }
-    
+
 
 };
 
@@ -367,16 +367,16 @@ namespace resumption_policy {
  * Because the task cannot initialize its resumption policy, it is not started until
  * the policy is initialized. Use task<>::initialize_policy(shared_ptr<thread_pool>).
  * Once the policy is initialized, the task is started
- *  
- * 
+ *
+ *
  */
 struct thread_pool {
-    
+
     thread_pool() = default;
-    
+
     using initial_awaiter = initial_resume_by_policy<thread_pool>;
-    
-    class resumer: public abstract_awaiter<> {
+
+    class resumer: public abstract_awaiter {
     public:
         shared_thread_pool _cur_pool = nullptr;
         std::coroutine_handle<> _h;
@@ -391,7 +391,7 @@ struct thread_pool {
             _h = h;
             if (_cur_pool != nullptr) {
                 if (is_current(*_cur_pool)) return _h;
-                _cur_pool->enqueue(this);                
+                _cur_pool->enqueue(this);
             }
             return std::noop_coroutine();
         }
@@ -403,10 +403,10 @@ struct thread_pool {
             }
         }
     };
-    
+
     resumer _resumer;
-    
-        
+
+
     void resume(std::coroutine_handle<> h) {
         _resumer.set_handle(h);
     }
@@ -417,15 +417,15 @@ struct thread_pool {
     ///Initializes policy
     /**
      * @param pool shared thread pool
-     * 
+     *
      * called from task<>::initialize_policy();
-     * 
-     * 
+     *
+     *
      */
     void initialize_policy(shared_thread_pool pool) {
         _resumer.set_pool(pool);
     }
-    
+
     thread_pool(const shared_thread_pool &pool) {
         initialize_policy(pool);
     }

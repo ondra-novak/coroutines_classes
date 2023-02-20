@@ -13,10 +13,10 @@ template<typename T, typename Arg>
 class GenCallback;
 
 template<typename T, typename Arg>
-using GenAggrQueue = limited_queue<GenCallback<T, Arg> *, primitives::single_item_queue<abstract_awaiter<> * > >;
+using GenAggrQueue = limited_queue<GenCallback<T, Arg> *, primitives::single_item_queue<abstract_awaiter * > >;
 
 template<typename T, typename Arg>
-class GenCallback: public abstract_awaiter<false> {
+class GenCallback: public abstract_awaiter {
 public:
     GenCallback(GenAggrQueue<T, Arg> &q,generator<T, Arg> gen):_q(q), _gen(std::move(gen)) {}
     GenCallback(const GenCallback &) =delete;

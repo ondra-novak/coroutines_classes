@@ -12,76 +12,31 @@
 
 namespace cocls {
 
-///Abstract awaiter
-/**
- * allows to implement both co_awaiter and blocking_awaiter
- * @tparam promise_type type of promise (of task for example)
- * @tparam chain set this true (default false) to allow chains (includes next ptr to awaiter)
- *
- * The promise must implement
- *
- * bool is_ready(); - return true, if result is ready
- * bool subscribe_awaiter(abstract_awaiter *); - return true, if set, false if resolved
- * auto get_result(coroutines); - return result
- *
- */
 
-class abstract_awaiter_base {
+
+///Abstract awaiter interface
+class iawaiter_t {
 public:
 
     ///called to resume coroutine
+    /**When called, the coroutine must be scheduled for execution, immediately or by rules of the resumption policy */
     virtual void resume() noexcept = 0;
-
     ///called to retrieve coroutine handle for symmetric transfer
-    virtual std::coroutine_handle<> resume_handle() {
-        resume();
-        return std::noop_coroutine();
-    }
-    virtual ~abstract_awaiter_base() = default;
+    /**When called, function must prepare handle of coroutine to be executed on current thread. When
+     * the awaiter doesn't resume a coroutine, it can do anything what it want and then return
+     * std::noop_coroutine. In most of cases, it call resume()
+     */
+    virtual std::coroutine_handle<> resume_handle() noexcept = 0;
+    virtual ~iawaiter_t() = default;
 
 };
 
-
-
-template<bool chain = false>
-class abstract_awaiter: public abstract_awaiter_base {
-public:
-    ///subscribe this awaiter but at the same time, check, whether it is marked ready
-    /**
-     * @param chain register to chain
-     * @retval true registered
-     * @retval false failed to register, object is already ready
-     */
-    bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain_);
-
-    static constexpr bool chained = chain;
- };
-
-///phony awaiter it is used to signal special value in awaiter's/chain
-/** This awaiter doesn't resume anything */
-template<bool chain>
-class empty_awaiter: public abstract_awaiter<chain> {
-public:
-
-    ///Just instance for any usage
-    static empty_awaiter<chain> instance;
-    ///Disables awaiter's chain/slot. Any further registrations are impossible
-    /** This allows to atomically replace awaiter with disabled, which can be
-     * interpreted as "value is ready, no further waiting is required" while current
-     * list of awaiters is picked and the awaiters are resumed
-     *
-     * @see abstract_awaiter<>::resume_chain_set_disabled
-     */
-    static empty_awaiter<chain> disabled;
-
-    virtual void resume() noexcept {}
-
-
-
-};
-
-template<>
-class abstract_awaiter<true>: public abstract_awaiter_base {
+///Abstract awaiter - extentends interface
+/**
+ * Can be chained - public variable *_next - NOTE: content of variable is ignored during destruction,
+ * but it is used to chain awaiters to make waiting lists
+ */
+class abstract_awaiter: public iawaiter_t {
 public:
     abstract_awaiter() = default;
     abstract_awaiter(const abstract_awaiter &)=default;
@@ -100,17 +55,18 @@ public:
         return resume_chain_lk(chain.exchange(nullptr), skip);
     }
 
-    ///Resume chain and disable it
+    ///Resume chain and marks its ready
     /**
      * @param chain chain to resume
+     * @param ready_state state in meaning ready
      * @param skip awaiter to be skipped, can be nullptr
      * @return count of awaiters
      *
      * @note It marks chain disabled, so futher registration are rejected with false
      * @see subscribe_check_ready()
      */
-    static std::size_t resume_chain_set_disabled(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
-        return resume_chain_lk(chain.exchange(&empty_awaiter<true>::disabled, std::memory_order_release), skip);
+    static std::size_t resume_chain_set_ready(std::atomic<abstract_awaiter *> &chain, abstract_awaiter &ready_state, abstract_awaiter *skip) {
+        return resume_chain_lk(chain.exchange(&ready_state, std::memory_order_release), skip);
     }
     static std::size_t resume_chain_lk(abstract_awaiter *chain, abstract_awaiter *skip) {
         std::size_t n = 0;
@@ -130,22 +86,60 @@ public:
      * @retval true registered
      * @retval false registration unsuccessful, the object is already prepared
      */
-    bool subscibre_check_ready(std::atomic<abstract_awaiter *> &chain);
+    bool subscribe_check_ready(std::atomic<abstract_awaiter *> &chain, abstract_awaiter &ready_state) {
+        while (!chain.compare_exchange_strong(_next, this, std::memory_order_acquire)) {
+            if (_next == &ready_state) {
+                _next = nullptr;
+                return false;
+            }
+        }
+        return true;
+
+    }
+
+    virtual std::coroutine_handle<> resume_handle() noexcept override {
+        resume();
+        return std::noop_coroutine();
+    }
 
     abstract_awaiter *_next = nullptr;
-    static constexpr bool chained = true;
-protected:
 };
 
 
-template<bool chain>
-inline empty_awaiter<chain> empty_awaiter<chain>::instance;
-template<bool chain>
-inline empty_awaiter<chain> empty_awaiter<chain>::disabled;
 
-///
-template<typename promise_type, bool chain = false>
-class abstract_owned_awaiter: public abstract_awaiter<chain> {
+
+///phony awaiter it is used to signal special value in awaiter's/chain
+/** This awaiter doesn't resume anything */
+class empty_awaiter: public abstract_awaiter {
+public:
+
+    ///Just instance for any usage
+    static empty_awaiter instance;
+    ///Disables awaiter's chain/slot. Any further registrations are impossible
+    /** This allows to atomically replace awaiter with disabled, which can be
+     * interpreted as "value is ready, no further waiting is required" while current
+     * list of awaiters is picked and the awaiters are resumed
+     *
+     * @see abstract_awaiter::resume_chain_set_disabled
+     */
+    static empty_awaiter disabled;
+
+    virtual void resume() noexcept override {}
+    virtual std::coroutine_handle<> resume_handle() noexcept override {return std::noop_coroutine();}
+
+
+
+};
+
+
+
+inline empty_awaiter empty_awaiter::instance;
+inline empty_awaiter empty_awaiter::disabled;
+
+
+///Awaiter which carries and owner, base for many awaiters
+template<typename promise_type>
+class abstract_owned_awaiter: public abstract_awaiter {
 public:
     abstract_owned_awaiter(promise_type &owner):_owner(owner) {}
     abstract_owned_awaiter(const abstract_owned_awaiter  &) = default;
@@ -163,10 +157,12 @@ protected:
 template<typename parent, typename policy>
 class co_awaiter_policy;
 
-template<typename promise_type, bool chain = false>
-class co_awaiter_policy_base: public abstract_owned_awaiter<promise_type, chain> {
+
+///awaiter which supports change of resumption policy
+template<typename promise_type>
+class co_awaiter_policy_base: public abstract_owned_awaiter<promise_type> {
 public:
-    using abstract_owned_awaiter<promise_type, chain>::abstract_owned_awaiter;
+    using abstract_owned_awaiter<promise_type>::abstract_owned_awaiter;
 
     ///Allows to change resumption policy.
     /** This member is called by a task, when await_transform, to supply
@@ -181,12 +177,6 @@ public:
         return co_awaiter_policy<_This, _Policy>(std::forward<_Policy>(p), std::forward<_This>(_this));
     }
 
-#ifdef __CDT_PARSER__
-    //this helps to Eclipse CDT parser to recognize co_await conversion
-    using ReturnValue = decltype(std::declval<co_awaiter<promise_type,chain> >().await_resume());
-
-    operator ReturnValue();
-#endif
 protected:
     std::coroutine_handle<> _h;
 
@@ -203,10 +193,10 @@ protected:
 
 
 ///Generic awaiter used in most object to handle co_await
-template<typename promise_type, bool chain = false>
-class [[nodiscard]] co_awaiter: public co_awaiter_policy_base<promise_type, chain> {
+template<typename promise_type>
+class [[nodiscard]] co_awaiter: public co_awaiter_policy_base<promise_type> {
 public:
-    using co_awaiter_policy_base<promise_type, chain>::co_awaiter_policy_base;
+    using co_awaiter_policy_base<promise_type>::co_awaiter_policy_base;
 
     ///co_await related function
     bool await_ready() {
@@ -247,7 +237,7 @@ public:
      * @retval false awaiting expression is already resolved, so no registration done, you can
      * call await_resume()
      */
-    bool subscribe_awaiter(abstract_awaiter<chain> *awt) {
+    bool subscribe_awaiter(abstract_awaiter *awt) {
         return this->_owner.subscribe_awaiter(awt);
     }
 
@@ -305,20 +295,20 @@ protected:
 };
 
 
-template<typename promise_type, bool chain>
-inline decltype(auto) co_awaiter<promise_type, chain>::wait() {
+template<typename promise_type>
+inline decltype(auto) co_awaiter<promise_type>::wait() {
     sync();
     return await_resume();
 }
 
-template<typename promise_type, bool chain>
-inline void co_awaiter<promise_type, chain>::sync() noexcept  {
+template<typename promise_type>
+inline void co_awaiter<promise_type>::sync() noexcept  {
     if (await_ready()) return ;
 
-    class Awaiter: public abstract_awaiter<chain> {
+    class Awaiter: public abstract_awaiter {
     public:
         std::atomic<bool> flag = {false};
-        virtual std::coroutine_handle<> resume_handle() override {
+        virtual std::coroutine_handle<> resume_handle() noexcept override {
             Awaiter::resume();
             return std::noop_coroutine();
         }
@@ -336,31 +326,6 @@ inline void co_awaiter<promise_type, chain>::sync() noexcept  {
 }
 
 
-template<bool chain>
-inline bool abstract_awaiter<chain>::subscibre_check_ready(std::atomic<abstract_awaiter*> &chain_) {
-    abstract_awaiter *n = nullptr;
-    //register only if there is non-zero value
-    //then result is ready, however if there is other awaiter, it is UB
-    return chain_.compare_exchange_strong(n, this, std::memory_order_acquire);
-}
-
-
-inline bool abstract_awaiter<true>::subscibre_check_ready(std::atomic<abstract_awaiter<true> *>& chain_) {
-    //try to put self to the top of chain - assume _next = nullptr
-    while (!chain_.compare_exchange_strong(_next, this, std::memory_order_acquire)) {
-        //failed because _chain != _next
-        //see what is there (stored to _next)  - if it is ready or processed, we can't register
-        if (_next == &empty_awaiter<true>::disabled) {
-            //reset _next to be able detect it again
-            _next = nullptr;
-            //return false
-            return false;
-        }
-    }
-    //we successfully subscribed
-    return true;
-}
-
 template<typename Awaitable>
 inline decltype(auto) extract_awaiter(Awaitable &&awt) noexcept {
     if constexpr (has_co_await<Awaitable>::value) {
@@ -373,7 +338,6 @@ inline decltype(auto) extract_awaiter(Awaitable &&awt) noexcept {
         return std::forward<Awaitable>(awt);
     }
 }
-
 
 template<typename T>
 using to_awaiter_type_t = decltype(extract_awaiter(std::declval<T>()));
@@ -396,9 +360,9 @@ using to_awaiter_type_t = decltype(extract_awaiter(std::declval<T>()));
  *
  */
 template<typename Awaitable>
-class abstract_listening_awaiter: public abstract_awaiter<to_awaiter_type_t<Awaitable>::chained> {
+class abstract_listening_awaiter: public abstract_awaiter {
 public:
-    using super = abstract_awaiter<to_awaiter_type_t<Awaitable>::chained>;
+    using super = abstract_awaiter;
     using awaiter_type = to_awaiter_type_t<Awaitable>;
     using value_type = decltype(std::declval<awaiter_type>().await_resume());
     static constexpr bool is_reference = std::is_reference_v<Awaitable>;
