@@ -998,6 +998,9 @@ template<typename T, typename P>
 future(future_coro<T, P>) -> future<T>;
 
 
+template<typename T, typename _Policy>
+using async = future_coro<T, _Policy>;
+
 
 
 template<typename T, typename Base>
