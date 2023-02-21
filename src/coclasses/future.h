@@ -461,18 +461,26 @@ public:
     promise(promise &&other):_owner(other.claim()) {}
     ///destructor
     ~promise() {
-        if (_owner.load(std::memory_order_relaxed))
-            set_exception(std::make_exception_ptr(await_canceled_exception()));
+        auto m = _owner.load(std::memory_order_relaxed);
+        if (m) m->resolve();
+
     }
     ///promise cannot assignment by copying
     promise &operator=(const promise &other) = delete;
     ///promise can be assigned by move
     promise &operator=(promise &&other) {
         if (this != &other) {
-            if (_owner) set_exception(std::make_exception_ptr(await_canceled_exception()));
+            drop();
             _owner = other.claim();
         }
         return *this;
+    }
+
+    void drop() {
+        auto m = claim();
+        if (m) {
+            m->resolve();
+        }
     }
 
     ///construct the associated future
@@ -998,7 +1006,7 @@ template<typename T, typename P>
 future(future_coro<T, P>) -> future<T>;
 
 
-template<typename T, typename _Policy>
+template<typename T, typename _Policy = void>
 using async = future_coro<T, _Policy>;
 
 
