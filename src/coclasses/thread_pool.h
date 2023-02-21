@@ -28,12 +28,6 @@ namespace cocls {
 /** Main benefit of such object is zero allocation during transferring the coroutine to the
  * other thread
  *
-<<<<<<< HEAD
-=======
- * Each thread also initializes the coroboard() so coroutines can be scheduled manually inside of
- * each thread
->>>>>>> branch 'master' of https://github.com/ondra-novak/coroutines_classes.git
- *
  */
 
 class thread_pool {

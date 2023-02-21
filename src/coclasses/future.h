@@ -15,6 +15,7 @@
 #include "coro_policy_holder.h"
 
 #include <assert.h>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -121,7 +122,7 @@ class future_coro_promise;
 
 
 template<typename T>
-class future {
+class [[nodiscard]] future {
 public:
 
     using value_type = T;

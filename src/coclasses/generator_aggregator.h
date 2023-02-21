@@ -2,7 +2,7 @@
 #ifndef SRC_COCLASSES_GENERATOR_AGGREGATOR_H_
 #define SRC_COCLASSES_GENERATOR_AGGREGATOR_H_
 #include "generator.h"
-#include "limited_queue.h"
+#include "queue.h"
 #include "detached.h"
 
 namespace cocls {
@@ -13,7 +13,7 @@ template<typename T, typename Arg>
 class GenCallback;
 
 template<typename T, typename Arg>
-using GenAggrQueue = limited_queue<GenCallback<T, Arg> *, primitives::single_item_queue<abstract_awaiter * > >;
+using GenAggrQueue = queue<GenCallback<T, Arg> *,primitives::std_queue, primitives::single_item_queue>;
 
 template<typename T, typename Arg>
 class GenCallback: public abstract_awaiter {
@@ -95,7 +95,7 @@ generator<T, Arg> generator_aggregator(std::vector<generator<T, Arg> > list__) {
 
     std::vector<_details::GenCallback<T, Arg> > cbs;
     cbs.reserve(list__.size());
-    Queue queue(list__.size());
+    Queue queue;
     controller cnt(list__.size(), queue);
 
 

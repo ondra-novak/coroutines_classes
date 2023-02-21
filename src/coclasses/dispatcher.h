@@ -224,6 +224,11 @@ public:
         return sleep_awaiter(instance,std::chrono::system_clock::now()+dur);
     }
 
+    friend bool is_current(dispatcher *disp) {
+        return instance.get() == disp;
+    }
+
+
 protected:
 
     static thread_local std::shared_ptr<dispatcher> instance;
@@ -277,6 +282,7 @@ protected:
         _cond.notify_all();
     }
 
+
 protected:
     struct timer {
         std::chrono::system_clock::time_point _tp;
@@ -320,10 +326,13 @@ namespace resumption_policy {
 
         dispatcher_ptr _dispatcher;
 
-        struct initial_awaiter: initial_resume_by_policy<dispatcher> {
-            using initial_resume_by_policy<dispatcher>::initial_resume_by_policy;
-            bool await_ready() const {
-                return _p._dispatcher != nullptr;
+        struct initial_awaiter: std::suspend_always {
+            dispatcher &_p;
+            initial_awaiter(dispatcher &p):_p(p) {}
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+                auto disp = _p._dispatcher.lock();
+                if (!disp) return std::noop_coroutine();
+                else return _p.resume_handle(h);
             }
         };
 
@@ -333,6 +342,10 @@ namespace resumption_policy {
         dispatcher(dispatcher_ptr d)
             :_dispatcher(d) {}
 
+
+        bool is_policy_ready() {
+            return !_dispatcher.expired();
+        }
 
 
         dispatcher_ptr get_dispatcher() const {
@@ -358,8 +371,7 @@ namespace resumption_policy {
           std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
               auto l = _dispatcher.lock();
               if (l)  [[likely]] {
-                  auto k = dispatcher::get_dispatcher().lock();
-                  if (k == l) return h;
+                  if (is_current(l.get())) return h;
                   l->schedule(h);
                   return std::noop_coroutine();
               }
