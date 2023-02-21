@@ -54,6 +54,16 @@ namespace cocls {
         }
     };
 
+    #if defined( __cpp_concepts) and not defined (__CDT_PARSER__)
+
+    template<typename T>
+    concept Storage = requires(T v) {
+        {v.alloc(std::declval<std::size_t>())}->std::same_as<void *>;
+        {T::dealloc(std::declval<void *>(), std::declval<std::size_t>())}->std::same_as<void>;
+    };
+
+
+    #endif
 }
 
 

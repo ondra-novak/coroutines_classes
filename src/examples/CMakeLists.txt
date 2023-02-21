@@ -49,6 +49,7 @@ add_executable (subtask subtask.cpp)
 add_executable (stackfull stackfull.cpp)
 add_executable (generator_with_arg generator_with_arg.cpp)
 add_executable (generator_aggregator_with_arg generator_aggregator_with_arg.cpp)
+add_executable (callback_awaiter callback_awaiter.cpp)
 
 
 

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <coroutine>
 #include <atomic>
+#include <memory>
 
 namespace cocls {
 
@@ -493,6 +494,162 @@ protected:
     }
 
 };
+
+///Helps to construct awaiter which calls a callback when future is resolved
+/**
+ * @tparam Awt type of returned future. The future or its awaitable must
+ * support the function subscribe_awaiter;
+ *
+ * To construct the awaiter, use function prepare. Once you receive an object,
+ * you can call await().
+ *
+ * The callback must be in two variants, or it must have auto argument, because it
+ * can be called with either value or exception. You need to use if constexpr to
+ * determine which case happened
+ */
+template<typename Awt>
+class callback_awaiter {
+public:
+
+
+    ///static awaiter
+    /**
+     * You can construct this awaiter staticaly
+     * @tparam Cb callback type
+     */
+    template<typename Cb>
+    class awaiter: public  abstract_listening_awaiter<Awt> {
+    public:
+
+        awaiter(Cb &&fn):_cb(std::forward<Cb>(fn)) {}
+
+    protected:
+        virtual void resume() noexcept override {
+            try {
+                _cb(abstract_listening_awaiter<Awt>::value());
+            } catch (...) {
+                _cb(std::current_exception());
+            }
+        }
+
+        Cb _cb;
+    };
+private:
+    template<typename Cb>
+    class dynamic: public awaiter<Cb> {
+        using awaiter<Cb>::awaiter;
+    protected:
+        virtual void resume() noexcept override {
+            awaiter<Cb>::resume();
+            delete this;
+        }
+    };
+
+    template<typename Cb, typename Allocator>
+    class dynamic_alloc: public dynamic<Cb> {
+    public:
+        using dynamic<Cb>::dynamic;
+
+        struct AllocHlp {
+            Allocator &alloc;
+            std::size_t sz;
+        };
+
+        void *operator new(std::size_t sz, AllocHlp &hlp) {
+            hlp.sz = sz;
+            return hlp.alloc(sz);
+        }
+
+        void operator delete(void *ptr, AllocHlp &hlp) {
+            hlp.alloc.dealloc(ptr,hlp.sz);
+        }
+
+        void operator delete(void *ptr, std::size_t sz) {
+            Allocator::dealloc(ptr, sz);
+        }
+    };
+
+    using ptr_type = std::unique_ptr<abstract_listening_awaiter<Awt> >;
+public:
+    using value_type = typename abstract_listening_awaiter<Awt>::value_type;
+
+    callback_awaiter() = default;
+    ///construct callback awaiter
+    /**
+     * @param cb callback which is called when future is set ready. Note that the callback
+     * must have two alternatives, one with the actual value and one with std::exception_ptr.
+     * It can be also generic and you can use if constexpr(std::is_same_t<>) to detect
+     * which case happened.
+     *
+     */
+    template<typename Cb>
+    CXX20_REQUIRES(std::invocable<Cb, value_type> && std::invocable<Cb, std::exception_ptr>)
+    void prepare(Cb &&cb) {
+        _ptr = std::make_unique<dynamic<Cb> >(std::forward<Cb>(cb));
+    }
+    ///construct callback awaiter allocated with an allocator
+    /**
+     * @param alloc reference to an allocator. Ensure that allocator's live isn't shorter
+     * than callback's itself.
+     *
+     * @param cb callback which is called when future is set ready. Note that the callback
+     * must have two alternatives, one with the actual value and one with std::exception_ptr.
+     * It can be also generic and you can use if constexpr(std::is_same_t<>) to detect
+     * which case happened.
+     */
+    template<typename Allocator, typename Cb>
+    CXX20_REQUIRES((std::invocable<Cb, value_type> && std::invocable<Cb, std::exception_ptr>) && Storage<Allocator>)
+    void prepare(Allocator &alloc, Cb &&cb) {
+        dynamic_alloc<Cb, Allocator> hlp{alloc,0};
+        _ptr = ptr_type(new(hlp) dynamic_alloc<Cb, Allocator>(std::forward<Cb>(cb)));
+    }
+
+    ///Awaits on an awaitable
+    /**
+     * calls the function passed as an argument and awaits on its return value. Once
+     * the awaiter is set ready, the callback is called with the either value or
+     * exception. Note that content of object is released by this function and the
+     * object can be dropped or prepared again
+     *
+     * @param fn
+     */
+    template<typename Fn>
+    CXX20_REQUIRES(std::same_as<decltype(std::declval<Fn>()()), Awt>)
+    void await(Fn &&fn) {
+        _ptr.release()->await(std::forward<Fn>(fn));
+    }
+
+    ///Directly construct the object
+    /**
+     * @see prepare
+     * @param cb callback
+     */
+    template<typename Cb>
+    CXX20_REQUIRES(std::invocable<Cb, value_type> && std::invocable<Cb, std::exception>)
+    explicit callback_awaiter(Cb &&cb) {
+        prepare(std::forward<Cb>(cb));
+    }
+
+    ///Directly construct the object
+    /**
+     * @see prepare
+     * @param cb callback
+     */
+    template<typename Allocator, typename Cb>
+    CXX20_REQUIRES((std::invocable<Cb, value_type> && std::invocable<Cb, std::exception>) && Storage<Allocator>)
+    explicit callback_awaiter(Allocator &alloc, Cb &&cb) {
+        prepare(std::forward<Cb>(cb));
+    }
+
+protected:
+    ptr_type _ptr;
+
+};
+
+
+constexpr bool is_exception(std::exception_ptr &) {return true;}
+template<typename Arg>
+constexpr bool is_exception(Arg &) {return false;}
 
 
 ///Retrieves handle to currently running coroutine

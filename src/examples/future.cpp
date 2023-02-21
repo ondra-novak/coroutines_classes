@@ -27,7 +27,3 @@ int main(int, char **) {
 
 
 }
-
-
-template class cocls::shared_future<int>;
-template class cocls::shared_future<void>;
