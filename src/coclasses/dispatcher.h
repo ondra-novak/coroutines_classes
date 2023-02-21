@@ -6,6 +6,8 @@
 #define SRC_COCLASSES_DISPATCHER_H_
 #include "awaiter.h"
 #include "exceptions.h"
+#include "future.h"
+#include "priority_queue.h"
 
 
 #include <memory>
@@ -144,9 +146,9 @@ public:
      * @param h coroutine handle
      * @param tp timepoint
      */
-    void schedule(std::coroutine_handle<> h, std::chrono::system_clock::time_point tp) {
+    void schedule(promise<void> &&promise, std::chrono::system_clock::time_point tp) {
         std::lock_guard lk(_mx);;
-        _timers.push({tp,h});
+        _timers.emplace(tp,std::move(promise));
         if (_queue.empty()) {
             _queue.push(std::noop_coroutine());
         }
@@ -169,23 +171,6 @@ public:
         return instance;
     }
 
-    ///sleep awaiter, coroutine can be scheduled in dispatcher thread at given timepoint
-    /**@see sleep_until(), sleep_for()
-     */
-    class sleep_awaiter: public std::suspend_always {
-    public:
-        sleep_awaiter(std::weak_ptr<dispatcher> disp, std::chrono::system_clock::time_point tp):_disp(disp),_tp(tp) {}
-        void await_suspend(std::coroutine_handle<> h) {
-            auto inst = current().lock();
-            if (!inst) throw no_thread_dispatcher_is_initialized_exception();
-            inst->schedule(h, _tp);
-        }
-        static sleep_awaiter set_resumption_policy(const sleep_awaiter &awt, const resumption_policy::dispatcher &policy);
-    protected:
-        std::weak_ptr<dispatcher> _disp;
-        std::chrono::system_clock::time_point _tp;
-    };
-
     ///suspend coroutine and resume at given time point
     /**
      * @param tp  time point defines time to resume
@@ -201,8 +186,12 @@ public:
      * they are resumed in current thread if there is active dispatcher, otherwise
      * exception is thrown
      */
-    static sleep_awaiter sleep_until(std::chrono::system_clock::time_point tp) {
-        return sleep_awaiter(instance,tp);
+    static future<void> sleep_until(std::chrono::system_clock::time_point tp) {
+        return [tp](auto promise) {
+            auto inst = current().lock();
+            if (!inst) throw no_thread_dispatcher_is_initialized_exception();
+            inst->schedule(std::move(promise), tp);
+        };
     }
     ///suspend coroutine and resume at given time point
     /**
@@ -220,8 +209,8 @@ public:
      * exception is thrown
      */
     template<typename Dur>
-    static sleep_awaiter sleep_for(const Dur &dur) {
-        return sleep_awaiter(instance,std::chrono::system_clock::now()+dur);
+    static future<void> sleep_for(const Dur &dur) {
+        return sleep_until(std::chrono::system_clock::now()+dur);
     }
 
     friend bool is_current(dispatcher *disp) {
@@ -240,10 +229,9 @@ protected:
                 _cond.wait(lk, [&]{return !_queue.empty() || exit_flag;});
             } else {
                 if (!_cond.wait_until(lk, _timers.top()._tp, [&]{return !_queue.empty() || exit_flag;})) {
-                    auto t = _timers.top();
-                    _timers.pop();
+                    auto t = _timers.pop_item();
                     lk.unlock();
-                    t._coro.resume();
+                    t._coro();
                     lk.lock();
                     continue;
                 }
@@ -266,13 +254,6 @@ protected:
             h.resume();
             lk.lock();
         }
-        while (!_timers.empty()) {
-            auto t = _timers.top();
-            _timers.pop();
-            lk.unlock();
-            t._coro.resume();
-            lk.lock();
-        }
     }
 
 
@@ -286,7 +267,7 @@ protected:
 protected:
     struct timer {
         std::chrono::system_clock::time_point _tp;
-        std::coroutine_handle<> _coro;
+        promise<void> _coro;
         int operator==(const timer &other) const {return _tp == other._tp;}
         int operator!=(const timer &other) const {return _tp != other._tp;}
         int operator>=(const timer &other) const {return _tp >= other._tp;}
@@ -298,7 +279,7 @@ protected:
     mutable std::mutex _mx;
     std::condition_variable _cond;
     std::queue<std::coroutine_handle<> > _queue;
-    std::priority_queue<timer, std::vector<timer>, std::greater<timer> > _timers;
+    priority_queue<timer, std::vector<timer>, std::greater<timer> > _timers;
 
     static dispatcher * & current_pool() {
         static thread_local dispatcher *c = nullptr;
@@ -384,9 +365,6 @@ namespace resumption_policy {
 }
 
 
-inline dispatcher::sleep_awaiter dispatcher::sleep_awaiter::set_resumption_policy(const dispatcher::sleep_awaiter &awt, const resumption_policy::dispatcher &policy) {
-    return dispatcher::sleep_awaiter(policy.get_dispatcher(),awt._tp);
-}
 
 
 }
