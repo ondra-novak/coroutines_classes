@@ -191,7 +191,7 @@ public:
     future(future_coro<T, _Policy> &&coro) {
        typename future_coro<T, _Policy>::promise_type &p = coro._h.promise();
        p._future = this;
-       coro.detach();
+       coro.resume_by_policy();
     }
 
     ///Resolves future by a value
@@ -711,7 +711,7 @@ promise<T> make_promise(Fn &&fn, Storage &storage) {
 
 
 template<typename T, typename _Policy>
-class future_coro {
+class [[nodiscard]] future_coro {
 public:
 
     friend class future<T>;
@@ -725,14 +725,46 @@ public:
         if (_h) _h.destroy();
     }
 
+    ///Starts the coroutine by converting it to future. Allows to initialize resumption policy
+    /**
+     * The function is equivalent to converting coroutine to the future<T> directly. However
+     * this function allows you to initialize resumption policy by passing arguments
+     *
+     * @param args arguments passed to the initialize_policy
+     * @return
+     */
+    template<typename ... Args>
+    future<T> start(Args &&... args) {
+        future_coro_promise<T, _Policy> &promise = _h.promise();
+        if constexpr(has_initialize_policy<future_coro_promise<T, _Policy> >::value) {
+            promise.initialize_policy(std::forward<Args>(args)...);
+        } else {
+            static_assert(sizeof...(args) == 0, "There is nothing to initialize");
+        }
+        return future<T>(std::move(*this));
+    }
+
     ///Detach coroutine
     /**
      * Allows to run coroutine detached. Coroutine is not connected
      * with any future variable, so result (and exception) is ignored
      */
-    void detach() {
+    template<typename ... Args>
+    void detach(Args &&... args) {
+        future_coro_promise<T, _Policy> &promise = _h.promise();
+        if constexpr(has_initialize_policy<future_coro_promise<T, _Policy> >::value) {
+            promise.initialize_policy(std::forward<Args>(args)...);
+        } else {
+            static_assert(sizeof...(args) == 0, "There is nothing to initialize");
+        }
+        resume_by_policy();
+
+    }
+protected:
+    void resume_by_policy() {
         auto h = std::exchange(_h,{});
-        h.resume();
+        future_coro_promise<T, _Policy> &promise = h.promise();
+        promise._policy.resume(h);
     }
 
 
@@ -761,6 +793,7 @@ public:
 
         }
     };
+
 
     std::suspend_always initial_suspend() noexcept {return {};}
     final_awaiter final_suspend() noexcept {return {};}

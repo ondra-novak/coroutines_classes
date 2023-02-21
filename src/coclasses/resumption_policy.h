@@ -36,6 +36,10 @@ namespace _details {
     std::monostate test_has_set_resumption_policy(...);
 
     template<typename X>
+    auto test_has_initialize_policy(X &&x) -> decltype(&std::decay_t<X>::initialize_policy);
+    std::monostate test_has_initialize_policy(...);
+
+    template<typename X>
     auto test_has_wait(X &&x) -> decltype(x.wait());
     std::monostate test_has_wait(...);
 
@@ -73,6 +77,9 @@ template<typename X, typename Y>
 using has_set_resumption_policy = std::negation<std::is_same<std::monostate, decltype(_details::test_has_set_resumption_policy(std::declval<X>(), std::declval<Y>()))> >;
 
 template<typename X>
+using has_initialize_policy = std::negation<std::is_same<std::monostate, decltype(_details::test_has_initialize_policy(std::declval<X>()))> >;
+
+template<typename X>
 using has_wait = std::negation<std::is_same<std::monostate, decltype(_details::test_has_wait(std::declval<X>()))> >;
 template<typename X, typename Y>
 using has_subscribe_awaiter = std::negation<std::is_same<std::monostate, decltype(_details::test_has_subscribe_awaiter(std::declval<X>(),std::declval<Y>()))> >;
@@ -82,6 +89,7 @@ using has_join = std::negation<std::is_same<std::monostate, decltype(_details::t
 
 ///definition of various resumption policies
 namespace resumption_policy {
+
 
 ///Resumption policy concept - template to create resumption policy
 struct _policy_concept {
@@ -108,14 +116,27 @@ struct _policy_concept {
 
     ///optional - allows to initialize the polici on a task
     /**
-     * Tasks can be created with resumption policy, however, there is now way how
-     * to pass parameters to the policy. In this case, these tasks should be always
-     * created as suspended. There is a function task<>::initialize_policy() which
-     * can be used to pass arguments to the policy. After then, the task can be resumed
+     * Function initializes policy object by specified arguments
      *
-     * Resumption policies whithout arguments don't need such function
+     * @retval true policy has been initialized. You can resume waiting coroutine now
+     * @retval false policy has been initialized previously, or the initialization did
+     * not changed state of running coroutine. The coroutine was not suspended by
+     * policy before initialization, so you should not resume the handle you are holding
+     *
+     *
+     * @note resumption rules in this case are because coroutine can use initial_awaiter
+     * before policy is initialized. The return value hints, whether coroutine might be
+     * suspended on this awaiter because the policy was not initialized. If the
+     * return value is true, then such situation happened and caller need to resume its
+     * coroutine. If return value is false, such situation did not happened and coroutine
+     * is already running. Note that function is not responsible to determine actual state.
+     * Its return value is determined from previous state of the policy. If there
+     * were no suspension on the initial awaiter, the function can still return true.
+     * In this case and it is about information known to the caller only, whether the
+     * coroutine is awaiting on initial_awaiter or not (is suspended because other reason)
+     *
      */
-    void initialize_policy(...);
+    bool initialize_policy(...);
 };
 
 
@@ -157,8 +178,8 @@ struct initial_resume_by_policy: public std::suspend_always {
     initial_resume_by_policy(Policy &p):_p(p) {}
     initial_resume_by_policy(const initial_resume_by_policy &p) = default;
     initial_resume_by_policy &operator=(const initial_resume_by_policy &p) = delete;
-    constexpr void await_suspend(std::coroutine_handle<> h) const noexcept {
-        _p.resume(h);
+    constexpr bool await_ready() const noexcept {
+        return _p.is_policy_ready();
     }
 };
 

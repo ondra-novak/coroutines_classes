@@ -318,68 +318,53 @@ namespace resumption_policy {
      */
     struct dispatcher {
 
-        std::variant<std::monostate, dispatcher_ptr, std::coroutine_handle<> > _st;
+        dispatcher_ptr _dispatcher;
 
         struct initial_awaiter: initial_resume_by_policy<dispatcher> {
             using initial_resume_by_policy<dispatcher>::initial_resume_by_policy;
             bool await_ready() const {
-                return _p._st.index() == 1;
+                return _p._dispatcher != nullptr;
             }
         };
 
 
         dispatcher()
-            :_st(dispatcher_ptr::element_type::instance) {}
-        dispatcher(dispatcher_ptr d) {
-            initialize_policy(d);
-        }
+            :_dispatcher(dispatcher_ptr::element_type::instance) {}
+        dispatcher(dispatcher_ptr d)
+            :_dispatcher(d) {}
+
 
 
         dispatcher_ptr get_dispatcher() const {
-            return std::get<dispatcher_ptr>(_st);
+            return _dispatcher;
         }
           ///resume
           void resume(std::coroutine_handle<> h) {
-              if (_st.index() == 1) [[likely]] {
-                  auto l = std::get<dispatcher_ptr>(_st).lock();
-                  if (l) [[likely]] {
-                      l->schedule(h);
-                      return;
-                  }
-                  throw home_thread_already_ended_exception();
+              auto l = _dispatcher.lock();
+              if (l) [[likely]] {
+                  l->schedule(h);
+                  return;
               }
-              _st = h;
+              throw home_thread_already_ended_exception();
           }
           ///Initializes policy
           /**
            */
-          void initialize_policy(dispatcher_ptr d) {
-              if (_st.index() == 2) [[likely]] {
-                  std::coroutine_handle<> h = std::get<std::coroutine_handle<> >(_st);
-                  _st = d;
-                  resume(h);
-              } else {
-                  _st = d;
-              }
+          bool initialize_policy(dispatcher_ptr d) {
+              bool ret = _dispatcher.expired();
+              _dispatcher = d;
+              return ret;
           }
           std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
-              if (_st.index() == 1) [[likely]] {
-                  auto l = std::get<dispatcher_ptr>(_st).lock();
-                  if (l)  [[likely]] {
-                      auto k = dispatcher::get_dispatcher().lock();
-                      if (k == l) return h;
-                      l->schedule(h);
-                      return std::noop_coroutine();
-                  }
-                  throw home_thread_already_ended_exception();
+              auto l = _dispatcher.lock();
+              if (l)  [[likely]] {
+                  auto k = dispatcher::get_dispatcher().lock();
+                  if (k == l) return h;
+                  l->schedule(h);
+                  return std::noop_coroutine();
               }
-              _st = h;
-              return std::noop_coroutine();
+              throw home_thread_already_ended_exception();
           }
-
-
-
-
     };
 
 

@@ -375,63 +375,60 @@ namespace resumption_policy {
  */
 struct thread_pool {
 
-    thread_pool() = default;
 
-    using initial_awaiter = initial_resume_by_policy<thread_pool>;
-
+    bool is_policy_ready() const noexcept {
+        return _cur_pool != nullptr;
+    }
     class resumer: public abstract_awaiter {
     public:
-        shared_thread_pool _cur_pool = nullptr;
-        std::coroutine_handle<> _h;
+        void set_handle(std::coroutine_handle<> h) {
+            _h = h;
+        }
         virtual void resume() noexcept override{
             queued::resume(_h);
         }
-        void set_handle(std::coroutine_handle<> h) {
-            _h = h;
-            if (_cur_pool != nullptr) _cur_pool->enqueue(this);
+        virtual std::coroutine_handle<> resume_handle() noexcept override {
+            return _h;
         }
-        std::coroutine_handle<> set_handle_resume_handle(std::coroutine_handle<> h) {
-            _h = h;
-            if (_cur_pool != nullptr) {
-                if (is_current(*_cur_pool)) return _h;
-                _cur_pool->enqueue(this);
-            }
-            return std::noop_coroutine();
-        }
-        void set_pool(shared_thread_pool pool) {
-            bool start = _cur_pool == nullptr;
-            _cur_pool = pool;
-            if (start) [[likely]] {
-                _cur_pool->enqueue(this);
-            }
-        }
+
+    protected:
+        std::coroutine_handle<> _h;
     };
 
-    resumer _resumer;
 
+    thread_pool() = default;
+    thread_pool(const shared_thread_pool &pool):_cur_pool(pool) {}
+
+    shared_thread_pool _cur_pool = nullptr;
+    resumer _resumer;
+    using initial_awaiter = initial_resume_by_policy<thread_pool>;
 
     void resume(std::coroutine_handle<> h) {
         _resumer.set_handle(h);
+        _cur_pool->enqueue(&_resumer);
     }
-    std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
-        return _resumer.set_handle_resume_handle(h);
+
+    std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) noexcept {
+        if (is_current(*_cur_pool)) return h;
+        _resumer.set_handle(h);
+        _cur_pool->enqueue(&_resumer);
+        return std::noop_coroutine();
     }
 
     ///Initializes policy
     /**
      * @param pool shared thread pool
-     *
-     * called from task<>::initialize_policy();
-     *
+     * @retval true you need to resume coroutine
+     * @retval false you don't need to resume coroutine
      *
      */
-    void initialize_policy(shared_thread_pool pool) {
-        _resumer.set_pool(pool);
+    bool initialize_policy(shared_thread_pool pool) {
+        bool ret = _cur_pool == nullptr;
+        _cur_pool = pool;
+        return ret;
+
     }
 
-    thread_pool(const shared_thread_pool &pool) {
-        initialize_policy(pool);
-    }
 };
 }
 

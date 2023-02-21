@@ -36,8 +36,8 @@ public:
     }
 
     template<typename ... Args>
-    void initialize_policy(Args &&... args) {
-        _policy.initialize_policy(std::forward<Args>(args)...);
+    bool initialize_policy(Args &&... args) {
+        return _policy.initialize_policy(std::forward<Args>(args)...);
     }
 
 };
