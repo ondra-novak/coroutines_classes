@@ -204,6 +204,24 @@ public:
         };
     }
 
+    ///unblock awaiting coroutine which awaits on pop() with an exception
+    /**
+     * Useful to implement timeouts
+     *
+     * @param e exception to be set as result of unblocking
+     * @retval true success
+     * @retval false nobody is awaiting
+     */
+    bool unblock_pop(std::exception_ptr e) {
+        std::unique_lock lk(_mx);
+        if (_awaiters.empty()) return false;
+        promise<T> p = std::move(_awaiters.front());
+        _awaiters.pop();
+        lk.unlock();
+        p.set_exception(e);
+        return true;
+    }
+
 
 protected:
     Lock _mx;
@@ -244,9 +262,6 @@ public:
      * The future is returned resolved, when the insert was successful, or unresolved
      * when the caller must wait for insertion.
      *
-     * @note The function size() can return value above the limit in the case when
-     * there are blocked producers. This because their items are already stored in the
-     * queue. Blocking only prevents them to insert more items
      */
     template<typename ... Args>
     future<void> push(Args && ... args) {
@@ -259,9 +274,9 @@ public:
             return future<void>::set_value();
         } else {
             this->_queue.emplace(std::forward<Args>(args)...);
-            if (this->_queue.size() > _limit) {
+            if (this->_queue.size() >= _limit) {
                 return [&](auto promise) {
-                    _blocked.push(std::move(promise));
+                    _blocked.push({T(std::forward<Args>(args)...),std::move(promise)});
                 };
             } else {
                 return future<void>::set_value();
@@ -286,7 +301,9 @@ public:
                 }
                 this->_queue.pop();
                 if (!_blocked.empty()) {
-                    auto p = std::move(_blocked.front());
+                    auto front = _blocked.front();
+                    this->_queue.push(std::move(front.first));
+                    auto p = std::move(front.second);
                     _blocked.pop();
                     lk.unlock();
                     p();
@@ -298,8 +315,30 @@ public:
     }
 
 
+    ///unblock first awaiting coroutine which awaits on push() with an exception
+    /**
+     * Useful to implement timeouts
+     *
+     * @param e exception to be set as result of unblocking
+     * @retval true success
+     * @retval false nobody is awaiting
+     *
+     * @note unblocking push operation also removes the item
+     *
+     *
+     */
+    bool unblock_push(std::exception_ptr e) {
+        std::unique_lock lk(this->_mx);
+        if (_blocked.empty()) return false;
+        auto front = std::move(_blocked.front());
+        _blocked.pop();
+        lk.unlock();
+        front.second.set_exception(e);
+        return true;
+    }
+
 protected:
-    BlockedQueue<promise<void> > _blocked;
+    BlockedQueue<std::pair<T, promise<void> > > _blocked;
     std::size_t _limit;
 };
 

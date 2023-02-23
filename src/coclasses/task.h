@@ -496,7 +496,7 @@ public:
     }
     void unhandled_exception() {
         _e =  std::current_exception();
-        this->set_ready_data();
+        this->set_ready_exception();
     }
     void get_result()  {
         auto status = this->set_processed();
