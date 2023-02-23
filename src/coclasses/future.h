@@ -15,6 +15,7 @@
 #include "coro_policy_holder.h"
 
 #include <assert.h>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -121,7 +122,7 @@ class future_coro_promise;
 
 
 template<typename T>
-class future {
+class [[nodiscard]] future {
 public:
 
     using value_type = T;
@@ -191,7 +192,7 @@ public:
     future(future_coro<T, _Policy> &&coro) {
        typename future_coro<T, _Policy>::promise_type &p = coro._h.promise();
        p._future = this;
-       coro.detach();
+       coro.resume_by_policy();
     }
 
     ///Resolves future by a value
@@ -460,18 +461,26 @@ public:
     promise(promise &&other):_owner(other.claim()) {}
     ///destructor
     ~promise() {
-        if (_owner.load(std::memory_order_relaxed))
-            set_exception(std::make_exception_ptr(await_canceled_exception()));
+        auto m = _owner.load(std::memory_order_relaxed);
+        if (m) m->resolve();
+
     }
     ///promise cannot assignment by copying
     promise &operator=(const promise &other) = delete;
     ///promise can be assigned by move
     promise &operator=(promise &&other) {
         if (this != &other) {
-            if (_owner) set_exception(std::make_exception_ptr(await_canceled_exception()));
+            drop();
             _owner = other.claim();
         }
         return *this;
+    }
+
+    void drop() {
+        auto m = claim();
+        if (m) {
+            m->resolve();
+        }
     }
 
     ///construct the associated future
@@ -711,7 +720,7 @@ promise<T> make_promise(Fn &&fn, Storage &storage) {
 
 
 template<typename T, typename _Policy>
-class future_coro {
+class [[nodiscard]] future_coro {
 public:
 
     friend class future<T>;
@@ -725,14 +734,46 @@ public:
         if (_h) _h.destroy();
     }
 
+    ///Starts the coroutine by converting it to future. Allows to initialize resumption policy
+    /**
+     * The function is equivalent to converting coroutine to the future<T> directly. However
+     * this function allows you to initialize resumption policy by passing arguments
+     *
+     * @param args arguments passed to the initialize_policy
+     * @return
+     */
+    template<typename ... Args>
+    future<T> start(Args &&... args) {
+        future_coro_promise<T, _Policy> &promise = _h.promise();
+        if constexpr(has_initialize_policy<future_coro_promise<T, _Policy> >::value) {
+            promise.initialize_policy(std::forward<Args>(args)...);
+        } else {
+            static_assert(sizeof...(args) == 0, "There is nothing to initialize");
+        }
+        return future<T>(std::move(*this));
+    }
+
     ///Detach coroutine
     /**
      * Allows to run coroutine detached. Coroutine is not connected
      * with any future variable, so result (and exception) is ignored
      */
-    void detach() {
+    template<typename ... Args>
+    void detach(Args &&... args) {
+        future_coro_promise<T, _Policy> &promise = _h.promise();
+        if constexpr(has_initialize_policy<future_coro_promise<T, _Policy> >::value) {
+            promise.initialize_policy(std::forward<Args>(args)...);
+        } else {
+            static_assert(sizeof...(args) == 0, "There is nothing to initialize");
+        }
+        resume_by_policy();
+
+    }
+protected:
+    void resume_by_policy() {
         auto h = std::exchange(_h,{});
-        h.resume();
+        future_coro_promise<T, _Policy> &promise = h.promise();
+        promise._policy.resume(h);
     }
 
 
@@ -761,6 +802,7 @@ public:
 
         }
     };
+
 
     std::suspend_always initial_suspend() noexcept {return {};}
     final_awaiter final_suspend() noexcept {return {};}
@@ -963,6 +1005,9 @@ protected:
 template<typename T, typename P>
 future(future_coro<T, P>) -> future<T>;
 
+
+template<typename T, typename _Policy = void>
+using async = future_coro<T, _Policy>;
 
 
 

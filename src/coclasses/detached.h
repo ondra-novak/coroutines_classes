@@ -28,40 +28,6 @@ namespace cocls {
  * - cannot be joined
  * - doesn't contains storage
  * - exceptions are ignoredtemplate<typename _Policy = void>
-class coro_policy_holder {
-public:
-    using Policy = std::conditional_t<std::is_void_v<_Policy>,typename resumption_policy::unspecified<void>::policy,_Policy>;
-
-
-    [[no_unique_address]] Policy _policy;
-
-    template<typename Awt>
-      decltype(auto) await_transform(Awt&& awt) noexcept {
-          if constexpr (has_co_await<Awt>::value) {
-              auto x = await_transform(awt.operator co_await());
-              return x;
-          } else if constexpr (has_global_co_await<Awt>::value) {
-              auto x = await_transform(operator co_await(awt));
-              return x;
-          } else if constexpr (has_set_resumption_policy<Awt, Policy>::value) {
-              return awt.set_resumption_policy(std::forward<Awt>(awt), _policy);
-          } else {
-              return std::forward<Awt>(awt);
-          }
-      }
-
-    using initial_awaiter = typename std::remove_reference<Policy>::type::initial_awaiter;
-
-    initial_awaiter initial_suspend()  noexcept {
-        return initial_awaiter(_policy);
-    }
-
-    template<typename ... Args>
-    void initialize_policy(Args &&... args) {
-        _policy.initialize_policy(std::forward<Args>(args)...);
-    }
-
-};
  *
  *
  * It is supposed to be used along with other synchronization primitive, such a future.
@@ -112,8 +78,13 @@ public:
      * @param args
      */
     template<typename ... Args>
-    void initialize_policy(Args &&... args) {
-        _p->initialize_policy(std::forward<Args>(args)...);
+    bool initialize_policy(Args &&... args) {
+        if (_p->initialize_policy(std::forward<Args>(args)...)) {
+            _p->_policy.resume(std::coroutine_handle<promise_type>::from_promise(*_p));
+            return true;
+        } else {
+            return false;
+        }
     }
 
     detached() = default;

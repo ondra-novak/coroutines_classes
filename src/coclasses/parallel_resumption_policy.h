@@ -14,8 +14,13 @@ namespace cocls {
 namespace resumption_policy {
 ///Parallel resumption policy - creates a thread and resumes the coroutine in it
     struct parallel {
-        using initial_awaiter = initial_resume_by_policy<parallel>;
-        void resume(std::coroutine_handle<> h) {
+        struct initial_awaiter : std::suspend_always {
+            initial_awaiter(parallel &) {}
+            static void await_suspend(std::coroutine_handle<> h)  {
+                resume(h);
+            }
+        };
+        static void resume(std::coroutine_handle<> h) {
             std::thread thr([h]{
                 resumption_policy::queued::resume(h);
             });
@@ -30,7 +35,7 @@ namespace resumption_policy {
         std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
             return h;
         }
-        
+
     };
 }
 

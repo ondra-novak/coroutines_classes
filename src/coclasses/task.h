@@ -236,7 +236,10 @@ public:
      */
     template<typename ... Args>
     void initialize_policy(Args && ... args) {
-        static_cast<promise_type *>(_promise)->initialize_policy(std::forward<Args>(args)...);
+        auto prom = static_cast<promise_type *>(_promise);
+        if (prom->initialize_policy(std::forward<Args>(args)...)) {
+            prom->_policy.resume(std::coroutine_handle<promise_type>::from_promise(*prom));
+        }
     }
 
 
@@ -493,7 +496,7 @@ public:
     }
     void unhandled_exception() {
         _e =  std::current_exception();
-        this->set_ready_data();
+        this->set_ready_exception();
     }
     void get_result()  {
         auto status = this->set_processed();
@@ -543,8 +546,8 @@ public:
     }
 
     template<typename ... Args>
-    void initialize_policy(Args &&... args) {
-        _policy.initialize_policy(std::forward<Args>(args)...);
+    bool initialize_policy(Args &&... args) {
+        return _policy.initialize_policy(std::forward<Args>(args)...);
     }
 
     [[no_unique_address]]  Policy _policy;
