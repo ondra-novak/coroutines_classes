@@ -767,8 +767,8 @@ public:
             static_assert(sizeof...(args) == 0, "There is nothing to initialize");
         }
         resume_by_policy();
-
     }
+
 protected:
     void resume_by_policy() {
         auto h = std::exchange(_h,{});
@@ -803,7 +803,6 @@ public:
         }
     };
 
-
     std::suspend_always initial_suspend() noexcept {return {};}
     final_awaiter final_suspend() noexcept {return {};}
 
@@ -815,8 +814,6 @@ public:
         if (_future) _future->set(std::current_exception());
     }
 };
-
-
 
 ///Shared future works similar as future<> but can be moved or copied, because it is ref-counter shared place
 /**
