@@ -11,7 +11,6 @@
 #include <coclasses/scheduler.h>
 #include <coclasses/with_queue.h>
 #include <coclasses/publisher.h>
-#include <coclasses/cancelable.h>
 #include <coclasses/queued_resumption_policy.h>
 #include <coclasses/coro_storage.h>
 #include <array>
