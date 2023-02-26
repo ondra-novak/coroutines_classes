@@ -358,6 +358,22 @@ namespace resumption_policy {
               }
               throw home_thread_already_ended_exception();
           }
+          std::coroutine_handle<> resume_handle_next() noexcept {
+              auto l = _dispatcher.lock();
+              if (l)  [[likely]] {
+                  if (is_current(l.get())) {
+                      std::lock_guard _(l->_mx);
+                      if (!l->_queue.empty()) {
+                          auto h = l->_queue.front();
+                          l->_queue.pop();
+                          return h;
+                      }
+                  }
+              }
+              return std::noop_coroutine();
+
+          }
+
     };
 
 

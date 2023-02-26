@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <coroutine>
 #include <atomic>
+#include <cassert>
 #include <memory>
 
 namespace cocls {
@@ -44,7 +45,12 @@ public:
     abstract_awaiter &operator=(const abstract_awaiter &)=delete;
 
     void subscribe(std::atomic<abstract_awaiter *> &chain) {
-        while (!chain.compare_exchange_weak(_next, this, std::memory_order_relaxed));
+        assert (this != chain.load(std::memory_order_relaxed));
+        //release memory order because we need to other thread to see change of _next
+        //this is last operation of this thread with awaiter
+        while (!chain.compare_exchange_weak(_next, this, std::memory_order_release));
+
+        assert (_next != this);
     }
     ///releases chain atomicaly
     /**
@@ -53,7 +59,9 @@ public:
      * @return count of released awaiters (including skipped)
      */
     static std::size_t resume_chain(std::atomic<abstract_awaiter *> &chain, abstract_awaiter *skip) {
-        return resume_chain_lk(chain.exchange(nullptr), skip);
+        //acquire memory order, we need to see modifications made by other thread during registration
+        //this is first operation of the thread of awaiters
+        return resume_chain_lk(chain.exchange(nullptr, std::memory_order_acquire), skip);
     }
 
     ///Resume chain and marks its ready
@@ -67,13 +75,16 @@ public:
      * @see subscribe_check_ready()
      */
     static std::size_t resume_chain_set_ready(std::atomic<abstract_awaiter *> &chain, abstract_awaiter &ready_state, abstract_awaiter *skip) {
-        return resume_chain_lk(chain.exchange(&ready_state, std::memory_order_release), skip);
+        //acquire memory order, we need to see modifications made by other thread during registration
+        //this is first operation of the thread of awaiters
+        return resume_chain_lk(chain.exchange(&ready_state, std::memory_order_acquire), skip);
     }
     static std::size_t resume_chain_lk(abstract_awaiter *chain, abstract_awaiter *skip) {
         std::size_t n = 0;
         while (chain) {
             auto y = chain;
             chain = chain->_next;
+            y->_next = nullptr;
             if (y != skip) y->resume();
             n++;
         }
@@ -88,9 +99,14 @@ public:
      * @retval false registration unsuccessful, the object is already prepared
      */
     bool subscribe_check_ready(std::atomic<abstract_awaiter *> &chain, abstract_awaiter &ready_state) {
-        while (!chain.compare_exchange_strong(_next, this, std::memory_order_acquire)) {
+        assert(this->_next == nullptr);
+        //release mode - because _next can change between tries
+        while (!chain.compare_exchange_weak(_next, this, std::memory_order_release)) {
             if (_next == &ready_state) {
                 _next = nullptr;
+                //empty load, but enforce memory order acquire because this thread will
+                //access to result
+                chain.load(std::memory_order_acquire);
                 return false;
             }
         }
@@ -201,6 +217,7 @@ public:
 
     ///co_await related function
     bool await_ready() {
+        assert("Double co_await attempt is invalid" && this->_next == nullptr);
         return this->_owner.is_ready();
     }
     ///co_await related function
@@ -210,6 +227,7 @@ public:
     }
     ///co_await related function
     decltype(auto) await_resume(){
+        assert("Coroutine resumed unexpectedly" && this->_next == nullptr);
         return this->_owner.get_result();
     }
 
@@ -258,8 +276,16 @@ public:
     bool await_ready() {
         return super::await_ready();
     }
-    decltype(auto) await_suspend(std::coroutine_handle<> h) {
-        return super::await_suspend(h);
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+        auto r = super::await_suspend(h);
+        if constexpr(std::is_void_v<decltype(r)>) {
+            return _p.resume_handle_next();
+        } else if constexpr(std::is_same_v<bool, decltype(r)>) {
+            if (r) return _p.resume_handle_next();
+            else return h;
+        } else {
+            return r;
+        }
     }
     decltype(auto) await_resume(){
         if (_resume_exception) {
@@ -270,6 +296,7 @@ public:
 
     virtual void resume() noexcept override  {
         try {
+            assert("Attempt to resume still pending awaiter" && this->_next == nullptr);
             _p.resume(super::_h);
         } catch (...) {
             _resume_exception = std::current_exception();
@@ -278,6 +305,7 @@ public:
     }
     virtual std::coroutine_handle<> resume_handle() noexcept override {
         try {
+            assert("Attempt to resume still pending awaiter" && this->_next == nullptr);
             return _p.resume_handle(super::_h);
         } catch (...) {
             _resume_exception = std::current_exception();
@@ -329,10 +357,10 @@ inline void co_awaiter<promise_type>::sync() noexcept  {
 
 template<typename Awaitable>
 inline decltype(auto) extract_awaiter(Awaitable &&awt) noexcept {
-    if constexpr (has_co_await<Awaitable>::value) {
+    if constexpr (has_co_await<Awaitable>) {
         auto x = awt.operator co_await();
         return x;
-    } else if constexpr (has_global_co_await<Awaitable>::value) {
+    } else if constexpr (has_global_co_await<Awaitable>) {
         auto x =operator co_await(awt);
         return x;
     } else {
@@ -368,7 +396,7 @@ public:
     using value_type = decltype(std::declval<awaiter_type>().await_resume());
     static constexpr bool is_reference = std::is_reference_v<Awaitable>;
 
-    static constexpr bool has_extra_awaiter = has_co_await<Awaitable>::value || has_global_co_await<Awaitable>::value;
+    static constexpr bool has_extra_awaiter = has_co_await<Awaitable> || has_global_co_await<Awaitable>;
 
     using AwaitableStorage = std::conditional_t<is_reference, std::add_pointer_t<std::decay_t<Awaitable> >, Awaitable>;
 
@@ -397,10 +425,10 @@ public:
         cleanup();
         _need_cleanup = true;
         construct_awt(std::forward<Fn>(fn));
-        if constexpr(has_co_await<Awaitable>::value) {
+        if constexpr(has_co_await<Awaitable>) {
             new(&_awt) awaiter_type(get_awt().operator co_await());
             handle_suspend(_awt);
-        } else if constexpr(has_global_co_await<Awaitable>::value) {
+        } else if constexpr(has_global_co_await<Awaitable>) {
             new(&_awt) awaiter_type(operator co_await(get_awt()));
             handle_suspend(_awt);
         } else {
@@ -692,8 +720,9 @@ public:
     explicit pause(Args && ... args):policy(std::forward<Args>(args)...) {}
 
     static bool await_ready() noexcept {return false;}
-    void await_suspend(std::coroutine_handle<> h) noexcept {
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) noexcept {
         policy::resume(h);
+        return policy::resume_handle_next();
     }
     static void await_resume() noexcept {}
 

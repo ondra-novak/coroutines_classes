@@ -301,7 +301,7 @@ public:
                 }
                 this->_queue.pop();
                 if (!_blocked.empty()) {
-                    auto front = _blocked.front();
+                    auto front = std::move(_blocked.front());
                     this->_queue.push(std::move(front.first));
                     auto p = std::move(front.second);
                     _blocked.pop();

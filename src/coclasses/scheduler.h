@@ -1,501 +1,449 @@
 /**
  * @file scheduler.h
+ *
+ * scheduler
  */
-#pragma once
 #ifndef SRC_COCLASSES_SCHEDULER_H_
 #define SRC_COCLASSES_SCHEDULER_H_
+#include "future.h"
 
-#include "lazy.h"
+#include "exceptions.h"
 
 #include "thread_pool.h"
 
-#include "lazy.h"
-
-#include "queued_resumption_policy.h"
 #include "generator.h"
-
-#include <chrono>
 #include <condition_variable>
-#include <coroutine>
-#include <mutex>
-#include <queue>
+#include <functional>
+#include <optional>
+#include <variant>
+#include <vector>
 
 
 namespace cocls {
 
-
-template<typename Clock>
-struct scheduler_traits;
-
-///Scheduler - schedules resumption of coroutines at given time, or suspension for given duration
+///Sheduler - schedule execution of coroutines. Exposes functions sleep_for and sleep_until for coroutines
 /**
- * Sheduler is object, which exposes function sleep_for and sleep_until that can
- * be co_await-ed. During waiting for the specified time, coroutine is suspended
+ * The scheduler can run in single thread application or can be started in one thread of
+ * a thread pool. If started in single threaded application, it creates base for
+ * manual scheduling and cooperative multitasking of coroutines. You can define
+ * condition when the scheduler exits. When scheduler runs as thread of the thread pool,
+ * it can benefit of having multiple threads. The scheduled coroutine is scheduled
+ * on the current thread while the scheduler continues to run in the other thread. This
+ * can allow to schedule coroutines in parallel.
  *
+ * The scheduler works with promise<void> and future<void>. So the scheduling is not limited
+ * to coroutines, you can actually schedule anything.
  *
- * @tparam Clock specifies clock type. Default is std::chrono::system_clock
- * @tparam Traits specifies class of traits of the Clock
+ * Any scheduled task can be canceled. To identify task, you need to supply an identifier.
  *
- * @note scheduler has no thread. You need to supply a thread_pool instance.
- * Scheduler need minimal 1 thread. More threads allows to resume more coroutines
- * scheduled on same time point, while each coroutine is resumed in different thread
- *
- * You can cancel scheduled coroutines
- *
- * @see scheduler_common_traits
  */
-
-template<typename Clock = std::chrono::system_clock, typename Traits = scheduler_traits<Clock> >
 class scheduler {
 public:
-    using time_point = typename Traits::time_point;
-    using clock = Clock;
 
+    ///Identifier of the task
+    /** Identifier must be unique. To achieve this, identifier is stored as const void
+     * pointer. This allows to easily make unique identifier. You can for example
+     * point to any variable in current coroutine frame, its address is unique.
+     */
+    using ident = const void *;
+    ///You can schedule promise, this defines exact type of that promise
+    using promise = ::cocls::promise<void>;
+    ///For manual scheduling, this type caries expired promise, or time of nearest event
+    using expired = std::variant<std::chrono::system_clock::time_point, promise>;
 
-    ///Initialize scheduler, but don't start it now
+    ///Construct inactive scheduler
     scheduler() = default;
-    ///Initialize scheduler and start it at given thread pool
+    ///Construct scheduler and  immediately start it in a thread pool
     /**
-     * @param pool selected thread pool
+     * @param pool reference to thread pool
      */
-    scheduler(thread_pool &pool) { start(pool);}
-    ///Don't copy
-    scheduler(const scheduler &other) = delete;
-    ///Don't assign
-    scheduler &operator=(const scheduler &other) = delete;
-
-    ///Start scheduler on given thread pool.
-    /**
-     * @param pool selected thread pool
-     * @note starting scheduler more then once is undefined behavior
-     */
-    void start(thread_pool &pool) {
-        _worker = worker(pool);
+    scheduler(thread_pool &pool) {
+        start_in(pool);
     }
 
-    ///starts single thread scheduler, exits when specified task finishes
+    ///Construct scheduler and  immediately start it in a thread pool
     /**
-     * @param join_task task to be joined to exit scheduler
-     *
+     * @param pool reference to thread pool
      */
-    template<typename T>
-    void start(task<T> join_task) {
-        start_single_thread(std::move(join_task));
+    scheduler(std::thread &thread) {
+        start_in(thread);
     }
 
 
-
-    class sch_abstract_awaiter {
-    public:
-        virtual ~sch_abstract_awaiter() = default;
-        virtual void resume(bool canceled) noexcept  = 0;
-        virtual bool is(coro_id id) const noexcept = 0;
-
-    };
-
-
-    ///awaiter
-    class awaiter: public sch_abstract_awaiter {
-    public:
-        awaiter(scheduler &owner, time_point tp):_owner(owner),_tp(tp) {}
-        awaiter(const awaiter &) = default;
-        awaiter &operator=(const awaiter &) = delete;
-
-        bool await_ready() const {
-            return _tp<Traits::now() || _owner._exit;
-        }
-        bool await_suspend(std::coroutine_handle<> h) {
-            std::lock_guard _(_owner._mx);
-            if (_owner._exit) return false;
-            _h = h;
-            _owner._list.push({_tp,this});
-            _owner._signal = true;
-            _owner._sleeper.notify_one();
-            return true;
-        }
-
-        void await_resume() const {
-            if (_canceled) throw await_canceled_exception();
-        }
-
-        virtual void resume(bool canceled) noexcept override {
-            _canceled = canceled;
-            resumption_policy::queued::resume(_h);
-        }
-        virtual bool is(coro_id id) const noexcept override {
-            return _h.address() == id;
-        }
-
-    protected:
-        scheduler &_owner;
-        time_point _tp;
-        std::coroutine_handle<> _h;
-        bool _canceled = false;
-    };
-
-    template<typename T>
-    class lazy_starter: public sch_abstract_awaiter, public coro_promise_base {
-    public:
-        lazy_starter(lazy<T> task, std::coroutine_handle<> h):_task(task),_h(h) {}
-        virtual void resume(bool canceled) noexcept override {
-            if (canceled) _task.mark_canceled();
-            resumption_policy::queued::resume(_h);
-            delete this;
-        }
-        virtual bool is(coro_id id) const noexcept override {
-            return _h.address() == id;
-        }
-    protected:
-        lazy<T> _task;
-        std::coroutine_handle<> _h;
-
-    };
-
-    ///suspend coroutine until given time_point
+    ///Schedule a task using a promise
     /**
-     * @param tp time_point. If the time_point is in the pass, coroutine is not suspended
-     * @return awaiter
+     * @param id identifier of task, can be nullptr if you not going to cancel it. Identifier
+     * should be unique. In case of duplicates, any cancel request can choose randomly which
+     * promise is canceled / it is canceled always one promise per one cancel request.
+     * @param p promise to resolve
+     * @param tp time point when resolve the promise. The time should be in the future. If
+     * it is in the pass, the promise will be resolved as soon as possible, but in thread
+     * of the scheduler (not here)
      *
-     * @exception await_canceled_exception operation has been canceled by cancel() function or because scheduler is being destroyed
+     *
+     */
+    void schedule(ident id, promise p, std::chrono::system_clock::time_point tp) {
+        std::lock_guard _(_mx);
+        auto p_id = p.get_id();
+        _scheduled.push_back({tp, std::move(p), id});
+        std::push_heap(_scheduled.begin(), _scheduled.end(), compare_item);
+        if (p_id == _scheduled[0]._p.get_id()) {
+            _cond.notify_all();
+        }
+    }
+
+    ///Retrieves first expired promise or calculates time-point of first expiration
+    /**
+     * Useful for manual scheduling. If there is expired promise, it is removed and returned.
+     * If there isn't such promise, returns time of first expired promise
+     *
+     * @param now you need to supply current time.
+     * @return
+     */
+    expired get_expired(std::chrono::system_clock::time_point now) {
+        std::lock_guard _(_mx);
+        return get_expired_lk(now);
+    }
+
+    ///Remove scheduled promise referenced by identifier
+    /**
+     * @param id identifier of promise to remove. If there are more such promises,
+     * it chooses randomly one.
+     * @return removed promise. If there were no such promise, result is empty promise.
+     * The promise can be used as expression in if() condition to detect, whether promise
+     * is empty or not
      *
      * @code
-     * task<> sleeper(scheduler<> &sch, std::chrono::system_clock::time_point tp) {
-     *      co_await sch.sleep_until(tp);
+     * promise p = remove(id);
+     * if (p) {
+     *     //promise removed and moved to p
      * }
      * @endcode
      */
-    awaiter sleep_until(const time_point &tp) {
-        return awaiter(*this, tp);
+    promise remove(ident id) {
+        std::lock_guard _(_mx);
+        if (_scheduled.empty()) return {};
+        while (_scheduled[0]._ident == id) {
+            auto p = std::move(_scheduled[0]._p);
+            pop_item();
+            if (p) return p;
+        }
+        SchVector::iterator iter = std::find_if(_scheduled.begin(), _scheduled.end(),[&](const SchItem &x) {
+            return x._ident == id;
+        });
+        if (iter == _scheduled.end()) return {};
+        return std::move(iter->_p);
     }
 
-    ///suspend coroutine for given duration
+    ///sleeps until specified time-point is reached
     /**
-     * @param dur duration object must be compatibilite with given Clock. For
-     *  std::chrono::system_clock, you can use std::chrono::duration
+     * Creates future, which resolves at given time-point. You can co_await this future to
+     * suspend until the time is reached
      *
-     * @return awaiter
-     * @exception await_canceled_exception operation has been canceled by cancel() function or because scheduler is being destroyed
-     *
-     * @code
-     * task<> sleeper(scheduler<> &sch) {
-     *      co_await sch.sleep_for(std::chrono::seconds(10));
-     * }
-     * @endcode
+     * @param tp time point
+     * @param id identifier which can be used to cancel the sleep
+     * @return future, which resolves at given timepoint. The future throws exception
+     * (default: await_canceled_exception) when wait is canceled
      *
      */
-    template<typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
-    awaiter sleep_for(const Dur &dur) {
-        return awaiter(*this, Traits::from_duration(dur));
+    future<void> sleep_until(std::chrono::system_clock::time_point tp, ident id = nullptr) {
+        return [&](promise p) {
+            schedule(id, std::move(p), tp);
+        };
     }
 
-    ///Start a specified lazy task at given time point
+    ///sleeps for specified duration
     /**
-     * @param t lazy task to be started
-     * @param tp time point, when the task will be started
-     * @retval true, task si scheduled
-     * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
+     * Creates future, which resolves after given duration. You can co_await this future to
+     * suspend until the time is reached. The duration is counted from time when this function
+     * has been called, not when the future started co_awaited
      *
-     * @note lazy task can be canceled. If this happens, the task is never started and
-     * exception await_canceled_exception() is propagated to all awaiters
+     * @param dur duration
+     * @param id identifier which can be used to cancel the sleep
+     * @return future, which resolves after given duration. The future throws exception
+     * (default: await_canceled_exception) when wait is canceled
+     *
      */
-    template<typename T>
-    bool start_at(lazy<T> t, const time_point &tp) {
-        std::coroutine_handle<> h = t.get_start_handle();
-        if (h == nullptr) [[unlikely]] return false;
-        std::unique_lock _(_mx);
-        if (_exit) [[unlikely]] {
-            _.unlock();
-            t.mark_canceled();
-            resumption_policy::queued::resume(h);
+    template<typename A, typename B>
+    future<void> sleep_for(std::chrono::duration<A,B> dur, ident id = nullptr) {
+        return sleep_until(std::chrono::system_clock::now()+dur, id);
+    }
+
+    ///cancel scheduled task (cancel sleep)
+    /**
+     * @param id identifier of task
+     * @retval true canceled
+     * @retval false not found
+     *
+     * @note associated future throws exception await_canceled_exception()
+     *
+     * @note associated promise is resolved in current thread, not in scheduler's thread
+     */
+    bool cancel(ident id) {
+        return cancel(id, std::make_exception_ptr(await_canceled_exception()));
+    }
+
+    ///cancel scheduled task (cancel sleep), you can specify own exception
+    /**
+     * @param id identifier of task
+     * @param e exception which will be thrown
+     * @retval true canceled
+     * @retval false not found
+     *
+     * @note associated promise is resolved in current thread, not in scheduler's thread
+     */
+    bool cancel(ident id, std::exception_ptr e) {
+        auto p = remove(id);
+        if (p) {
+            p(e);
             return true;
+        } else {
+            return false;
         }
-        _list.push({tp,new lazy_starter<T>(t, h)});
-        _signal = true;
-        _sleeper.notify_one();
-        return true;
     }
 
-    ///Start a specified lazy task after given duration
+    ///Starts the scheduler in current thread
     /**
-     * @param t lazy task to be started
-     * @param dur duration after the task will be started
-     * @retval true, task si scheduled
-     * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
-     * @note lazy task can be canceled. If this happens, the task is never started and
-     * exception await_canceled_exception() is propagated to all awaiters
+     * Starts scheduler in current thread. The scheduler block execution of current thread
+     * and starts to schedule coroutines.
      *
+     * @param awt function simulates co_await. You can pass anything which can be co_await-ed.
+     * Once the awaiter is resolved, the scheduler stops and function returns value
+     *  of the await operation.
+     *
+     * @return value of await operation
+     *
+     * @note it is possible to start scheduler in multiple threads. You can also start
+     * scheduler recursively. Each thread can access to shared list of scheduled tasks.
+     *
+     *
+     * @note If you pass thread_pool to this function, the scheduler starts in the thread_pool
+     * without blocking current thread. In this case, it can run only once.
+     *
+     * @note If you pass std::thread to this function, the scheduler starts in
+     * that thread without blocking current thread. In this case, it can run only once.
      */
-    template<typename T, typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
-    bool start_after(lazy<T> t, const Dur &dur) {
-        return start_at(t, Traits::from_duration(dur));
-    }
+    template<typename Awt>
+    auto start(Awt &&awt) {
 
-    ///Start a specified task now
-    /**
-     * Main benefit if this function is to start a task inside of scheduler's thread(pool).
-     *
-     * @param t lazy task to be started
-     * @retval true, task si scheduled
-     * @retval false, task cannot be scheduled, because it is already running (or is already scheduled)
-     */
-    template<typename T>
-    bool start_now(lazy<T> t) {
-        return start_at(t, Traits::now());
-    }
+        if constexpr(std::is_convertible_v<Awt, thread_pool &>) {
+            start_in(awt);
+        } else if constexpr(std::is_convertible_v<Awt, std::thread &>) {
+            start_in(awt);
+        } else {
 
-    ///Pause current coroutine and return execution to the scheduler
-    /**This can be useful in single thread scheduler, if the current
-     * coroutine wants give to scheduler to run scheduled tasks.
-     *
-     * In multithread version this function moves coroutine into pool's thread
-     *
-     * equivalent to sleep_until(now())
-     *
-     * @return awaiter
-     */
-    awaiter pause() {
-        return sleep_until(Traits::now());
-    }
+            class stopper: public abstract_listening_awaiter<Awt &> {
+            public:
+                std::stop_source src;
+                virtual void resume() noexcept override {
+                    src.request_stop();
+                }
+            };
 
-    ///Generator of intervals
-    /**
-     * @param dur duration.
-     * @return generator, increases value for every cycle by one, so first result is
-     * 0, second is 1, next is 2, 3, etc...
-     *
-     * @note starting point is defined by first co_await. Generator must be
-     * awaited again to continue. However, the time spend between co_yield and next co_await
-     * on it is substracted from the next interval
-     *
-     *
-     */
-    template<typename Dur, typename = decltype(Traits::from_duration(std::declval<Dur>()))>
-    generator<unsigned int> interval(Dur dur) {
-        unsigned int n = 0;
-        time_point nexttp = Traits::from_duration(dur);
-        try {
-            for(;;) {
-                co_await sleep_until(nexttp);
-                nexttp = Traits::from_duration(dur);
-                co_yield n++;
-            }
-        } catch (await_canceled_exception &) {
-            // exit;
+            stopper stp;
+            using Coro = async<void,resumption_policy::queued>;
+            Coro w = worker_coro<resumption_policy::queued>(stp.src.get_token());
+            stp.await([&]()->Awt &{return awt;});
+            resumption_policy::queued::install_queue_and_call(std::mem_fn(&Coro::detach<>), w);
+            return stp.value();
         }
-
     }
 
-    ///cancel waiting for scheduled coroutine
-    /**
-     * @param id coroutine identifier to cancel
-     * @retval true coroutine canceled
-     * @retval false coroutine is not scheduled at tbis time
-     *
-     * @note canceled coroutine receives exception await_canceled_exception
-     */
-    bool cancel(coro_id id);
-
-
-    ///cancel waiting task
-    /**
-     * @param task_ task to cancel
-     * @retval true coroutine canceled
-     * @retval false coroutine is not scheduled at tbis time
-     *
-     * @note canceled coroutine receives exception await_canceled_exception
-     */
-    template<typename T, typename P>
-    bool cancel(const task<T, P> &task_) {
-        return cancel(task_.get_id());
-    }
-    ///cancel waiting generator
-    /**
-     * @param generator_ generator to cancel
-     * @retval true coroutine canceled
-     * @retval false coroutine is not scheduled at tbis time
-     *
-     * @note canceled coroutine receives exception await_canceled_exception
-     */
-    template<typename T>
-    bool cancel(const generator<T> &generator_) {
-        return cancel(generator_.get_id());
+    void start_thread() {
+        std::thread thr;
+        start_in(thr);
+        thr.detach();
     }
 
-
-    ///stop the scheduler
+    ///Creates generator of intervals
     /**
-     * All sleeping coroutines are canceled
+     * @param dur duration of interval.
+     * @param token stop token which can be used to stop genertion
+     * @return generator
+     *
+     * the generator can be called which returns future. This future is resolved after
+     * given interval. Then generator is stopped until it is called again. The interval calculation
+     * is made before co_yield, so if the processing of the tick is shorter then tick
+     * itself, you can achieve precise ticking regardless on how long you process each tick.
+     *
+     * The generator must be destroyed by owner when the generator is paused on co_yield.
+     * If you need to stop it while its waiting on interval, you can use stop token. Activating
+     * stop token causes that generator finishes generation as soon as possible.
+     *
      */
-    void stop() {
-        {
+    template<typename A, typename B>
+    generator<std::size_t> interval(std::chrono::duration<A,B> dur, std::stop_token token = {}) {
+        bool tag;
+        std::stop_callback stpc(token,[&]{
             std::lock_guard _(_mx);
-            _exit = true;
-            _sleeper.notify_all();
-        }
-        if (_worker.valid()) {
-            _worker.join();
-        }
-        while (!_list.empty()) {
-            _list.top().aw->resume(true);
-            _list.pop();
+            this->cancel(&tag);
+        });
+        std::size_t counter;
+        future<void> waiter;
+        std::chrono::system_clock::time_point next = std::chrono::system_clock::now()+dur;
+        try {
+            while (!token.stop_requested()) {
+                waiter << [&]{return this->sleep_until(next, &tag);};
+                co_await waiter;
+                next = std::chrono::system_clock::now()+dur;
+                co_yield counter;
+                ++counter;
+            }
+
+        } catch (const await_canceled_exception &) {
+            //empty
         }
     }
+
 
     ~scheduler() {
-        stop();
+        if (_glob_state.has_value()) {
+            _glob_state->_stp.request_stop();
+            _glob_state->_fut.wait();
+        }
     }
 
 protected:
 
-    struct sch_item_t {
-        time_point tp;
-        sch_abstract_awaiter *aw;
-        bool operator<(const sch_item_t &a) const {return tp < a.tp;}
-        bool operator>(const sch_item_t &a) const {return tp > a.tp;}
-        bool operator<=(const sch_item_t &a) const {return tp <= a.tp;}
-        bool operator>=(const sch_item_t &a) const {return tp >= a.tp;}
-        bool operator!=(const sch_item_t &a) const {return tp != a.tp;}
-        bool operator==(const sch_item_t &a) const {return tp == a.tp;}
+    struct SchItem { // @suppress("Miss copy constructor or assignment operator")
+        std::chrono::system_clock::time_point _tp;
+        promise _p;
+        ident _ident = nullptr;
     };
 
-    using sch_list_t = std::priority_queue<sch_item_t,  std::vector<sch_item_t>, std::greater<sch_item_t> >;
+    struct GlobState {
+        future<void> _fut;
+        std::stop_source _stp;
+    };
 
-    sch_list_t _list;
+    using SchVector = std::vector<SchItem>;
+    SchVector _scheduled;
     std::mutex _mx;
-    typename Traits::sleeper _sleeper;
-    bool _exit = false;
-    bool _signal = false;
-    task<> _worker;
+    std::condition_variable _cond;
+    std::optional<GlobState> _glob_state;
 
 
-    task<> worker(thread_pool &pool) {
-        try {
-            do {
-                sch_abstract_awaiter *aw = get_expired();
-                if (aw) {
-                    co_await pool.fork([aw]{
-                        aw->resume(false);
-                    });
-                } else {
-                    co_await pool;
-                    wait();
-                }
-            } while (!_exit);
-        } catch (await_canceled_exception &) {
-            //exit now
+    static bool compare_item(const SchItem &a, const SchItem &b) {
+        return a._tp > b._tp;
+    }
+
+    void pop_item() {
+        std::pop_heap(_scheduled.begin(), _scheduled.end(), compare_item);
+        _scheduled.pop_back();
+    }
+
+    template<typename Policy>
+    async<void, Policy> worker_coro(std::stop_token state) {
+        std::stop_callback stop_notify(state, [&]{
+            _cond.notify_all();
+        });
+        std::unique_lock lk(_mx);
+        std::chrono::system_clock::time_point now;
+        while (!state.stop_requested()) {
+            lk.unlock();
+            co_await ::cocls::pause<>();
+            lk.lock();
+            if (state.stop_requested()) break;
+            now = std::chrono::system_clock::now();
+            expired p = get_expired_lk(now);
+            std::visit([&](auto &x){
+               using T = std::decay_t<decltype(x)>;
+               if constexpr(std::is_same_v<T, promise>) {
+                   x();
+               } else {
+                   if (Policy::can_block()) {
+                       _cond.wait_until(lk, x);
+                   }
+               }
+            }, p);
         }
     }
 
-    sch_abstract_awaiter *get_expired() {
-        std::lock_guard _(_mx);
-        if (_list.empty()) return nullptr;
-        auto t = Traits::now();
-        if (_list.top().tp < t) {
-            sch_abstract_awaiter *aw = _list.top().aw;
-            _list.pop();
-            return aw;
+    expired get_expired_lk(std::chrono::system_clock::time_point now) {
+        while (!_scheduled.empty() && (_scheduled[0]._tp <= now || !_scheduled[0]._p)) {
+            auto p = std::move(_scheduled[0]._p);
+            pop_item();
+            if (p) return std::move(p);
         }
-        return nullptr;
+        if (_scheduled.empty()) return std::chrono::system_clock::time_point::max();
+        else return _scheduled[0]._tp;
     }
 
-    void wait() {
-        std::unique_lock _(_mx);
-        if (_list.empty()) {
-            _sleeper.wait(_, [&]{return _signal || _exit;});
-        } else {
-            _sleeper.wait_until(_,_list.top().tp, [&]{return _signal || _exit;});
+
+    class TPPolicy: public thread_pool::awaiter {
+    public:
+        TPPolicy() = default;
+        bool initialize_policy(thread_pool &pool) {
+            return std::exchange(_pool, &pool) == nullptr;
         }
-        _signal = false;
-    }
 
-    template<typename X>
-    void start_single_thread(task<X> join_task) {
-        class exit_signal: public abstract_awaiter {
-        public:
-            exit_signal(scheduler *sch):_sch(sch) {}
-            virtual void resume() noexcept override {
-                std::lock_guard _(_sch->_mx);
-                _sch->_exit = true;
-                _sch->_sleeper.notify_all();
-            }
-            scheduler *_sch;
-        };
-        exit_signal s(this);
+        using initial_awaiter = std::suspend_never; //never used
 
-        auto join_awaiter = join_task.operator co_await();
-        if (join_awaiter.subscribe_awaiter(&s)) {
-            do {
-                sch_abstract_awaiter *aw = get_expired();
-                if (aw) {
-                    aw->resume(false);                    ;
-                } else {
-                    wait();
-                }
-            } while (!_exit);
-            _exit = false;
+        static bool can_block() {
+            return !thread_pool::current::any_enqueued();
         }
-    }
 
-};
+        void resume(std::coroutine_handle<> h) {
+            _h = h;
+            _pool->enqueue(this);
+        }
 
-///List of required traits
-template<typename Clock>
-struct scheduler_common_traits {
-    ///Declaration of type used as time point
-    using time_point = typename Clock::time_point;
-    ///Function which returns current time
-    static time_point now() {return  Clock::now();}
-    ///Function which returns max time value
-    static time_point tp_max() {return time_point::max();}
-    ///Function which returns min time value
-    static time_point tp_min() {return time_point::min();}
+        std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
+            if (!_pool || is_current(*_pool)) return h;
+            _h = h;
+            _pool->enqueue(this);
+            return std::noop_coroutine();
 
-    ///Function which converts duration to absolute time point
-    template<typename Dur>
-    static time_point from_duration(Dur &&dur) {return now() + dur;}
+        }
 
-    ///Interface object responsible to sleep the thread while waiting on event or time
-    /** In short, it has same interface as std::condition_variable */
-    class sleeper {
-        template<typename Pred>
-        void wait_until(std::mutex &_mx, const time_point &tp, Pred &&pred);
-        template<typename Pred>
-        void wait(std::mutex &_mx, Pred &&pred );
-        void notify();
+        virtual void cancel() noexcept override {
+            _pool = nullptr;
+            _h.resume();
+        }
+
+        virtual void resume() noexcept override {
+            return _h.resume();
+        }
+
+        virtual std::coroutine_handle<> resume_handle() noexcept override {
+            return _h;
+        }
+
+        std::coroutine_handle<> resume_handle_next() noexcept {
+            if (!_pool || is_current(*_pool)) return resumption_policy::queued::resume_handle_next();
+            else return std::noop_coroutine();
+        }
+
+    protected:
+        thread_pool *_pool = nullptr;
+        std::coroutine_handle<> _h;
     };
 
-};
-
-///Traits for system_clock
-template<>
-struct scheduler_traits<std::chrono::system_clock>: scheduler_common_traits<std::chrono::system_clock> {
-    using sleeper = std::condition_variable;
-};
-
-
-template<typename Clock, typename Traits>
-inline bool scheduler<Clock, Traits>::cancel(coro_id id) {
-    std::unique_lock _(_mx);
-    sch_list_t oldls;
-    std::swap(oldls, _list);
-    while (!oldls.empty()) {
-        if (oldls.top().aw->is(id)) {
-            sch_abstract_awaiter *aw = oldls.top().aw;
-            oldls.pop();
-            while (!oldls.empty()) {
-                _list.push(std::move(oldls.top()));
-                oldls.pop();
-            }
-            _.unlock();
-            aw->resume(true);
-            return true;
-        } else {
-            _list.push(std::move(oldls.top()));
-            oldls.pop();
-        }
+    void start_in(thread_pool &pool) {
+        assert("Scheduler already started" && !_glob_state.has_value());
+        if (_glob_state.has_value()) return;
+        _glob_state.emplace();
+        _glob_state->_fut << [&]{
+            return worker_coro<TPPolicy>(_glob_state->_stp.get_token()).start(pool);
+        };
     }
-    return false;
-}
+
+    void start_in(std::thread &thr) {
+        assert("Scheduler already started" && !_glob_state.has_value());
+        if (_glob_state.has_value()) return;
+        _glob_state.emplace();
+        _glob_state->_fut << [&]{
+            return worker_coro<resumption_policy::queued>(_glob_state->_stp.get_token()).start();
+        };
+    }
+};
+
+
+
+
 
 }
+
+
+
 #endif /* SRC_COCLASSES_SCHEDULER_H_ */

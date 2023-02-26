@@ -72,7 +72,7 @@ public:
     /**
      * For some resumption policies, the policy must be extra initialized, otherwise
      * the coroutine doesn't start. In such case, you need to call initialize_policy
-     * to actually to allow coroutine to be resumed according to given policy.
+     * to actually to allow coroutine to be resumed accoinitialize_policyrding to given policy.
      *
      * @tparam Args
      * @param args

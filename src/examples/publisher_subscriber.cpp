@@ -10,26 +10,26 @@ cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
         int x = src.value();
         std::cout<<"\t" << x << std::endl;
     }
-    
+
 }
 
-cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler &sch) {
     cocls::subscriber<int> src(pub);
     while (co_await src.next()) {
         int x = src.value();
         std::cout<<"\t\t" << x << std::endl;
         co_await sch.sleep_for(std::chrono::milliseconds(100));
-    } 
+    }
 }
 
-cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler &sch) {
     cocls::subscriber<int> src(pub);
     while (co_await src.next()) {
         int x = src.value();
         std::cout<<"\t\t\t" << x << std::endl;
         co_await sch.sleep_for(std::chrono::milliseconds(200));
         while (src.next_ready()); //skip all old values
-    } 
+    }
 }
 
 void subscriber_sync(cocls::publisher<int> &pub) {
@@ -43,8 +43,8 @@ void subscriber_sync(cocls::publisher<int> &pub) {
 void publisher_test() {
     cocls::publisher<int> pub;
     cocls::thread_pool thp(10);
-    cocls::scheduler<> sch(thp);
-    
+    cocls::scheduler sch(thp);
+
     auto s1 = subscriber_fast(pub);
     auto s2 = subscriber_slow(pub, sch);;
     auto s3 = subscriber_slow2(pub, sch);;
@@ -60,7 +60,7 @@ void publisher_test() {
     s2.join();
     s3.join();
     s4.join();
-    
+
 }
 
 

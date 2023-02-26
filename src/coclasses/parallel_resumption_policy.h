@@ -36,6 +36,10 @@ namespace resumption_policy {
             return h;
         }
 
+        static std::coroutine_handle<> resume_handle_next() noexcept {
+            return std::noop_coroutine();
+        }
+
     };
 }
 

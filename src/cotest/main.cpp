@@ -182,6 +182,7 @@ int test_mutex() {
                 std::cout << "Shared var increased: " << shr << std::endl;
 
             }
+            std::cout << "Finished coroutine " << idx << std::endl;
         })(shared_var, mx, rnd, i);
         tasks.push_back(t);
     }
@@ -219,16 +220,6 @@ cocls::task<> threadpool_co(cocls::thread_pool &p) {
     std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
     co_await cocls::thread_pool::current();
     std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
-    co_await p.fork([]{
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        std::cout<<"(threadpool_co) forked code: " << std::this_thread::get_id() << std::endl;
-    });
-    std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
-    co_await cocls::thread_pool::current::fork([]{
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        std::cout<<"(threadpool_co) forked code 2: " << std::this_thread::get_id() << std::endl;
-    });
-    std::cout<<"(threadpool_co) thread: " << std::this_thread::get_id() << std::endl;
 }
 
 void threadpool_test() {
@@ -240,7 +231,7 @@ void threadpool_test() {
     std::cout << "(threadpool_test) finished" << std::endl;
 }
 
-cocls::task<> scheduler_test_task(cocls::scheduler<> &sch) {
+cocls::task<> scheduler_test_task(cocls::scheduler &sch) {
     COCLS_SET_CORO_NAME();
     std::cout << "(scheduler_test_task) started "<< std::endl;
     auto gen = sch.interval(std::chrono::milliseconds(100));
@@ -257,8 +248,7 @@ cocls::task<> scheduler_test_task(cocls::scheduler<> &sch) {
 
 void scheduler_test() {
     cocls::thread_pool pool(4);
-    cocls::scheduler<> sch;
-    sch.start(pool);
+    cocls::scheduler sch(pool);
     scheduler_test_task(sch).join();
 }
 
@@ -283,7 +273,7 @@ void with_queue_test() {
 }
 
 cocls::with_allocator<cocls::reusable_storage, cocls::task<void> >
-        test_reusable_co(cocls::reusable_storage &, cocls::scheduler<> &sch) {
+        test_reusable_co(cocls::reusable_storage &, cocls::scheduler &sch) {
     COCLS_SET_CORO_NAME();
     std::cout << "(test_reusable_co) running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
@@ -295,7 +285,7 @@ cocls::with_allocator<cocls::reusable_storage, cocls::task<void> >
 void test_reusable() {
     cocls::reusable_storage m;
     cocls::thread_pool pool(1);
-    cocls::scheduler<> sch(pool);
+    cocls::scheduler sch(pool);
     //coroutine should allocate new block
     {
         test_reusable_co(m,sch).join();
@@ -320,7 +310,7 @@ cocls::task<> subscriber_fast(cocls::publisher<int> &pub) {
     }
 }
 
-cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler &sch) {
     COCLS_SET_CORO_NAME();
     cocls::subscriber<int> src(pub);
     while (co_await src.next()) {
@@ -330,7 +320,7 @@ cocls::task<> subscriber_slow(cocls::publisher<int> &pub, cocls::scheduler<> &sc
     }
 }
 
-cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler<> &sch) {
+cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler &sch) {
     COCLS_SET_CORO_NAME();
     cocls::subscriber<int> src(pub);
     while (co_await src.next()) {
@@ -344,7 +334,7 @@ cocls::task<> subscriber_slow2(cocls::publisher<int> &pub, cocls::scheduler<> &s
 void publisher_test() {
     cocls::publisher<int> pub;
     cocls::thread_pool thp(1);
-    cocls::scheduler<> sch(thp);
+    cocls::scheduler sch(thp);
 
     auto s1 = subscriber_fast(pub);
     auto s2 = subscriber_slow(pub, sch);;

@@ -46,14 +46,11 @@ struct queued {
 
         void flush_queue() noexcept {
             while (!_queue.empty()) {
-                _queue.front().resume();
+                auto h = std::move(_queue.front());
                 _queue.pop();
+                h.resume();
             }
 
-        }
-
-        void push(std::coroutine_handle<> h) noexcept {
-            _queue.push(h);
         }
     };
 
@@ -112,7 +109,7 @@ struct queued {
     static void resume(std::coroutine_handle<> h) noexcept {
 
         if (instance) {
-            instance->push(h);
+            instance->_queue.push(h);
         } else {
             install_queue_and_resume(h);
         }
@@ -138,7 +135,23 @@ struct queued {
         return h;
     }
 
+    static std::coroutine_handle<> resume_handle_next() noexcept {
+        if (instance && !instance->_queue.empty()) {
+            auto h = instance->_queue.front();
+            instance->_queue.pop();
+            return h;
+        } else {
+            return std::noop_coroutine();
+        }
+    }
+
     static thread_local queue_impl *instance;
+
+    static bool can_block() {
+        return instance == nullptr || instance->_queue.empty();
+    }
+
+    static constexpr bool initialize_policy() {return true;}
 };
 
 inline thread_local queued::queue_impl *queued::instance = nullptr;

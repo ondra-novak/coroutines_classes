@@ -129,53 +129,73 @@ protected:
     friend class ::cocls::co_awaiter<mutex>;
 
 
+    //requests to lock
+    /*this is linked list in stack order LIFO, with atomic append feature */
     std::atomic<abstract_awaiter *> _requests = nullptr;
+    //queue of requests, contains awaiters ordered in order of incoming
+    /*this is also LIFO, but reversed - because reading LIFO to LIFO results FIFO
+     * The queue is accessed under lock. It is build by unlocking thread
+     * if the queue is empty by reversing _request. This is handled atomically
+     */
     abstract_awaiter *_queue = nullptr;
-    empty_awaiter _locked;
+
+    //when queue is build, we need object, which acts as doorman
+    /*presence of doorman marks object locked. By removing doorman, object becomes unlocked */
+    static constexpr abstract_awaiter *doorman() {
+        return &empty_awaiter::instance;
+    }
 
     void unlock() {
-            bool rep;
-            do {
-                rep = false;
-                //unlock must be called from the owner. Because lock is owned
-                //owner has access to the queue
-                //check queue now - the queue is under our control
-                if (_queue) {   //some items are in queue, so release
-                    auto *a = _queue;   //pick first item
-                    _queue = _queue->_next;  //remove it from the queue
-                    a->resume();
-                } else { //no items in queue?
-                    //assume, no requests
-                    abstract_awaiter *n = &_locked;
-                    //try to mark lock unlocked
-                    if (!_requests.compare_exchange_strong(n, nullptr)) {
-                        //attempt was unsuccessful, there are requests
-                        //build queue now
-                        build_queue(&_locked);
-                        //repeat unlock
-                        rep = true;
-                    }
-
-                }
-            } while (rep);
-            //all done
+        //lock must be locked to unlock
+        assert(_requests.load(std::memory_order_relaxed) != nullptr);
+        //unlock operation check _queue, whether there are requests
+        if (!_queue) [[likely]] {
+            //if queue is empty, try to unlock. Try to replace doorman with nullptr;
+            auto x = doorman();
+            if (_requests.compare_exchange_strong(x, nullptr, std::memory_order_release)) [[likely]] {
+                //if this passes, unlock operation is complete!
+                return;
+            }
+            assert(x != nullptr);
+            //failed, so there are awaiter
+            //the queue was build above doorman (build_queue during lock)
+            //so rebuild queue now (it should be empty)
+            build_queue(doorman());
+            //the queue is now not-empty
         }
+        //pick first item from the queue
+        //queue is access under lock, no atomics are needed
+        abstract_awaiter *first = _queue;
+        //remove item from the queue
+        _queue = _queue->_next;
+        //clear _next ptr to avoid leaking invalid pointer to next code
+        first->_next = nullptr;
+        //resume awaiter - it has ownership now
+        first->resume();
+        //now the _queue is also handled by the new owners
+    }
 
+    //is_ready is essentially try_lock function
     bool is_ready() {
+        //we expect nullptr in _requests, try to put doorman there
         abstract_awaiter *n = nullptr;
-        bool ok = _requests.compare_exchange_strong(n, &_locked);
+        bool ok = _requests.compare_exchange_strong(n, doorman());
+        //if ok = true, object is guarder by doorman
         return ok;
     }
 
+    //when try_lock fails, we need to register itself to waiting queue (_requests)
     bool subscribe_awaiter(abstract_awaiter *aw) {
+        //so subscribe to _requests
         aw->subscribe(_requests);
-        if (aw->_next== nullptr) {
-            //as we are subscribe into queue, we expect that aw->next is &_locked
-            //however if it is nullptr, lock has been unlocked at the time
-            //and because the awaiter will disappear, exchange it by _locked
-            //but note, some other awaiters can alredy be behind us
-            //fortunately - lock is locked for us, so we can use unprotected variables
-            //to solve this issue
+        //now check result of _next, which gives as hint, how lock operation ended
+        //if the _next is null, the lock was unlock
+        if (aw->_next== nullptr) [[likely]] {
+            //because current awaiter will be destroyed, we need to replace self
+            //with a doorman()
+            //the function build_queue does this, even if there is no requests currentl
+            //but they can appear inbetween. As argument set us as stop
+            //use acquire memory order - obviously we acquire the mutex
             build_queue(aw);
             //suspend is not needed, we already own the mutex
             return false;
@@ -186,33 +206,25 @@ protected:
     }
 
     void build_queue(abstract_awaiter *stop) {
-        //queue is linked list of awaiters order by order of income
-        //queue is under control of owned lock
-        //can be modified only by owner
-
-        abstract_awaiter **tail = &_queue;
-        //try to find end of queue - tail points to end pointer
-        while (*tail) { //if the end pointer is not null, move to next item
-            tail = &((*tail)->_next);
+        assert("Can't build queue if there are items in it" && _queue == nullptr);
+        //atomically swap top of _requests with doorman
+        //we use acquire order - to see changes on _next
+        abstract_awaiter *req = _requests.exchange(doorman(), std::memory_order_acquire);
+        //if req is defined and until stop is reached
+        while (req  && req != stop) {
+            //pick top item, remove it and push it to _queue
+            auto x = req;
+            req = req->_next;
+            x->_next = _queue;
+            _queue= x;
         }
-        //pick requests - so the list no longer can be modified
-        //because mutex should be locked, exchange it with _locked flag
-        abstract_awaiter *reqs = _requests.exchange(&_locked);
-        //requests are ordered in reverse order, so process it and update queue
-        //stop on nullptr or on _locked
-        while (reqs && reqs != stop) {
-            auto n = reqs;
-            reqs = reqs->_next;
-            n->_next = nullptr; //this item will be at the end
-            *tail = n;  //append to tail
-            tail = &(n->_next); //move tail to the end
-
-        }
-        //all done, queue updated
+        //queue is updated
     }
 
     ownership get_result() noexcept {
-        return ownership(this); //this is easy, just create smart pointer and return it
+        //this is called when we acquired ownership, no extract action is needed
+        //just create ownership
+        return ownership(this);
     }
 
 

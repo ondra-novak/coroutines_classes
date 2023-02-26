@@ -14,7 +14,7 @@
 #include <memory>
 
 
-cocls::detached<cocls::resumption_policy::thread_pool> coro_test(cocls::scheduler<> &sch, cocls::promise<int> prom) {
+cocls::detached<cocls::resumption_policy::thread_pool> coro_test(cocls::scheduler &sch, cocls::promise<int> prom) {
     std::cout << "coroutine is running" << std::endl;
     co_await sch.sleep_for(std::chrono::seconds(1));
     std::cout << "coroutine is running... 2" << std::endl;
@@ -27,7 +27,7 @@ cocls::detached<cocls::resumption_policy::thread_pool> coro_test(cocls::schedule
 
 int main(int, char **) {
     auto pool = std::make_shared<cocls::thread_pool> (4);
-    cocls::scheduler<> sch(*pool);
+    cocls::scheduler sch(*pool);
 
     cocls::future<int> fut;
     auto coro = coro_test(sch, fut.get_promise());
