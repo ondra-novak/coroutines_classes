@@ -57,34 +57,20 @@ namespace _details {
 
 }
 
-///Determines whether specified awaiter object has operator co_await()
-/**
- * @tparam X awaiter to test
- * @return value contains true, if the awaiter has such operator, or false if not
- */
 template<typename X>
-using has_co_await = std::negation<std::is_same<std::monostate, decltype(_details::test_has_co_await(std::declval<X>()))> >;
+inline constexpr bool has_co_await = !std::is_same_v<std::monostate, decltype(_details::test_has_co_await(std::declval<X>()))>;
 template<typename X>
-using has_global_co_await = std::negation<std::is_same<std::monostate, decltype(_details::test_can_co_await(std::declval<X>()))> >;
-
-///Determines whether specified awaiter object has set_resumption_policy() function
-/**
- * @tparam X awaiter to test
- * @return value contains true, if there is such function, or false if not
- * @tparam Y policy object
- */
+inline constexpr bool has_global_co_await = !std::is_same_v<std::monostate, decltype(_details::test_can_co_await(std::declval<X>()))> ;
 template<typename X, typename Y>
-using has_set_resumption_policy = std::negation<std::is_same<std::monostate, decltype(_details::test_has_set_resumption_policy(std::declval<X>(), std::declval<Y>()))> >;
-
+inline constexpr bool has_set_resumption_policy = !std::is_same_v<std::monostate, decltype(_details::test_has_set_resumption_policy(std::declval<X>(), std::declval<Y>()))> ;
 template<typename X>
-using has_initialize_policy = std::negation<std::is_same<std::monostate, decltype(_details::test_has_initialize_policy(std::declval<X>()))> >;
-
+inline constexpr bool has_initialize_policy = !std::is_same_v<std::monostate, decltype(_details::test_has_initialize_policy(std::declval<X>()))>;
 template<typename X>
-using has_wait = std::negation<std::is_same<std::monostate, decltype(_details::test_has_wait(std::declval<X>()))> >;
+inline constexpr bool has_wait = !std::is_same_v<std::monostate, decltype(_details::test_has_wait(std::declval<X>()))>;
 template<typename X, typename Y>
-using has_subscribe_awaiter = std::negation<std::is_same<std::monostate, decltype(_details::test_has_subscribe_awaiter(std::declval<X>(),std::declval<Y>()))> >;
+inline constexpr bool has_subscribe_awaiter = !std::is_same_v<std::monostate, decltype(_details::test_has_subscribe_awaiter(std::declval<X>(),std::declval<Y>()))>;
 template<typename X>
-using has_join = std::negation<std::is_same<std::monostate, decltype(_details::test_has_join(std::declval<X>()))> >;
+inline constexpr bool has_join = !std::is_same_v<std::monostate, decltype(_details::test_has_join(std::declval<X>()))>;
 
 
 ///definition of various resumption policies
@@ -137,6 +123,32 @@ struct _policy_concept {
      *
      */
     bool initialize_policy(...);
+
+    ///Determines, whether it is safe to block current thread
+    /**
+     * @retval true it is safe block current thread
+     * @retval false there are scheduled coroutines, so current thread should
+     * not be blocked. Blocking thread now can lead to deadlock.
+     *
+     * This function can be used by various by schedulers or managers where threads
+     * are used to schedule coroutines. If one of coroutines need to block thread for
+     * a while - for example, it needs to synchronously wait for a some event - it
+     * can ask its policy whether it is safe to block the thread or not. If the
+     * function returns true, it should should avoid synchronous (blocking) operations
+     * and call co_await pause() to give other coroutines to run
+     *
+     */
+    bool can_block() noexcept;
+
+    ///Return next coroutine which is ready to be scheduled. This coroutine will be scheduled in current thread
+    /**
+     * @return coroutine to be schedule. Coroutine must be removed from the ready state, because caller
+     * is going to resume this coroutine. If there is none such coroutine, function must return std::noop_coroutine()
+     *
+     */
+    std::coroutine_handle<> resume_handle_next() noexcept;
+
+
 };
 
 
@@ -194,7 +206,9 @@ struct initial_resume_by_policy: public std::suspend_always {
     struct immediate {
         using initial_awaiter = initial_suspend_never;
         static void resume(std::coroutine_handle<> h) noexcept {h.resume();}
-        static std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) noexcept {return h;}
+        static constexpr std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) noexcept {return h;}
+        static constexpr bool can_block() {return true;}
+        static std::coroutine_handle<> resume_handle_next() noexcept {return std::noop_coroutine();}
     };
     struct queued;
     struct parallel;

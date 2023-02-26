@@ -7,14 +7,15 @@
 #pragma once
 #ifndef SRC_COCLASSES_THREAD_POOL_H_
 #define SRC_COCLASSES_THREAD_POOL_H_
-#include "awaiter.h"
 #include "common.h"
+#include "future.h"
 #include "exceptions.h"
 
 #include "resumption_policy.h"
 #include "lazy.h"
 
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -23,7 +24,6 @@
 #include <vector>
 
 namespace cocls {
-
 ///thread pool for coroutines.
 /** Main benefit of such object is zero allocation during transferring the coroutine to the
  * other thread
@@ -58,10 +58,13 @@ public:
         for(;;) {
             _cond.wait(lk, [&]{return !_queue.empty() || _exit;});
             if (_exit) break;
-            auto h = _queue.front();
+            auto h = std::move(_queue.front());
             _queue.pop();
             lk.unlock();
-            resumption_policy::queued::install_queue_and_resume(h->resume_handle());
+            resumption_policy::queued::install_queue_and_call(
+                    [&]{h->resume();}
+            );
+            h.release();
             //if _current is nullptr, thread_pool has been destroyed
             if (_current == nullptr) return;
             lk.lock();
@@ -73,8 +76,8 @@ public:
      * Stopped threads cannot be restarted
      */
     void stop() {
-        std::vector<std::thread> tmp;
-        std::queue<abstract_awaiter *> q;
+        decltype(_threads) tmp;
+        decltype(_queue) q;
         {
             std::unique_lock lk(_mx);
             _exit = true;
@@ -93,11 +96,6 @@ public:
                 t.join();
             }
         }
-        while (!q.empty()) {
-            auto n = std::move(q.front());
-            q.pop();
-            n->resume();
-        }
     }
 
     ///Destroy the thread pool
@@ -108,26 +106,59 @@ public:
         stop();
     }
 
-    class awaiter : public co_awaiter<thread_pool> {
+    class awaiter : public abstract_awaiter{
     public:
-        using co_awaiter<thread_pool>::co_awaiter;
-
-    private:
-        using co_awaiter<thread_pool>::set_resumption_policy;
-
+        virtual void cancel() noexcept = 0;
     };
-    template<typename Fn>
-    class fork_awaiter: public awaiter {
+
+    class co_awaiter : public awaiter{
     public:
-        fork_awaiter(thread_pool &pool, Fn &&fn):awaiter(pool), _fn(std::forward<Fn>(fn)) {}
-        bool await_suspend(std::coroutine_handle<> h) noexcept {
-            Fn fn (std::forward<Fn>(_fn));
-            bool b = awaiter::await_suspend(h);
-            fn();
-            return b;
+        co_awaiter(thread_pool &owner):_owner(&owner) {}
+        co_awaiter(const co_awaiter&) = default;
+        co_awaiter &operator=(const co_awaiter&) = delete;
+
+        static constexpr bool await_ready() {return false;}
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
+            _h = h;
+            _owner->enqueue(this);
+            if (is_current(*_owner)) {
+                return resumption_policy::queued::resume_handle_next();
+            } else {
+                return std::noop_coroutine();
+            }
         }
-    protected:
+
+        void await_resume() {
+            if (!_owner) throw await_canceled_exception();
+        }
+
+        virtual void cancel() noexcept override {
+            _owner = nullptr;
+            _h.resume();
+        }
+
+        virtual void resume() noexcept override {
+            _h.resume();
+        }
+    private:
+        thread_pool *_owner;
+        std::coroutine_handle<> _h;
+    };
+
+    template<typename Fn>
+    class callback: public awaiter {
+    public:
+        callback(Fn &&fn):_fn(std::forward<Fn>(fn)) {}
+        virtual void resume() noexcept override {
+              _fn();
+              delete this;
+        }
+        virtual void cancel() noexcept override {
+            delete this;
+        }
+    private:
         Fn _fn;
+
     };
 
 
@@ -143,150 +174,116 @@ public:
      * }
      * @endcode
      */
-    awaiter operator co_await() {
+    co_awaiter operator co_await() {
         return *this;
     }
 
-    ///start a anonymous awaiter - called from thread_pool_resumption_policy
+    ///Run function in thread pool
     /**
-     * @param aw awaiter to start in thread pool
+     *
+     * @param fn function to run. The function must return void. The function
+     * run() returns immediately
      */
-    void enqueue(abstract_awaiter *aw) {
-        bool ok = subscribe_awaiter(aw);
-        if (!ok) {
-            aw->resume();
-        }
-    }
-
-    ///start a lazy task in the thread pool
-    /**
-     * @param t task to start
-     * @retval true started
-     * @retval false can't be started, already running or already scheduled
-     */
-    template<typename T, typename _P>
-    bool enqueue(lazy<T,_P> t) {
-
-        class awaiter: public abstract_owned_awaiter<thread_pool> {
-        public:
-            awaiter(thread_pool &owner, lazy<T> t, std::coroutine_handle<> h)
-                :abstract_owned_awaiter<thread_pool>(owner)
-                ,_t(t), _h(h) {}
-            void resume_canceled() noexcept{
-                _t.mark_canceled();
-                _policy.resume(_h);
-                delete this;
-            }
-
-            virtual void resume() noexcept override {
-                if (_owner.is_stopped()) _t.mark_canceled();
-                _policy.resume(_h);
-                delete this;
-            }
-            virtual std::coroutine_handle<> resume_handle() noexcept override {
-                if (_owner.is_stopped()) _t.mark_canceled();
-                auto out = _h;
-                delete this;
-                return out;
-            }
-        protected:
-            lazy<T> _t;
-            std::coroutine_handle<> _h;
-            _P _policy;
-
-        };
-
-        std::coroutine_handle<> h = t.get_start_handle();
-        if (h == nullptr) return false;
-        awaiter *aw = new awaiter(*this, t, h);
-        bool ok = subscribe_awaiter(aw);
-        if (!ok) {
-            aw->resume_canceled();
-        }
-        return true;
-    }
-
-    /*
-     * BUG - GCC 10.3-12.2+ - do not inline lambda to this function
-     *
-     * declare lambda as variable auto, and pass the variable to the
-     * argument by std::move() - otherwise bad things can happen
-     *
-     * https://godbolt.org/z/nz1coM5YP
-     *
-     */
-    /// For the code, transfers coroutine to different thread while some code continues in this thread
-    /**
-     * @param fn function to be called in current thread after coroutine is transfered.
-     * @return awaiter you need to await for the result to execute this fork
-     *
-     * @code
-     * co_await pool.fork([=]{
-     *          //forked code
-     * })
-     * @endcode
-     *
-     * @note BUG - GCC 10.3-12.2+ - do not inline lambda to this function: https://godbolt.org/z/nz1coM5YP
-     *
-     * @code
-     * auto forked = [=] {
-     *          //forked code
-     * };
-     * co_await pool.fork(std:::move(forked));
-     * @endcode
-     *
-     *
-     */
-
     template<typename Fn>
-    fork_awaiter<Fn> fork(Fn &&fn) {
-        return fork_awaiter<Fn>(*this, std::forward<Fn>(fn));
+    CXX20_REQUIRES(std::same_as<void, decltype(std::declval<Fn>()())>)
+    void run_detached(Fn &&fn) {
+        auto ptr = new callback<Fn>(std::forward<Fn>(fn));
+        enqueue(ptr);
     }
+
+    ///Runs function in thread pool, returns future
+    /**
+     * Works similar as std::async. It just runs function in thread pool and returns
+     * cocls::future.
+     * @param fn function to run
+     * @return future<Ret> where Ret is return value of the function
+     */
+    template<typename Fn>
+    auto run(Fn &&fn) -> future<decltype(std::declval<Fn>()())> {
+        using RetVal = decltype(std::declval<Fn>()());
+        return [&](auto promise) {
+            run_detached([fn = std::forward<Fn>(fn), promise = std::move(promise)]() mutable {
+                try {
+                    if constexpr(std::is_void_v<RetVal>) {
+                        fn();
+                        promise();
+                    } else {
+                        promise(fn());
+                    }
+                } catch(...) {
+                    promise(std::current_exception());
+                }
+            });
+        };
+    }
+
+private:
+
+    template<typename T, typename P>
+    class async_ext: public async<T,P> {
+    public:
+        typename async<T,P>::promise_type &get_promise() {return this->_h.promise();}
+        using async<T,P>::resume_by_policy;
+    };
+
+public:
+
+    ///Run coroutine async
+    /**
+     * @param coro coroutine to run
+     * @param args optional arguments passed to resumption policy.
+     * @return future which resolves when coroutine ends
+     */
+    template<typename T, typename P, typename ... Args>
+    future<T> run(async<T,P> &&coro, Args && ... args) {
+        return [&](auto promise) {
+            auto &ex = static_cast<async_ext<T,P> & >(coro);;
+            typename async<T,P>::promise_type &p = ex.get_promise();
+            p.initialize_policy(std::forward<Args>(args)...);
+            p._future = promise.claim();
+            run_detached([c = std::move(ex)]() mutable {
+                c.resume_by_policy();
+            });
+        };
+    }
+
+    ///Runs coroutine async, discard future
+    /**
+     * @param coro coroutine to run
+     * @param args optional arguments passed to resumption policy.
+     */
+    template<typename T, typename P, typename ... Args>
+    void run_detached(async<T,P> &&coro, Args && ... args) {
+        auto &ex = static_cast<async_ext<T,P> & >(coro);;
+        typename async<T,P>::promise_type &p = ex.get_promise();
+        p.initialize_policy(std::forward<Args>(args)...);
+        run_detached([c = std::move(ex)]{
+            c.resume_by_policy();
+        });
+    }
+
+
 
     struct current {
 
-        class  current_awaiter: public awaiter {
+        class  current_awaiter: public co_awaiter {
         public:
-            current_awaiter():awaiter(*_current) {}
+            current_awaiter():co_awaiter(*_current) {}
             static bool await_ready() {
                 thread_pool *c = _current;
                 return c == nullptr || c->_exit;
             }
         };
-
-        template<typename Fn>
-        class current_fork_awaiter: public fork_awaiter<Fn> {
-        public:
-            current_fork_awaiter(Fn &&fn):fork_awaiter<Fn>(*_current, std::forward<Fn>(fn)) {}
-            static bool await_ready() {
-                thread_pool *c = _current;
-                return c == nullptr || c->_exit;
-            }
-        };
-
 
         current_awaiter operator co_await() {
             return current_awaiter();
         }
-        template<typename Fn>
-        static current_fork_awaiter<Fn> fork(Fn &&fn) {
-            return current_fork_awaiter<Fn>(std::forward<Fn>(fn));
-        }
+
         static bool is_stopped() {
             thread_pool *c = _current;
             return !c || c->is_stopped();
         }
 
-        ///run enqueued task
-        /**
-         * @retval true a task has been run
-         * @retval false no task was in queue
-         */
-        static bool give_way() {
-            thread_pool *c = _current;
-            if (c) return c->give_way();
-            return false;
-        }
         ///returns true if there is still enqueued task
         static bool any_enqueued() {
             thread_pool *c = _current;
@@ -303,18 +300,6 @@ public:
     }
 
 
-    bool give_way() {
-        std::unique_lock lk(_mx);
-        if (!_exit && !_queue.empty()) {
-            auto h = _queue.front();
-            _queue.pop();
-            lk.unlock();
-            resumption_policy::queued::resume(h->resume_handle());
-            return true;
-        }
-        return false;
-    }
-
     ///returns true if there is still enqueued task
     bool any_enqueued() {
         std::unique_lock lk(_mx);
@@ -325,28 +310,35 @@ public:
         return _current == &pool;
     }
 
+
+
+    void enqueue(awaiter *aw) {
+        pawaiter awt(aw);
+        std::lock_guard _(_mx);
+        if (!_exit) {
+            _queue.push(std::move(awt));
+            _cond.notify_one();
+        }
+    }
+
+
 protected:
+    struct awtdel{
+       void operator()(awaiter *x) const {
+           x->cancel();
+       }
+    };
+    using pawaiter=std::unique_ptr<awaiter, awtdel>;
+
+
     mutable std::mutex _mx;
     std::condition_variable _cond;
-    std::queue<abstract_awaiter *> _queue;
+    std::queue<pawaiter> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;
     static thread_local thread_pool *_current;
 
-    friend class co_awaiter<thread_pool>;
-    bool is_ready() noexcept {
-        return _exit;
-    }
-    void get_result() {
-        if (_exit) throw await_canceled_exception();
-    }
-    bool subscribe_awaiter(abstract_awaiter *awt) noexcept {
-        std::lock_guard lk(_mx);
-        if (_exit) return false;
-        _queue.push(awt);
-        _cond.notify_one();
-        return true;
-    }
+
 
 
 };
@@ -373,7 +365,7 @@ struct thread_pool {
     bool is_policy_ready() const noexcept {
         return _cur_pool != nullptr;
     }
-    class resumer: public abstract_awaiter {
+    class resumer: public ::cocls::thread_pool::awaiter {
     public:
         void set_handle(std::coroutine_handle<> h) {
             _h = h;
@@ -383,6 +375,9 @@ struct thread_pool {
         }
         virtual std::coroutine_handle<> resume_handle() noexcept override {
             return _h;
+        }
+        virtual void cancel() noexcept override {
+            queued::resume(_h);
         }
 
     protected:
@@ -422,9 +417,17 @@ struct thread_pool {
         return ret;
 
     }
+    std::coroutine_handle<> resume_handle_next() noexcept {
+        return resumption_policy::queued::resume_handle_next();
+    }
+    static bool can_block() {
+        return !cocls::thread_pool::current::any_enqueued();
+    }
+
 
 };
 }
+
 
 }
 

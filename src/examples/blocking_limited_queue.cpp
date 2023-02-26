@@ -22,7 +22,7 @@ static void ident(int id) {
     for (int i = 0; i < id; i++) std::cout << "\t";
 }
 
-cocls::task<> producer(cocls::scheduler<> &sch, int id, int delay, int count) {
+cocls::task<> producer(cocls::scheduler &sch, int id, int delay, int count) {
     for (int i = 1; i < count; i++) {
         int val=_counter++;
         ident(id);
@@ -35,7 +35,7 @@ cocls::task<> producer(cocls::scheduler<> &sch, int id, int delay, int count) {
     }
 }
 
-cocls::task<> consumer(cocls::scheduler<> &sch, int id, int delay) {
+cocls::task<> consumer(cocls::scheduler &sch, int id, int delay) {
     try {
         for (;;) {
             ident(id);
@@ -55,7 +55,7 @@ cocls::task<> consumer(cocls::scheduler<> &sch, int id, int delay) {
 int main(int, char **) {
 
     cocls::thread_pool tpool;
-    cocls::scheduler<> sch(tpool);
+    cocls::scheduler sch(tpool);
     cocls::task<> c1 = consumer(sch, 3,500);
     cocls::task<> c2 = consumer(sch, 4,1000);
     cocls::task<> c3 = consumer(sch, 5,1100);

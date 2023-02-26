@@ -265,9 +265,9 @@ public:
             }
             //because await_transform is defined, operator co_await is not used
             //so we need to replicate this behaviour
-            if constexpr(has_co_await<Awt>::value) {
+            if constexpr(has_co_await<Awt>) {
                 return awt.operator co_await();
-            } else if constexpr(has_global_co_await<Awt>::value) {
+            } else if constexpr(has_global_co_await<Awt>) {
                 return operator co_await(awt);
             } else {
                 return std::forward<Awt>(awt);

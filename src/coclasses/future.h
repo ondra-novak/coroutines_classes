@@ -125,6 +125,8 @@ template<typename T>
 class [[nodiscard]] future {
 public:
 
+    static constexpr bool is_future = true;
+
     using value_type = T;
     using reference = std::add_lvalue_reference_t<value_type>;
     using const_reference = std::add_lvalue_reference_t<std::add_const_t<value_type> >;
@@ -162,6 +164,12 @@ public:
     CXX20_REQUIRES(std::invocable<Fn, promise<T> >)
     future(Fn &&init) :_awaiter(nullptr) {
         init(promise<T>(*this));
+    }
+
+    template<typename Fn>
+    CXX20_REQUIRES(std::same_as<decltype(std::declval<Fn>()()), future<T> >)
+    future(Fn &&init) {
+        new(this) future<T>(init());
     }
 
     template<typename ... Args>
@@ -250,7 +258,7 @@ public:
 
     ///destructor
     ~future() {
-        assert("Destroy of pending future" && _awaiter != nullptr);
+        assert("Destroy of pending future" && !pending());
         switch (_state) {
             default:break;
             case State::value: _value.~value_storage();break;
@@ -258,17 +266,53 @@ public:
         }
     }
 
-    ///determines, whether promise has been already retrieved
-    bool has_promise() const  {
-        return _awaiter == nullptr;
+    ///determines, whether future is initialized
+    /**
+     * @retval false the future has been created right now, there is no value, no
+     * pending promise. You can destroy future, you can call get_promise()
+     * @retval true the future is already initialized, it can have pending promise
+     * or a can be already resolved.
+     */
+    bool initialized() const {
+        return _awaiter.load(std::memory_order_relaxed) == &empty_awaiter::instance;
+    }
+
+    ///determines, whether future is pending. There is associated promise.
+    /**
+     * @retval true the future is pending, can't be destroyed. There is associated
+     * promise, which points to the future
+     * @retval false the future is either resolved or not yet initialized
+     */
+    bool pending() const  {
+        auto s = _awaiter.load(std::memory_order_relaxed);
+        return s != &empty_awaiter::instance && s!= &empty_awaiter::disabled;
     }
 
     ///determines, whether result is already available
+    /**
+     * @retval true result is available and can be retrieved. This includes state
+     * when promise has been dropped, so the future has actually no value, but it
+     * is in resolved state.
+     * @retval false the future has no value, it could be not-initialize or pending
+     */
     bool ready() const {
         return _awaiter.load(std::memory_order_acquire) == &empty_awaiter::disabled;
     }
 
     ///retrieves result value (as reference)
+    /**
+     * @return reference to the value, you can modify the value or move the value out.
+     * Note if there are multiple awaiters, every awaiter can modify or move value. Keep
+     * this in mind.
+     *
+     * @exception value_not_ready_exception accessing the future in not ready state
+     * throws this exception. This exception can be thrown also if the future is
+     * resolved, but with no value when promise has been dropped (as an broken promise)
+     * @exception any if the future is in exceptional state, the stored exception is
+     * thrown now
+     *
+     * @note accessing the value is not MT-Safe.
+     */
     reference value() {
         switch (_state) {
             default: throw value_not_ready_exception();
@@ -278,7 +322,18 @@ public:
         }
     }
 
-    ///retrieves result value (as const reference)
+    ///retrieves result value (as reference)
+    /**
+     * @return const reference to the value.
+     *
+     * @exception value_not_ready_exception accessing the future in not ready state
+     * throws this exception. This exception can be thrown also if the future is
+     * resolved, but with no value when promise has been dropped (as an broken promise)
+     * @exception any if the future is in exceptional state, the stored exception is
+     * thrown now
+     *
+     * @note accessing the value is not MT-Safe.
+     */
     const_reference value() const {
         switch (_state) {
             default: throw value_not_ready_exception();
@@ -289,26 +344,58 @@ public:
     }
 
 
-    ///Wait synchronously
+    ///retrieves result value (as reference). Waits synchronously if the value is not ready yet
+    ///
     /**
-     * @return the value of the future
+     * @return reference to the value, you can modify the value or move the value out.
+     * Note if there are multiple awaiters, every awaiter can modify or move value. Keep
+     * this in mind.
+     *
+     * @exception value_not_ready_exception accessing the future in not ready state
+     * throws this exception. This exception can be thrown also if the future is
+     * resolved, but with no value when promise has been dropped (as an broken promise)
+     * @exception any if the future is in exceptional state, the stored exception is
+     * thrown now
+     *
+     * @note accessing the value is not MT-Safe.
      */
     reference wait() {
         return co_awaiter<future<T> >(*this).wait();
     }
 
 
-    ///For compatible API - same as wait()
+    ///Same as wait()
+    /**@see wait() */
     decltype(auto) join() {return wait();}
 
 
 
     ///Synchronize with future, but doesn't pick value or explore its state
-    void sync() const {
+    /**
+     * Function waits synchronously until future is resolved, when continues. It
+     * doesn't access the value, it doesn't thrown exception
+     */
+    void sync() const noexcept {
         co_awaiter<future<T> >(*const_cast<future<T> *>(this)).wait();
     }
 
-    ///support co_await
+    ///Wait asynchronously, return value
+    /**
+     * The operator retrieves awaiter which can be co_awaiter. The co_await operator
+     * can return following:
+     *
+     * @return reference to the value, you can modify the value or move the value out.
+     * Note if there are multiple awaiters, every awaiter can modify or move value. Keep
+     * this in mind.
+     *
+     * @exception value_not_ready_exception accessing the future in not ready state
+     * throws this exception. This exception can be thrown also if the future is
+     * resolved, but with no value when promise has been dropped (as an broken promise)
+     * @exception any if the future is in exceptional state, the stored exception is
+     * thrown now
+     *
+     * @note accessing the value is not MT-Safe.
+     */
     co_awaiter<future<T> > operator co_await() {return *this;}
 
     ///has_value() awaiter return by function has_value()
@@ -348,6 +435,7 @@ public:
      * @retval false future has no value
      *
      * @note if called on pending future, it acts as wait(), so it blocks
+     * @see wait()
      */
     operator bool() const {
         return has_value();
@@ -359,13 +447,14 @@ public:
      * @retval false future has no value
      *
      * @note if called on pending future, it acts as wait(), so it blocks
+     * @see wait()
      */
     bool operator!() const {
         return !has_value();
     }
 
     ///Dereference - acts as wait()
-
+    /** @see wait() */
     reference operator *() {
         return wait();
     }
@@ -422,11 +511,13 @@ protected:
         while (x != nullptr) {
             auto a = x;
             x = x->_next;
+            a->_next = nullptr;
             auto h = a->resume_handle();
             if (h && h != n) {
                 while (x != nullptr) {
                     auto a = x;
                     x = x->_next;
+                    a->_next = nullptr;
                     a->resume();
                 }
                 return h;
@@ -544,6 +635,16 @@ public:
         return _owner.exchange(nullptr, std::memory_order_relaxed);
     }
 
+    ///Retrieves promise identifier
+    /** This helps to construct identifier, which can be used later to find promise
+     * in some kind of containers. The empty promise's identifier is nullptr.
+     *
+     * @return identifier. Note the idenitifer is construct from pointer to associated
+     * future. Do not cast the pointer to future to access the future directly. Use
+     * claim() insteaD.
+     *
+     */
+    const void *get_id() const {return _owner;}
 
 protected:
 
@@ -745,11 +846,7 @@ public:
     template<typename ... Args>
     future<T> start(Args &&... args) {
         future_coro_promise<T, _Policy> &promise = _h.promise();
-        if constexpr(has_initialize_policy<future_coro_promise<T, _Policy> >::value) {
-            promise.initialize_policy(std::forward<Args>(args)...);
-        } else {
-            static_assert(sizeof...(args) == 0, "There is nothing to initialize");
-        }
+        promise.initialize_policy(std::forward<Args>(args)...);
         return future<T>(std::move(*this));
     }
 
@@ -761,14 +858,11 @@ public:
     template<typename ... Args>
     void detach(Args &&... args) {
         future_coro_promise<T, _Policy> &promise = _h.promise();
-        if constexpr(has_initialize_policy<future_coro_promise<T, _Policy> >::value) {
-            promise.initialize_policy(std::forward<Args>(args)...);
-        } else {
-            static_assert(sizeof...(args) == 0, "There is nothing to initialize");
-        }
+        promise.initialize_policy(std::forward<Args>(args)...);
         resume_by_policy();
-
     }
+
+
 protected:
     void resume_by_policy() {
         auto h = std::exchange(_h,{});
@@ -798,11 +892,12 @@ public:
             future_coro_promise &p = me.promise();
             future<T> *f = p._future;
             me.destroy();
-            return f?f->resolve_resume():std::noop_coroutine();
-
+            std::coroutine_handle<> h;
+            std::coroutine_handle<> n = std::noop_coroutine();
+            if (f && (h = f->resolve_resume()) != n) return h;
+            return p._policy.resume_handle_next();
         }
     };
-
 
     std::suspend_always initial_suspend() noexcept {return {};}
     final_awaiter final_suspend() noexcept {return {};}
@@ -815,8 +910,6 @@ public:
         if (_future) _future->set(std::current_exception());
     }
 };
-
-
 
 ///Shared future works similar as future<> but can be moved or copied, because it is ref-counter shared place
 /**
@@ -913,7 +1006,7 @@ public:
     shared_future(Fn &&fn)
         :_ptr(std::make_shared<future_internal>()) {
         _ptr->result_of(std::forward<Fn>(fn));
-        if (_ptr->has_promise()) _ptr->resolve_tracer.charge(_ptr);
+        if (_ptr->pending()) _ptr->resolve_tracer.charge(_ptr);
     }
 
     ///Construct shared future from future_coro
@@ -1100,6 +1193,163 @@ protected:
     };
     bool _constructed;
 };
+
+namespace _details {
+
+template<typename T>
+struct IsFuture {static constexpr bool value = false;};
+template<typename T>
+struct IsFuture<future<T> > {
+    static constexpr bool value = true;
+    using Type = T;
+};
+template<typename T, typename X>
+struct IsFuture<future_with_context<T, X> > {
+    static constexpr bool value = true;
+    using Type = T;
+};
+
+template<typename T>
+struct IsFuture<shared_future<T> > {
+    static constexpr bool value = true;
+    using Type = T;
+};
+
+
+template<typename FromFuture, typename Fn, bool dynamic>
+class future_transform_context: public abstract_listening_awaiter<FromFuture>, public coro_promise_base {
+public:
+    using From = typename IsFuture<FromFuture>::Type;
+
+    //To = fn(From);
+    using To = decltype(std::declval<Fn>()(std::declval<From>()));
+
+    template<typename Exec>
+    future_transform_context(promise<To> prom, Fn &&fn, Exec &&exec)
+        :_prom(std::move(prom))
+        ,_fn(std::forward<Fn>(fn)) {
+        this->await(std::forward<Exec>(exec));
+    }
+
+    using coro_promise_base::operator new;
+    void *operator new(std::size_t,void *p) {
+        return p;
+    }
+
+
+    virtual ~future_transform_context() = default;
+protected:
+    promise<To> _prom;
+    Fn _fn;
+
+    virtual void resume() noexcept override {
+        try {
+            if constexpr(std::is_void_v<To>) {
+                if constexpr(std::is_void_v<From>) {
+                    this->value();
+                    _fn();
+                } else {
+                    _fn(this->value());
+                }
+                _prom();
+            } else {
+                if constexpr(std::is_void_v<From>) {
+                    this->value();
+                    _prom(_fn());
+                } else {
+                    _prom(_fn(this->value()));
+                }
+            }
+        } catch (...) {
+            _prom(std::current_exception());
+        }
+        if constexpr(dynamic) {
+            delete this;
+        }
+    }
+
+};
+
+
+template<typename TransformFn, typename ExecFn>
+using TransformRet = decltype(std::declval<TransformFn>()(
+        std::declval<typename _details::IsFuture<decltype(std::declval<ExecFn>()())>::Type>()
+));
+
+}
+
+///Transform future content - create inplace storage
+/**
+ * @param tfn transform function. The function accepts one argument, result of
+ * future to be transformed. Function return transformed result
+ * @param efn function to be executed which returning original future to be transformed
+ *
+ * @return transformed future - it is returned as derived class future_with_context
+ *
+ * @note function doesn't allocate memory
+ */
+template<typename TransformFn, typename ExecFn>
+CXX20_REQUIRES(_details::IsFuture<decltype(std::declval<ExecFn>()())>::value)
+auto transform_inline(TransformFn &&tfn, ExecFn &&efn) {
+
+    using Ret = future_with_context<_details::TransformRet<TransformFn, ExecFn>,
+            _details::future_transform_context<decltype(std::declval<ExecFn>()()), TransformFn, false>>;
+
+    return Ret(std::forward<TransformFn>(tfn), std::forward<ExecFn>(efn));
+}
+
+///Transform future content
+/**
+ * @param tfn transform function. The function accepts one argument, result of
+ * future to be transformed. Function return transformed result
+ * @param efn function to be executed which returning original future to be transformed
+ *
+ * @return return future<T> object
+ *
+ * @note function allocates memory to store function temporary data required for transformation
+ */
+template<typename TransformFn, typename ExecFn>
+CXX20_REQUIRES(_details::IsFuture<decltype(std::declval<ExecFn>()())>::value)
+auto transform(TransformFn &&tfn, ExecFn &&efn) {
+    using From = decltype(efn());
+    using RetT = typename _details::IsFuture<From>::Type;
+    using To = decltype(tfn(std::declval<RetT>()));
+    return future<To>([&](auto p) {
+        new _details::future_transform_context<From, TransformFn, true>(
+                std::move(p), std::forward<TransformFn>(tfn), std::forward<ExecFn>(efn));
+    });
+}
+
+///discard result of a future
+/**
+ * @param fn function which returns a future. Function is called. Return value
+ * is discarded, so it no longer need to awaited.
+ *
+ * @note function allocates memory for result, which is destroyed when future is resolved
+ */
+template<typename Fn>
+CXX20_REQUIRES(_details::IsFuture<decltype(std::declval<Fn>()())>::value)
+void discard(Fn &&fn) {
+    class Awt: public abstract_awaiter, public coro_promise_base {
+    public:
+        Awt(Fn &fn):_fut(fn()) {
+            _waiting = (_fut.operator co_await()).subscribe_awaiter(this);
+        }
+
+        virtual void resume() noexcept override {
+            delete this;
+        }
+        bool _waiting;
+    protected:
+        decltype(fn()) _fut;
+    };
+
+    auto x = new Awt(fn);
+    if (!x->_waiting) x->resume();
+}
+
+
+
 
 }
 #endif /* SRC_COCLASSES_FUTURE_H_ */

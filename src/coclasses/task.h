@@ -13,6 +13,7 @@
 #include "resumption_policy.h"
 #include "poolalloc.h"
 
+#include "coro_policy_holder.h"
 
 #include <atomic>
 #include <coroutine>
@@ -521,50 +522,16 @@ public:
 
 
 template<typename T, typename Policy>
-class task_promise: public task_promise_value<T> {
+class task_promise: public task_promise_value<T>, public coro_policy_holder<Policy> {
 public:
 
-    template<typename Awt>
-    decltype(auto) await_transform(Awt&& awt) noexcept {
-        if constexpr (has_co_await<Awt>::value) {
-            auto x = await_transform(awt.operator co_await());
-            return x;
-        } else if constexpr (has_global_co_await<Awt>::value) {
-            auto x = await_transform(operator co_await(awt));
-            return x;
-        } else if constexpr (has_set_resumption_policy<Awt, Policy>::value) {
-            return awt.set_resumption_policy(std::forward<Awt>(awt), _policy);
-        } else {
-            return std::forward<Awt>(awt);
-        }
-    }
-
-    using initial_awaiter = typename std::remove_reference<Policy>::type::initial_awaiter;
-
-    initial_awaiter initial_suspend()  noexcept {
-        return initial_awaiter(_policy);
-    }
-
-    template<typename ... Args>
-    bool initialize_policy(Args &&... args) {
-        return _policy.initialize_policy(std::forward<Args>(args)...);
-    }
-
-    [[no_unique_address]]  Policy _policy;
 
     auto get_return_object() {
         return task<T, Policy>(*this);
     }
 };
 
-template<typename T>
-class task_promise<T, void>: public task_promise<T, typename resumption_policy::unspecified<void>::policy > {
-public:
 
-    auto get_return_object() {
-           return task<T, void>(*this);
-       }
-};
 
 
 template<typename T>
