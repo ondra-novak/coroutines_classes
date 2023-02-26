@@ -178,6 +178,12 @@ public:
         return *this;
     }
 
+    ///Run function in thread pool
+    /**
+     *
+     * @param fn function to run. The function must return void. The function
+     * run() returns immediately
+     */
     template<typename Fn>
     CXX20_REQUIRES(std::same_as<void, decltype(std::declval<Fn>()())>)
     void run_detached(Fn &&fn) {
@@ -185,6 +191,13 @@ public:
         enqueue(ptr);
     }
 
+    ///Runs function in thread pool, returns future
+    /**
+     * Works similar as std::async. It just runs function in thread pool and returns
+     * cocls::future.
+     * @param fn function to run
+     * @return future<Ret> where Ret is return value of the function
+     */
     template<typename Fn>
     auto run(Fn &&fn) -> future<decltype(std::declval<Fn>()())> {
         using RetVal = decltype(std::declval<Fn>()());
@@ -214,16 +227,13 @@ private:
     };
 
 public:
-    template<typename T, typename P, typename ... Args>
-    void run_detached(async<T,P> &&coro, Args && ... args) {
-        auto &ex = static_cast<async_ext<T,P> & >(coro);;
-        typename async<T,P>::promise_type &p = ex.get_promise();
-        p.initialize_policy(std::forward<Args>(args)...);
-        run_detached([c = std::move(ex)]{
-            c.resume_by_policy();
-        });
-    }
 
+    ///Run coroutine async
+    /**
+     * @param coro coroutine to run
+     * @param args optional arguments passed to resumption policy.
+     * @return future which resolves when coroutine ends
+     */
     template<typename T, typename P, typename ... Args>
     future<T> run(async<T,P> &&coro, Args && ... args) {
         return [&](auto promise) {
@@ -236,6 +246,22 @@ public:
             });
         };
     }
+
+    ///Runs coroutine async, discard future
+    /**
+     * @param coro coroutine to run
+     * @param args optional arguments passed to resumption policy.
+     */
+    template<typename T, typename P, typename ... Args>
+    void run_detached(async<T,P> &&coro, Args && ... args) {
+        auto &ex = static_cast<async_ext<T,P> & >(coro);;
+        typename async<T,P>::promise_type &p = ex.get_promise();
+        p.initialize_policy(std::forward<Args>(args)...);
+        run_detached([c = std::move(ex)]{
+            c.resume_by_policy();
+        });
+    }
+
 
 
     struct current {

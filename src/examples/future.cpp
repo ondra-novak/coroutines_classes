@@ -3,7 +3,6 @@
 #include <coclasses/task.h>
 #include <coclasses/future.h>
 
-
 cocls::future<int> work() {
     return [](cocls::promise<int> p){
         std::thread thr([p = std::move(p)]() mutable {
@@ -24,6 +23,4 @@ cocls::task<int> cofn1() {
 
 int main(int, char **) {
     std::cout << "Result:" << cofn1().join() <<std::endl;
-
-
 }

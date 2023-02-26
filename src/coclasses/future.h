@@ -511,11 +511,13 @@ protected:
         while (x != nullptr) {
             auto a = x;
             x = x->_next;
+            a->_next = nullptr;
             auto h = a->resume_handle();
             if (h && h != n) {
                 while (x != nullptr) {
                     auto a = x;
                     x = x->_next;
+                    a->_next = nullptr;
                     a->resume();
                 }
                 return h;
