@@ -17,7 +17,7 @@ cocls::future<int> work() {
 
 cocls::future<int> cofn1() {
     cocls::future<int> fut;
-    fut.result_of(work);
+    fut << work;
     co_return co_await fut;
 }
 

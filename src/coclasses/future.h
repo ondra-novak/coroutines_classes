@@ -125,6 +125,8 @@ template<typename T>
 class [[nodiscard]] future {
 public:
 
+    static constexpr bool is_future = true;
+
     using value_type = T;
     using reference = std::add_lvalue_reference_t<value_type>;
     using const_reference = std::add_lvalue_reference_t<std::add_const_t<value_type> >;
@@ -888,8 +890,10 @@ public:
             future_coro_promise &p = me.promise();
             future<T> *f = p._future;
             me.destroy();
-            return f?f->resolve_resume():std::noop_coroutine();
-
+            std::coroutine_handle<> h;
+            std::coroutine_handle<> n = std::noop_coroutine();
+            if (f && (h = f->resolve_resume()) != n) return h;
+            return p._policy.resume_handle_next();
         }
     };
 
@@ -1187,6 +1191,163 @@ protected:
     };
     bool _constructed;
 };
+
+namespace _details {
+
+template<typename T>
+struct IsFuture {static constexpr bool value = false;};
+template<typename T>
+struct IsFuture<future<T> > {
+    static constexpr bool value = true;
+    using Type = T;
+};
+template<typename T, typename X>
+struct IsFuture<future_with_context<T, X> > {
+    static constexpr bool value = true;
+    using Type = T;
+};
+
+template<typename T>
+struct IsFuture<shared_future<T> > {
+    static constexpr bool value = true;
+    using Type = T;
+};
+
+
+template<typename FromFuture, typename Fn, bool dynamic>
+class future_transform_context: public abstract_listening_awaiter<FromFuture>, public coro_promise_base {
+public:
+    using From = typename IsFuture<FromFuture>::Type;
+
+    //To = fn(From);
+    using To = decltype(std::declval<Fn>()(std::declval<From>()));
+
+    template<typename Exec>
+    future_transform_context(promise<To> prom, Fn &&fn, Exec &&exec)
+        :_prom(std::move(prom))
+        ,_fn(std::forward<Fn>(fn)) {
+        this->await(std::forward<Exec>(exec));
+    }
+
+    using coro_promise_base::operator new;
+    void *operator new(std::size_t,void *p) {
+        return p;
+    }
+
+
+    virtual ~future_transform_context() = default;
+protected:
+    promise<To> _prom;
+    Fn _fn;
+
+    virtual void resume() noexcept override {
+        try {
+            if constexpr(std::is_void_v<To>) {
+                if constexpr(std::is_void_v<From>) {
+                    this->value();
+                    _fn();
+                } else {
+                    _fn(this->value());
+                }
+                _prom();
+            } else {
+                if constexpr(std::is_void_v<From>) {
+                    this->value();
+                    _prom(_fn());
+                } else {
+                    _prom(_fn(this->value()));
+                }
+            }
+        } catch (...) {
+            _prom(std::current_exception());
+        }
+        if constexpr(dynamic) {
+            delete this;
+        }
+    }
+
+};
+
+
+template<typename TransformFn, typename ExecFn>
+using TransformRet = decltype(std::declval<TransformFn>()(
+        std::declval<typename _details::IsFuture<decltype(std::declval<ExecFn>()())>::Type>()
+));
+
+}
+
+///Transform future content - create inplace storage
+/**
+ * @param tfn transform function. The function accepts one argument, result of
+ * future to be transformed. Function return transformed result
+ * @param efn function to be executed which returning original future to be transformed
+ *
+ * @return transformed future - it is returned as derived class future_with_context
+ *
+ * @note function doesn't allocate memory
+ */
+template<typename TransformFn, typename ExecFn>
+CXX20_REQUIRES(_details::IsFuture<decltype(std::declval<ExecFn>()())>::value)
+auto transform_inline(TransformFn &&tfn, ExecFn &&efn) {
+
+    using Ret = future_with_context<_details::TransformRet<TransformFn, ExecFn>,
+            _details::future_transform_context<decltype(std::declval<ExecFn>()()), TransformFn, false>>;
+
+    return Ret(std::forward<TransformFn>(tfn), std::forward<ExecFn>(efn));
+}
+
+///Transform future content
+/**
+ * @param tfn transform function. The function accepts one argument, result of
+ * future to be transformed. Function return transformed result
+ * @param efn function to be executed which returning original future to be transformed
+ *
+ * @return return future<T> object
+ *
+ * @note function allocates memory to store function temporary data required for transformation
+ */
+template<typename TransformFn, typename ExecFn>
+CXX20_REQUIRES(_details::IsFuture<decltype(std::declval<ExecFn>()())>::value)
+auto transform(TransformFn &&tfn, ExecFn &&efn) {
+    using From = decltype(efn());
+    using RetT = typename _details::IsFuture<From>::Type;
+    using To = decltype(tfn(std::declval<RetT>()));
+    return future<To>([&](auto p) {
+        new _details::future_transform_context<From, TransformFn, true>(
+                std::move(p), std::forward<TransformFn>(tfn), std::forward<ExecFn>(efn));
+    });
+}
+
+///discard result of a future
+/**
+ * @param fn function which returns a future. Function is called. Return value
+ * is discarded, so it no longer need to awaited.
+ *
+ * @note function allocates memory for result, which is destroyed when future is resolved
+ */
+template<typename Fn>
+CXX20_REQUIRES(_details::IsFuture<decltype(std::declval<Fn>()())>::value)
+void discard(Fn &&fn) {
+    class Awt: public abstract_awaiter, public coro_promise_base {
+    public:
+        Awt(Fn &fn):_fut(fn()) {
+            _waiting = (_fut.operator co_await()).subscribe_awaiter(this);
+        }
+
+        virtual void resume() noexcept override {
+            delete this;
+        }
+        bool _waiting;
+    protected:
+        decltype(fn()) _fut;
+    };
+
+    auto x = new Awt(fn);
+    if (!x->_waiting) x->resume();
+}
+
+
+
 
 }
 #endif /* SRC_COCLASSES_FUTURE_H_ */

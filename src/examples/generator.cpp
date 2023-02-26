@@ -20,7 +20,7 @@ int main(int, char **) {
     auto val = gen();
     while (val) {
         std::cout << *val << std::endl;
-        val.result_of(gen); //reassign to future - call generator
+        val << [&]{return gen();}; //reassign to future - call generator
     }
     std::cout << "Done" << std::endl;
 
