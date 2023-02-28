@@ -13,6 +13,7 @@
 
 #include "resumption_policy.h"
 #include "lazy.h"
+#include "function.h"
 
 #include <condition_variable>
 #include <functional>
@@ -23,6 +24,7 @@
 #include <variant>
 #include <vector>
 
+
 namespace cocls {
 ///thread pool for coroutines.
 /** Main benefit of such object is zero allocation during transferring the coroutine to the
@@ -32,6 +34,8 @@ namespace cocls {
 
 class thread_pool {
 public:
+
+    using q_item = function<void()>;
 
     ///Start thread pool
     /**
@@ -61,10 +65,7 @@ public:
             auto h = std::move(_queue.front());
             _queue.pop();
             lk.unlock();
-            resumption_policy::queued::install_queue_and_call(
-                    [&]{h->resume();}
-            );
-            h.release();
+            resumption_policy::queued::install_queue_and_call(h);
             //if _current is nullptr, thread_pool has been destroyed
             if (_current == nullptr) return;
             lk.lock();
@@ -106,59 +107,48 @@ public:
         stop();
     }
 
-    class awaiter : public abstract_awaiter{
-    public:
-        virtual void cancel() noexcept = 0;
-    };
 
-    class co_awaiter : public awaiter{
+    class co_awaiter {
     public:
+        co_awaiter() = default;
         co_awaiter(thread_pool &owner):_owner(&owner) {}
         co_awaiter(const co_awaiter&) = default;
         co_awaiter &operator=(const co_awaiter&) = delete;
 
-        static constexpr bool await_ready() {return false;}
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) {
-            _h = h;
-            _owner->enqueue(this);
-            if (is_current(*_owner)) {
-                return resumption_policy::queued::resume_handle_next();
-            } else {
-                return std::noop_coroutine();
+        class resume_ntf_cancel {
+        public:
+            resume_ntf_cancel(std::coroutine_handle<> h, co_awaiter *ntf):_h(h),_ntf(ntf) {}
+            resume_ntf_cancel(resume_ntf_cancel &&other):_h(other._h),_ntf(other._ntf) {
+                other._ntf= nullptr;
             }
+            void operator()() {
+                _ntf = nullptr;
+                _h.resume();
+            }
+            ~resume_ntf_cancel() {
+                if (_ntf) {
+                    _ntf->_canceled = true;
+                    _h.resume();
+                }
+            }
+        protected:
+            std::coroutine_handle<> _h;
+            co_awaiter *_ntf;
+        };
+
+        static constexpr bool await_ready() {return false;}
+
+        void await_suspend(std::coroutine_handle<> h) {
+            _owner->enqueue(resume_ntf_cancel(h, this));
         }
 
         void await_resume() {
-            if (!_owner) throw await_canceled_exception();
+            if (_canceled) throw await_canceled_exception();
         }
 
-        virtual void cancel() noexcept override {
-            _owner = nullptr;
-            _h.resume();
-        }
-
-        virtual void resume() noexcept override {
-            _h.resume();
-        }
-    private:
-        thread_pool *_owner;
-        std::coroutine_handle<> _h;
-    };
-
-    template<typename Fn>
-    class callback: public awaiter {
-    public:
-        callback(Fn &&fn):_fn(std::forward<Fn>(fn)) {}
-        virtual void resume() noexcept override {
-              _fn();
-              delete this;
-        }
-        virtual void cancel() noexcept override {
-            delete this;
-        }
-    private:
-        Fn _fn;
-
+    protected:
+        thread_pool *_owner = nullptr;
+        bool _canceled = false;
     };
 
 
@@ -187,8 +177,7 @@ public:
     template<typename Fn>
     CXX20_REQUIRES(std::same_as<void, decltype(std::declval<Fn>()())>)
     void run_detached(Fn &&fn) {
-        auto ptr = new callback<Fn>(std::forward<Fn>(fn));
-        enqueue(ptr);
+        enqueue(q_item(std::forward<Fn>(fn)));
     }
 
     ///Runs function in thread pool, returns future
@@ -312,28 +301,23 @@ public:
 
 
 
-    void enqueue(awaiter *aw) {
-        pawaiter awt(aw);
+
+
+protected:
+
+
+    void enqueue(q_item &&fn) {
         std::lock_guard _(_mx);
         if (!_exit) {
-            _queue.push(std::move(awt));
+            _queue.push(std::move(fn));
             _cond.notify_one();
         }
     }
 
 
-protected:
-    struct awtdel{
-       void operator()(awaiter *x) const {
-           x->cancel();
-       }
-    };
-    using pawaiter=std::unique_ptr<awaiter, awtdel>;
-
-
     mutable std::mutex _mx;
     std::condition_variable _cond;
-    std::queue<pawaiter> _queue;
+    std::queue<q_item> _queue;
     std::vector<std::thread> _threads;
     bool _exit = false;
     static thread_local thread_pool *_current;
@@ -365,42 +349,25 @@ struct thread_pool {
     bool is_policy_ready() const noexcept {
         return _cur_pool != nullptr;
     }
-    class resumer: public ::cocls::thread_pool::awaiter {
-    public:
-        void set_handle(std::coroutine_handle<> h) {
-            _h = h;
-        }
-        virtual void resume() noexcept override{
-            queued::resume(_h);
-        }
-        virtual std::coroutine_handle<> resume_handle() noexcept override {
-            return _h;
-        }
-        virtual void cancel() noexcept override {
-            queued::resume(_h);
-        }
-
-    protected:
-        std::coroutine_handle<> _h;
-    };
 
 
     thread_pool() = default;
     thread_pool(const shared_thread_pool &pool):_cur_pool(pool) {}
 
     shared_thread_pool _cur_pool = nullptr;
-    resumer _resumer;
     using initial_awaiter = initial_resume_by_policy<thread_pool>;
 
     void resume(std::coroutine_handle<> h) {
-        _resumer.set_handle(h);
-        _cur_pool->enqueue(&_resumer);
+        _cur_pool->run_detached([=]{
+            h.resume();
+        });
     }
 
     std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) noexcept {
         if (is_current(*_cur_pool)) return h;
-        _resumer.set_handle(h);
-        _cur_pool->enqueue(&_resumer);
+        _cur_pool->run_detached([=]{
+            h.resume();
+        });
         return std::noop_coroutine();
     }
 
