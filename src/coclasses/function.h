@@ -7,8 +7,9 @@
 
 #ifndef SRC_COCLASSES_FUNCTION_H_
 #define SRC_COCLASSES_FUNCTION_H_
-#include <type_traits>
 #include "common.h"
+#include <type_traits>
+#include <functional>
 
 namespace cocls {
 

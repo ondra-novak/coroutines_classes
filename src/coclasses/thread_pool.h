@@ -205,6 +205,18 @@ public:
             });
         };
     }
+    ///Resolve promise in thread
+    /** Allocates thread and resolves promise in it. If the
+     * associated coroutine is resumed, it is resumed in this allocated thread
+     * @param t promise
+     * @param args arguments
+     *
+     * @note if the promise t is not valid, no thread is allocated
+     */
+    template<typename T, typename ... Args>
+    void resolve(promise<T> &t, Args && ... args) {
+        if (t) run_detached(t.bind(std::forward<Args>(args)...));
+    }
 
 private:
 

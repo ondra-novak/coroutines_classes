@@ -195,7 +195,11 @@ public:
     bool cancel(ident id, std::exception_ptr e) {
         auto p = remove(id);
         if (p) {
-            p(e);
+            if (_glob_state.has_value() && _glob_state->_pool) {
+                _glob_state->_pool->resolve(p, e);
+            } else {
+                p(e);
+            }
             return true;
         } else {
             return false;
@@ -309,11 +313,14 @@ protected:
         std::chrono::system_clock::time_point _tp;
         promise _p;
         ident _ident = nullptr;
+
     };
 
     struct GlobState {
+        GlobState() {};
         future<void> _fut;
         std::stop_source _stp;
+        thread_pool *_pool = nullptr; //active thread pool, nullptr if not
     };
 
     using SchVector = std::vector<SchItem>;
@@ -339,6 +346,7 @@ protected:
         });
         std::unique_lock lk(_mx);
         std::chrono::system_clock::time_point now;
+        thread_pool *pool = _glob_state.has_value()?_glob_state->_pool:nullptr;
         while (!state.stop_requested()) {
             lk.unlock();
             co_await ::cocls::pause<>();
@@ -349,7 +357,7 @@ protected:
             std::visit([&](auto &x){
                using T = std::decay_t<decltype(x)>;
                if constexpr(std::is_same_v<T, promise>) {
-                   x();
+                   if (pool) pool->resolve(x); else x(); //resolve if pool defined, use pool
                } else {
                    if (Policy::can_block()) {
                        _cond.wait_until(lk, x);
@@ -408,6 +416,7 @@ protected:
         assert("Scheduler already started" && !_glob_state.has_value());
         if (_glob_state.has_value()) return;
         _glob_state.emplace();
+        _glob_state->_pool = &pool;
         _glob_state->_fut << [&]{
             return worker_coro<TPPolicy>(_glob_state->_stp.get_token()).start(pool);
         };
