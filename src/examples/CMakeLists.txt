@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.2)
 
+add_executable (signal signal.cpp)
 add_executable (barrier barrier.cpp)
 add_executable (blocking_limited_queue blocking_limited_queue.cpp)
 add_executable (callback_awaiter callback_awaiter.cpp)

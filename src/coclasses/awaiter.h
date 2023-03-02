@@ -330,24 +330,28 @@ inline decltype(auto) co_awaiter<promise_type>::wait() {
     return await_resume();
 }
 
+class sync_awaiter: public abstract_awaiter {
+public:
+    std::atomic<bool> flag = {false};
+
+    virtual std::coroutine_handle<> resume_handle() noexcept override {
+        sync_awaiter::resume();
+        return std::noop_coroutine();
+    }
+    virtual void resume() noexcept override {
+        flag.store(true);
+        flag.notify_all();
+    }
+    void wait_sync() {
+        flag.wait(false);
+    }
+};
+
+
 template<typename promise_type>
 inline void co_awaiter<promise_type>::sync() noexcept  {
     if (await_ready()) return ;
-
-    class Awaiter: public abstract_awaiter {
-    public:
-        std::atomic<bool> flag = {false};
-        virtual std::coroutine_handle<> resume_handle() noexcept override {
-            Awaiter::resume();
-            return std::noop_coroutine();
-        }
-        virtual void resume() noexcept override {
-            flag.store(true);
-            flag.notify_all();
-        }
-    };
-
-    Awaiter awt;
+    sync_awaiter awt;
     if (subscribe_awaiter(&awt)) {
         awt.flag.wait(false);
     }
@@ -738,6 +742,27 @@ public:
     }
 
 };
+
+///Wraps existing awaiter to new awaiter. Original awaiter is stored as reference
+/**
+ * @tparam Awt original awaiter
+ *
+ * This is used for await_transform, to await original awaiter copying. The
+ * await_transform can return awaiter_wrapper instead original awaiter.
+ */
+template<typename Awt>
+class awaiter_wrapper {
+public:
+    awaiter_wrapper (Awt &owner):_owner(owner) {}
+    constexpr bool await_ready() {return _owner.await_ready();}
+    constexpr auto await_suspend(std::coroutine_handle<> h) {return _owner.await_suspend(h);}
+    constexpr decltype(auto) await_resume() {return _owner.await_resume();}
+protected:
+    Awt &_owner;
+};
+
+template<typename T>
+awaiter_wrapper(T &) -> awaiter_wrapper<T>;
 
 
 

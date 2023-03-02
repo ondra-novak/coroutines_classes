@@ -259,7 +259,7 @@ public:
         //as we still don't know, whether the operation will continue asynchronously
         //but it definitely can
         template<typename Awt>
-        decltype(auto) await_transform(Awt &&awt) {
+        auto await_transform(Awt &&awt) {
             if (_caller == nullptr) {
                 _caller = new(&_sync_awt) syncing_awaiter;
             }
@@ -270,7 +270,7 @@ public:
             } else if constexpr(has_global_co_await<Awt>) {
                 return operator co_await(awt);
             } else {
-                return std::forward<Awt>(awt);
+                return awaiter_wrapper(awt);
             }
         }
 

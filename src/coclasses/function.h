@@ -81,8 +81,10 @@ public:
      */
     template<std::size_t sz>
     function(function<T, sz> &&other) {
-        _ptr = other._ptr->move(space, small_space);
-        other._ptr = nullptr;
+        if (other._ptr) {
+            _ptr = other._ptr->move(space, small_space);
+            other._ptr = nullptr;
+        }
     }
 
     ///copy is deleted
@@ -97,10 +99,11 @@ public:
     function &operator=(const function &) = delete;
 
     ///assign by moving, which also destroyes original target
-    function &operator=(function &other) {
+    function &operator=(function &&other) {
         if (&other != this) {
             delete _ptr;
             _ptr = other._ptr?other._ptr->move(space, small_space):nullptr;
+            other._ptr = nullptr;
         }
         return *this;
     }
@@ -123,7 +126,7 @@ public:
 protected:
     class Abstract {
     public:
-        virtual Ret call(std::add_lvalue_reference<Args> ... args) noexcept(e) = 0;
+        virtual Ret call(std::add_lvalue_reference_t<Args> ... args) noexcept(e) = 0;
         virtual Abstract *move(void *newplace, std::size_t sz) = 0;
         virtual ~Abstract() = default;
     };
@@ -132,7 +135,7 @@ protected:
     class FnInst: public Abstract {
     public:
         FnInst(Fn &&fn):_fn(std::forward<Fn>(fn)) {}
-        virtual Ret call(std::add_lvalue_reference<Args> ... args) noexcept(e) {
+        virtual Ret call(std::add_lvalue_reference_t<Args> ... args) noexcept(e) {
             return _fn(std::forward<Args>(args)...);
         }
         virtual Abstract *move(void *newplace, std::size_t sz) {return this;}
