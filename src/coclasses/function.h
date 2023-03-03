@@ -14,7 +14,7 @@
 namespace cocls {
 
 ///Replacement for std::function
-/** supports moveable functions (similar to move_only_function)
+/** supports movable functions (similar to move_only_function)
  *  supports small object optimization
  *
  *  @tparam Fn function prototype Ret<Args>
