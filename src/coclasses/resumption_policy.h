@@ -209,6 +209,7 @@ struct initial_resume_by_policy: public std::suspend_always {
         static constexpr std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) noexcept {return h;}
         static constexpr bool can_block() {return true;}
         static std::coroutine_handle<> resume_handle_next() noexcept {return std::noop_coroutine();}
+        static constexpr bool initialize_policy() {return true;}
     };
     struct queued;
     struct parallel;

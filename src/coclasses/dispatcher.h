@@ -268,6 +268,8 @@ protected:
     struct timer {
         std::chrono::system_clock::time_point _tp;
         promise<void> _coro;
+        timer(std::chrono::system_clock::time_point tp, promise<void> coro)
+            :_tp(std::move(tp)), _coro(std::move(coro)) {}
         int operator==(const timer &other) const {return _tp == other._tp;}
         int operator!=(const timer &other) const {return _tp != other._tp;}
         int operator>=(const timer &other) const {return _tp >= other._tp;}

@@ -646,6 +646,15 @@ public:
      */
     const void *get_id() const {return _owner;}
 
+    ///Bind arguments but don't resolve yet. Return function, which can
+    /// be called to resolve the future
+    template<typename ... Args>
+    auto bind(Args &&... args) {
+        return [p = std::move(*this),...args = std::forward<Args>(args)]() mutable {
+            p(std::forward<Args>(args)...);
+        };
+    }
+
 protected:
 
     ///to allows direct access from derived classes

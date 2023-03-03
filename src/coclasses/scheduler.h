@@ -83,14 +83,14 @@ public:
      *
      */
     void schedule(ident id, promise p, std::chrono::system_clock::time_point tp) {
-        std::lock_guard _(_mx);
-        auto p_id = p.get_id();
-        _scheduled.push_back({tp, std::move(p), id});
-        std::push_heap(_scheduled.begin(), _scheduled.end(), compare_item);
-        if (p_id == _scheduled[0]._p.get_id()) {
-            _cond.notify_all();
-        }
-    }
+          std::lock_guard _(_mx);
+          bool ntf = _scheduled.empty() || _scheduled[0]._tp > tp;
+          _scheduled.push_back({tp, std::move(p), id});
+          std::push_heap(_scheduled.begin(), _scheduled.end(), compare_item);
+          if (ntf) {
+              _cond.notify_all();
+          }
+      }
 
     ///Retrieves first expired promise or calculates time-point of first expiration
     /**
@@ -195,7 +195,11 @@ public:
     bool cancel(ident id, std::exception_ptr e) {
         auto p = remove(id);
         if (p) {
-            p(e);
+            if (_glob_state.has_value() && _glob_state->_pool) {
+                _glob_state->_pool->resolve(p, e);
+            } else {
+                p(e);
+            }
             return true;
         } else {
             return false;
@@ -309,11 +313,14 @@ protected:
         std::chrono::system_clock::time_point _tp;
         promise _p;
         ident _ident = nullptr;
+
     };
 
     struct GlobState {
+        GlobState() {};
         future<void> _fut;
         std::stop_source _stp;
+        thread_pool *_pool = nullptr; //active thread pool, nullptr if not
     };
 
     using SchVector = std::vector<SchItem>;
@@ -339,6 +346,7 @@ protected:
         });
         std::unique_lock lk(_mx);
         std::chrono::system_clock::time_point now;
+        thread_pool *pool = _glob_state.has_value()?_glob_state->_pool:nullptr;
         while (!state.stop_requested()) {
             lk.unlock();
             co_await ::cocls::pause<>();
@@ -349,7 +357,7 @@ protected:
             std::visit([&](auto &x){
                using T = std::decay_t<decltype(x)>;
                if constexpr(std::is_same_v<T, promise>) {
-                   x();
+                   if (pool) pool->resolve(x); else x(); //resolve if pool defined, use pool
                } else {
                    if (Policy::can_block()) {
                        _cond.wait_until(lk, x);
@@ -370,11 +378,12 @@ protected:
     }
 
 
-    class TPPolicy: public thread_pool::awaiter {
+    class TPPolicy: protected thread_pool::co_awaiter {
     public:
         TPPolicy() = default;
+
         bool initialize_policy(thread_pool &pool) {
-            return std::exchange(_pool, &pool) == nullptr;
+            return std::exchange(_owner, &pool) == nullptr;
         }
 
         using initial_awaiter = std::suspend_never; //never used
@@ -383,46 +392,31 @@ protected:
             return !thread_pool::current::any_enqueued();
         }
 
+
         void resume(std::coroutine_handle<> h) {
-            _h = h;
-            _pool->enqueue(this);
+            if (this->_canceled) throw await_canceled_exception();
+            this->await_suspend(h);
         }
 
         std::coroutine_handle<> resume_handle(std::coroutine_handle<> h) {
-            if (!_pool || is_current(*_pool)) return h;
-            _h = h;
-            _pool->enqueue(this);
+            if (!_owner || is_current(*_owner)) return h;
+            resume(h);
             return std::noop_coroutine();
 
         }
 
-        virtual void cancel() noexcept override {
-            _pool = nullptr;
-            _h.resume();
-        }
-
-        virtual void resume() noexcept override {
-            return _h.resume();
-        }
-
-        virtual std::coroutine_handle<> resume_handle() noexcept override {
-            return _h;
-        }
-
         std::coroutine_handle<> resume_handle_next() noexcept {
-            if (!_pool || is_current(*_pool)) return resumption_policy::queued::resume_handle_next();
+            if (!_owner || is_current(*_owner)) return resumption_policy::queued::resume_handle_next();
             else return std::noop_coroutine();
         }
 
-    protected:
-        thread_pool *_pool = nullptr;
-        std::coroutine_handle<> _h;
     };
 
     void start_in(thread_pool &pool) {
         assert("Scheduler already started" && !_glob_state.has_value());
         if (_glob_state.has_value()) return;
         _glob_state.emplace();
+        _glob_state->_pool = &pool;
         _glob_state->_fut << [&]{
             return worker_coro<TPPolicy>(_glob_state->_stp.get_token()).start(pool);
         };
