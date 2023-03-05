@@ -191,13 +191,13 @@ public:
     auto run(Fn &&fn) -> future<decltype(std::declval<Fn>()())> {
         using RetVal = decltype(std::declval<Fn>()());
         return [&](auto promise) {
-            run_detached([fn = std::forward<Fn>(fn), promise = std::move(promise)]() mutable {
+            run_detached([fn = std::tuple<Fn>(std::forward<Fn>(fn)), promise = std::move(promise)]() mutable {
                 try {
                     if constexpr(std::is_void_v<RetVal>) {
-                        fn();
+                        std::get<0>(fn)();
                         promise();
                     } else {
-                        promise(fn());
+                        promise(std::get<0>(fn)());
                     }
                 } catch(...) {
                     promise(std::current_exception());
