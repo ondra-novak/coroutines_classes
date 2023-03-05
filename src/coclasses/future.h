@@ -650,7 +650,7 @@ public:
     /// be called to resolve the future
     template<typename ... Args>
     auto bind(Args &&... args) {
-        return [p = std::move(*this),args = std::tuple<Args...>(std::forward<Args>(args)...)]() mutable {
+        return [p = std::move(*this),args = std::tuple<std::decay_t<Args>...>(std::forward<Args>(args)...)]() mutable {
             std::apply(std::move(p),std::move(args));
         };
     }
