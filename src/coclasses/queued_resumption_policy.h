@@ -52,27 +52,13 @@ struct queued {
             }
 
         }
+
+        static thread_local queue_impl instance;
     };
+
 
     static bool is_active() {
         return instance != nullptr;
-    }
-
-    ///Installs queue and resume coroutine
-    /**
-     * Function always install a new queue, even if there is an active queue.
-     * This nested queue is cleared before the function returns. Coroutines
-     * enqueued to previous queue are not schedulued untile the nested queue is
-     * flushed()
-     *
-     * @param h coroutine to resume after queue is installed
-     */
-    static void install_queue_and_resume(std::coroutine_handle<> h) {
-        queue_impl q;
-        auto prev = std::exchange(instance , &q);
-        h.resume();
-        q.flush_queue();
-        instance = prev;
     }
 
     ///Installs coroutine queue and calls the function
@@ -95,15 +81,30 @@ struct queued {
     template<typename Fn, typename ... Args>
     CXX20_REQUIRES(std::invocable<Fn, Args...> )
     static auto install_queue_and_call(Fn &&fn, Args &&... args) {
-        queue_impl q;
-        auto prev = std::exchange(instance, &q);
+        auto prev = std::exchange(instance, &queue_impl::instance);
         auto x = trailer([&]{
-            q.flush_queue();
+            instance->flush_queue();
             instance = prev;
         });
         return fn(std::forward<Args>(args)...);
 
     }
+
+    ///Installs queue and resume coroutine
+    /**
+     * Function always install a new queue, even if there is an active queue.
+     * This nested queue is cleared before the function returns. Coroutines
+     * enqueued to previous queue are not schedulued untile the nested queue is
+     * flushed()
+     *
+     * @param h coroutine to resume after queue is installed
+     */
+    static void install_queue_and_resume(std::coroutine_handle<> h) {
+        install_queue_and_call([](std::coroutine_handle<> h){
+            h.resume();
+        }, h);
+    }
+
 
     ///resume in queue
     static void resume(std::coroutine_handle<> h) noexcept {
@@ -155,6 +156,7 @@ struct queued {
 };
 
 inline thread_local queued::queue_impl *queued::instance = nullptr;
+inline thread_local queued::queue_impl queued::queue_impl::instance;
 
 
 }
