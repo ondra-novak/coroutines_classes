@@ -398,6 +398,17 @@ public:
      */
     co_awaiter<future<T> > operator co_await() {return *this;}
 
+    ///subscribes awaiter, which is signaled when future is ready
+    /**
+     * @param awt awaiter to subscribe
+     * @retval true awaiter subscribed and waiting
+     * @retval false awaiter not subscribed, the result is already available
+     */
+    bool subscribe(abstract_awaiter *awt) {
+        return subscribe_awaiter(awt);
+    }
+
+
     ///has_value() awaiter return by function has_value()
     class [[nodiscard]] has_value_awt: public co_awaiter_policy_base<future<T>> {
     public:
@@ -859,6 +870,27 @@ public:
         return future<T>(std::move(*this));
     }
 
+    ///Starts the coroutine, registers promise, which is resolved once the coroutine finishes
+    /**
+     * This is useful, when you have a promise and you need to resolve it by this coroutine.
+       @param p promise to resolve. The promise is claimed by this call
+     * @param args arguments used to initialize policy (if defined)
+     * @retval true sucefully started, promise was claimed
+     * @retval false failed to claim the promise, the coroutine remains suspended
+     */
+    template<typename ... Args>
+    bool start_set_promise(cocls::promise<T> &p, Args && ... args) {
+        future_coro_promise<T, _Policy> &promise = _h.promise();
+        promise._future = p.claim();
+        if (promise._future) {
+            promise.initialize_policy(std::forward<Args>(args)...);
+            resume_by_policy();
+            return true;
+        }  else {
+            return false;
+        }
+    }
+
     ///Detach coroutine
     /**
      * Allows to run coroutine detached. Coroutine is not connected
@@ -898,13 +930,20 @@ public:
     struct final_awaiter: std::suspend_always {
         template<typename Prom>
         std::coroutine_handle<> await_suspend(std::coroutine_handle<Prom> me) noexcept {
-            future_coro_promise &p = me.promise();
-            future<T> *f = p._future;
-            me.destroy();
-            std::coroutine_handle<> h;
+            //store noop coroutine handle for later usage
             std::coroutine_handle<> n = std::noop_coroutine();
-            if (f && (h = f->resolve_resume()) != n) return h;
-            return p._policy.resume_handle_next();
+            //retrieve promise object
+            future_coro_promise &p = me.promise();
+            //retrieve future ponter, it can be nullptr for detached coroutine
+            future<T> *f = p._future;
+            //set future resolved - this must be done before frame is destroyed
+            //as there can be still connection to the frame before resolution
+            //once the future is resolved, there should be no connection at all.
+            auto h = f ? f->resolve_resume():n;
+            //now we can destroy our frame
+            me.destroy();
+            //return handle returned by resolve();
+            return h;
         }
     };
 

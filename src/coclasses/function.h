@@ -48,7 +48,7 @@ public:
     ///call operation
     template<typename ... A>
     Ret operator()(Args ... args) const noexcept(e)  {
-        if (_ptr) _ptr->call(args...);
+        if (_ptr) return _ptr->call(args...);
         else throw std::bad_function_call();
     }
 

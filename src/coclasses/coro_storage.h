@@ -16,6 +16,7 @@
 #include <cassert>
 
 #include "with_allocator.h"
+#include "function.h"
 
 #include <utility>
 namespace cocls {
@@ -226,6 +227,52 @@ public:
 
 protected:
     Buffer &_buff;
+};
+
+/// default storage equivalent to declare coroutine without allocator
+/** Can be used where Allocator teplate is enforced and we need to fallback to default allocator */
+class default_storage {
+public:
+    static void *alloc(std::size_t sz) {
+        return coro_promise_base::default_new(sz);
+    }
+    static void dealloc(void *ptr, std::size_t sz) {
+        return coro_promise_base::default_delete(ptr,sz);
+    }
+};
+
+///Allocator which allocates extra space for extra object which lives inside of coroutine frame
+/**
+ * This object need to be default constructible
+ * @tparam T
+ * @tparam Alloc
+ */
+template<typename T, typename Alloc = default_storage>
+class promise_extra_storage: public Alloc {
+public:
+
+    template<typename Fn>
+    CXX20_REQUIRES(std::same_as<T, decltype(std::declval<Fn>()())>)
+    promise_extra_storage(Fn &&fn):_factory(std::forward<Fn>(fn)) {}
+
+    void *alloc(std::size_t sz) {
+        void *ptr = Alloc::alloc(sz+sizeof(T));
+        void *inv = static_cast<std::uint8_t *>(ptr)+sz;
+        inventory = new(inv) T(_factory());
+       return ptr;
+    }
+
+    static void dealloc(void *ptr, std::size_t sz) {
+        T *x = reinterpret_cast<T *>(static_cast<std::uint8_t *>(ptr)+sz);
+        x->~T();
+        Alloc::dealloc(ptr,sz+sizeof(T));
+    }
+
+    T * inventory;
+    function<T()> _factory;
+
+    T *operator->() {return inventory;}
+    T &operator *() {return *inventory;}
 };
 
 

@@ -115,8 +115,7 @@ protected:
     bool subscribe_awaiter(awaiter *awt) noexcept {
         awt->subscribe(_chain);
         if (_count <= 0) {
-            awaiter::resume_chain(_chain, awt);
-            return false;
+            awaiter::resume_chain(_chain, nullptr);
         }
         return true;
     }
